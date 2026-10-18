@@ -11,6 +11,7 @@ import {
 import { liveSectionMarkers, replaceLiveSection } from '../scripts/live-pages/common.mjs';
 import { debtAt } from '../scripts/live-pages/national-debt.mjs';
 import { isPublicSharedRpcRequest, LIVE_TOPIC_RPC_PATHS } from '../src/shared/public-rpc-cache.ts';
+import { WORLD_MONITOR_ORG } from '../scripts/build-crawlable-corpus.mjs';
 
 const NOW = Date.parse('2026-10-18T09:00:00Z');
 const HOUR = 3_600_000;
@@ -139,6 +140,15 @@ describe('live topic sections', () => {
     const faq = JSON.parse(ld);
     assert.equal(faq.mainEntity[0].name, topic.question);
     assert.ok(section.includes('data-live-at-request'));
+  });
+
+  it('attributes the FAQ to the canonical Organization in every state, since middleware renders it outside the corpus attribution pass (#7980)', () => {
+    for (const topic of LIVE_TOPIC_PAGES) {
+      for (const section of [topic.renderSection(null, { live: false }), topic.renderSection(null, { live: true })]) {
+        const faq = JSON.parse(section.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)?.[1] ?? '{}');
+        assert.deepEqual(faq.author, WORLD_MONITOR_ORG, `${topic.slug} FAQ author`);
+      }
+    }
   });
 
   it('renders "no current reading" without a dated claim when the record is null', () => {

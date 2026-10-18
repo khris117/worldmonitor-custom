@@ -8,6 +8,16 @@ import { escapeHtml, formatStaticDateTime } from '../crawlable-chokepoint-live.m
 
 export { escapeHtml, formatStaticDateTime };
 
+// The section's FAQ is rendered here and in middleware, never by the corpus
+// attribution pass, so it names its author itself (#7980). Same typed stub as
+// WORLD_MONITOR_ORG in build-crawlable-corpus.mjs.
+const AUTHOR = Object.freeze({
+  '@id': 'https://www.worldmonitor.app/#organization',
+  '@type': 'Organization',
+  name: 'World Monitor',
+  url: 'https://www.worldmonitor.app/',
+});
+
 export function liveSectionMarkers(slug) {
   return { start: `<!--wm-live:${slug}-->`, end: `<!--/wm-live:${slug}-->` };
 }
@@ -83,6 +93,7 @@ ${bodyHtml}
         <script type="application/ld+json">${scriptJson({
           '@context': 'https://schema.org',
           '@type': 'FAQPage',
+          author: AUTHOR,
           mainEntity: [{ '@type': 'Question', name: question, acceptedAnswer: { '@type': 'Answer', text: answer } }],
         })}</script>
       </section>
