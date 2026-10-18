@@ -3436,7 +3436,6 @@ if (DIRECT_RUN && process.argv.includes('--dry-run')) {
       transform: () => runState.publicArchive,
       declareRecords: archive => archive.rows.length,
       metaKey: FORECAST_ARCHIVE_META_KEY,
-      metaCritical: true,
     }, {
       key: SCORECARD_KEY,
       ttl: SCORECARD_TTL_SECONDS,
@@ -3455,7 +3454,8 @@ if (DIRECT_RUN && process.argv.includes('--dry-run')) {
       allowMissingOnSkip: true,
     }],
     afterPublish: async (ledger) => {
-      await markForecastArchiveActivated();
+      try { await markForecastArchiveActivated(); }
+      catch (err) { console.warn(`  [ForecastArchive] Activation marker write failed: ${err.message}`); }
       if (runState.map) await markCalibrationMapActivated();
       return buildJudgedLaneAfterPublish(ledger, Date.now(), runState);
     },

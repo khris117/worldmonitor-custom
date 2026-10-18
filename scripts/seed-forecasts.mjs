@@ -18218,7 +18218,6 @@ export const FORECAST_EXTRA_KEYS = [
     ttl: PROBABILITY_TRAIL_TTL_SECONDS,
     declareRecords: data => Object.keys(data.forecasts).length,
     metaKey: PROBABILITY_TRAIL_META_KEY,
-    metaCritical: true,
     skipWhenEmpty: true,
   },
   {
@@ -18270,7 +18269,10 @@ async function runForecastAfterPublish(data, meta, triggerContext) {
   } catch (err) {
     console.warn(`  [Calibration] Publication record write failed: ${err.message}`);
   }
-  if (Object.keys(data.probabilityTrail?.forecasts ?? {}).length) await markProbabilityTrailActivated();
+  if (Object.keys(data.probabilityTrail?.forecasts ?? {}).length) {
+    try { await markProbabilityTrailActivated(); }
+    catch (err) { console.warn(`  [ProbabilityTrail] Activation marker write failed: ${err.message}`); }
+  }
 
   if (triggerContext.triggerRequest) {
     await clearForecastRefreshRequestIfUnchanged(triggerContext.triggerRequest);

@@ -185,6 +185,12 @@ describe('bounded forecast list and original case transport', () => {
       const response = await mcpHandler(proReq('POST', callBody('get_forecast_predictions', args)), deps);
       return (await response.json()).result;
     };
+    let reads = 0;
+    const sourceFetch = globalThis.fetch;
+    globalThis.fetch = async (...args) => {
+      if (new URL(String(args[0])).pathname.startsWith('/get/')) reads++;
+      return sourceFetch(...args);
+    };
     const result = await invoke({ include_history: true });
     const node = result.structuredContent.data.predictions;
     assert.equal(result.structuredContent.panelRequest.panel, 'forecasts');
@@ -196,9 +202,13 @@ describe('bounded forecast list and original case transport', () => {
     assert.ok(node.predictions.every(row => !('history' in row)));
     assert.ok(node.predictions.every(row => row.hasCaseFile && !('caseFile' in row)));
     assert.ok(Buffer.byteLength(JSON.stringify(result)) <= opening._outputBudgetBytes);
+    const openingReads = reads;
     const replay = await invoke({ panel_request: result.structuredContent.panelRequest.token });
     assert.deepEqual(replay.structuredContent.data.predictions, node);
     assert.equal(pipe.count, 1);
+    assert.equal(reads, openingReads, 'ignored include_history must not change the saved panel response identity');
+    await invoke({ include_history: false, panel_request: result.structuredContent.panelRequest.token });
+    assert.equal(reads, openingReads, 'false and omitted history share the same saved panel response');
     const oversized = opening._postFilter({ predictions: { ...source, error: 'x'.repeat(150000) } }, {}, paid);
     assert.equal(oversized.predictions.error, 'x'.repeat(1200));
     assert.ok(Buffer.byteLength(JSON.stringify({ data: oversized })) < opening._outputBudgetBytes);
