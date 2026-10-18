@@ -47,20 +47,36 @@ const UI_HINT_SENTENCE = /^(?:click|tap|hover|drag|toggle|use the|select|press|s
 
 const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'", apos: "'", nbsp: ' ' };
 
+/**
+ * Drops every run from "<" to the next ">" and any unmatched "<". A scan rather
+ * than a tag regex: nested input such as "<scr<script>ipt>" cannot reassemble.
+ */
+function withoutTags(text) {
+  let out = '';
+  let inTag = false;
+  for (const char of text) {
+    if (char === '<') inTag = true;
+    else if (char === '>' && inTag) inTag = false;
+    else if (!inTag) out += char;
+  }
+  return out;
+}
+
 export function tooltipText(html) {
   if (typeof html !== 'string') return '';
-  const flat = html
+  const marked = html
     // A leading bold run is the tooltip's title ("Methodology", the panel name).
     .replace(/^\s*<strong>[^<]*<\/strong>\s*/i, '')
     .replace(/<li[^>]*>/gi, ' ')
     .replace(/<\/li>/gi, '; ')
     .replace(/<br\s*\/?>/gi, ' ')
-    .replace(/<\/(?:p|ul)>/gi, '. ')
-    .replace(/<[^>]*>/g, '')
-    .replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (_, name) => ENTITIES[name])
-    // Tag stripping cannot catch nested or entity-encoded tags, and coverage.json
-    // hands this text to consumers unescaped, so no "<" survives at all.
-    .replace(/</g, '')
+    .replace(/<\/(?:p|ul)>/gi, '. ');
+  // Decoding comes after the first strip and is followed by a second, because
+  // coverage.json hands this text to consumers unescaped: an encoded
+  // "&lt;script&gt;" must not become a tag.
+  const decoded = withoutTags(marked)
+    .replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (_, name) => ENTITIES[name]);
+  const flat = withoutTags(decoded)
     .replace(/\s+/g, ' ')
     .replace(/\s+([;:,.])/g, '$1')
     .replace(/;\s*\./g, '.')
