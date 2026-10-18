@@ -21,7 +21,10 @@ export async function readCountryCiiHistory(code: string, days: number, version:
   ]], 3_000);
   const parsed = parseCiiDailyPoints(results?.[0]?.error ? null : results?.[0]?.result, now);
   const history = buildCiiHistory(parsed.points, days, version, now);
-  return { ...history, stale: history.stale || parsed.invalid };
+  const stale = history.stale || parsed.invalid;
+  const current = parsed.points.filter(point => point.v === version);
+  const latest = current[current.length - 1];
+  return { history: { ...history, stale }, reuseUntil: !stale && latest ? latest.t + CII_HISTORY_MAX_AGE_MS : null };
 }
 
 export async function readCiiMovers(days: number, now = Date.now()) {

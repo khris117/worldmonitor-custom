@@ -8,7 +8,7 @@ import { persistCiiDailyHistory } from '../server/worldmonitor/intelligence/v1/g
 import { CII_COUNTRY_CODES } from '../shared/cii-weights';
 import { CII_FORMULA_VERSION } from '../server/worldmonitor/intelligence/v1/_risk-config';
 import { buildCiiHistory, buildCiiMovers, parseCiiDailyPoints } from '../shared/cii-daily-history';
-import { readCiiMovers, readCountryCiiHistory } from '../api/mcp/cii-history';
+import { readCiiMovers, readCountryCiiHistory } from '../api/mcp/_cii-history';
 
 const DAY = 86_400_000;
 const now = Date.UTC(2026, 9, 18, 12);
@@ -126,7 +126,7 @@ test('fresh writer replaces daily closes atomically, trims 365 days, retains ver
   assert.equal(command('TTL', activation), -1, 'activation survives data and metadata expiry');
   assert.deepEqual(JSON.parse(command('GET', meta)), { fetchedAt: now + 1000, recordCount: 31 });
   assert.equal(JSON.parse(command('GET', index)).countries.length, 31);
-  const history = await readCountryCiiHistory('IR', 30, CII_FORMULA_VERSION, now + 1000);
+  const { history } = await readCountryCiiHistory('IR', 30, CII_FORMULA_VERSION, now + 1000);
   assert.equal(history.returnedDays, 2);
   assert.equal(history.change?.delta, 30);
   const ranked = await readCiiMovers(7, now + 1000);

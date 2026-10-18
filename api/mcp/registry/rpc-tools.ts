@@ -53,7 +53,7 @@ import {
 } from '../../../shared/insights-snapshot.js';
 import type { FreshnessCheck, ToolDef } from '../types';
 import { COUNTRY_BRIEF_UI_URI, COUNTRY_RISK_UI_URI, WORLD_BRIEF_UI_URI } from '../ui/registry';
-import { CII_HISTORY_OUTPUT_SCHEMA, ciiHistoryDays, readCountryCiiHistory } from '../cii-history';
+import { CII_HISTORY_OUTPUT_SCHEMA, ciiHistoryDays, readCountryCiiHistory } from '../_cii-history';
 import { CII_FORMULA_VERSION } from '../../../server/worldmonitor/intelligence/v1/_risk-config';
 import { ANALYSIS_TOOLS } from './analysis-tools';
 import { buildPublicTool, TOOL_REGISTRY } from './index';
@@ -1875,7 +1875,8 @@ export const RPC_TOOLS: ToolDef[] = [
       await assertToolFetchOk(res, 'get-country-risk');
       const result = await res.json();
       if (days === undefined) return result;
-      const ciiHistory = await readCountryCiiHistory(code, days, result.cii?.methodologyVersion || CII_FORMULA_VERSION);
+      const { history: ciiHistory, reuseUntil } = await readCountryCiiHistory(code, days, result.cii?.methodologyVersion || CII_FORMULA_VERSION);
+      if (execution) execution.countryRiskHistoryReuseUntil = reuseUntil;
       if (result.upstreamUnavailable) ciiHistory.stale = true;
       return { ...result, ciiHistory };
     },
