@@ -54,6 +54,14 @@ describe('resolveAsOf history convention', () => {
     const result = resolveAsOf([{ observed_at: '2026-10-17T12:00:00Z', value: 1 }], '2026-10-17T12:00:00Z', options);
     assert.equal('formulaVersion' in result.asOf, false);
   });
+  it('rejects duplicate observation times in either input order', () => {
+    const rows = [observations[0], { observed_at: '2026-10-17T12:00:00.000Z', value: 99, formulaVersion: 'v2' }];
+    for (const history of [rows, [...rows].reverse()]) {
+      assert.throws(() => resolveAsOf(history, '2026-10-17T13:00:00Z', options), {
+        name: 'TypeError', message: 'History observations must have unique observed_at timestamps',
+      });
+    }
+  });
   it('rejects an interval that would alias different observations into the same cache key', () => {
     const rows = [{ observed_at: '2026-10-17T12:30:00Z' }];
     assert.throws(() => resolveAsOf(rows, '2026-10-17T12:59:00Z', options), TypeError);

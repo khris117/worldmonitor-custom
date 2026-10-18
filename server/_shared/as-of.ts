@@ -42,10 +42,13 @@ export function resolveAsOf<T extends HistoricalObservation>(
   let earliestAt = Infinity;
   let matched: T | undefined;
   let matchedAt = -Infinity;
+  const observedTimes = new Set<number>();
   for (const observation of observations) {
     const observedAt = utcTimestamp(observation.observed_at);
     if (!Number.isFinite(observedAt)) throw new TypeError('History observation has an invalid observed_at');
     if (observedAt % granularity !== 0) throw new TypeError('History observation is not aligned with granularity');
+    if (observedTimes.has(observedAt)) throw new TypeError('History observations must have unique observed_at timestamps');
+    observedTimes.add(observedAt);
     if (observedAt < earliestAt) {
       earliest = observation;
       earliestAt = observedAt;

@@ -6,7 +6,7 @@ History-backed MCP tools use `as_of` to request the latest stored observation at
 
 `as_of` is a string with JSON Schema `format: date-time`. The initial helper accepts UTC timestamps ending in `Z`, with seconds and optional millisecond precision. It rejects invalid dates and future requests.
 
-`resolveAsOf(observations, asOf, { granularity, now? })` lives in `server/_shared/as-of.ts`. Each observation has `observed_at` and an optional `formulaVersion`. The helper returns the latest observation whose `observed_at` is less than or equal to the requested time. Input order does not matter. It does not interpolate or return a later observation.
+`resolveAsOf(observations, asOf, { granularity, now? })` lives in `server/_shared/as-of.ts`. Each observation has `observed_at` and an optional `formulaVersion`. Observation times must be unique; duplicate instants are store configuration errors. The helper returns the latest observation whose `observed_at` is less than or equal to the requested time. Input order does not matter. It does not interpolate or return a later observation.
 
 `granularity` is the store's observation interval in milliseconds, anchored at the Unix epoch. Observations must align with that interval. For irregular timestamps, use the finest stored precision, such as 1 millisecond. The helper returns `cacheAsOf`, which floors the request to that interval. Callers use it before constructing a cache key, never the raw caller timestamp. Cached observations can be shared within that interval. Rebuild the request-specific envelope after a cache hit.
 
