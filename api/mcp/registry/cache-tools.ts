@@ -1,4 +1,5 @@
 import { screenSanctions } from '../../../server/_shared/sanctions-screen';
+import { projectSupplyChainData } from './_shipping-freight';
 import ISO2_TO_ISO3 from '../../../shared/iso2-to-iso3.js';
 import { MARKET_ASSET_CLASSES } from '../../../shared/panel-admission';
 import { normalizeSocialVelocity } from '../../_social-velocity.js';
@@ -2282,7 +2283,7 @@ export const CACHE_TOOLS: ToolDef[] = [
     title: 'Sanctions lists and pressure scores',
     _subscriptionOnly: true,
     _outputBudgetBytes: 131072,
-    description: 'Search OFAC SDN, OFAC Consolidated and Canada SEMA entities and country sanctions pressure. Use screen for fuzzy name, up to 10 retained aliases per entity, or exact IMO screening; query for primary-name substring search; country for pressure analysis. Screening returns score (0-100), matched_on and matched_text. A match is a lead to confirm with the issuing agency, not legal advice. Seeded-cache read, weight 1 on API plans; no request-time provider fetch. Requires a subscription. Refreshed every 6 hours and flagged stale after 12 hours.',
+    description: 'Read OFAC SDN and Consolidated lists, Canada SEMA sanctions and country pressure scores. Use query for primary-name substring lookup or changes_since_days (1-90) for observed additions, removals and program amendments. History includes coverage gaps, holds source diffs above 5% removals and keeps at most 10,000 events for 90 days; truncatedBefore marks cap loss. Seeded every 6 hours, stale after 12 hours, no request-time source fetch. Subscription required, weight 1. A match is a lead to confirm with the issuing agency, not legal advice.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2291,7 +2292,8 @@ export const CACHE_TOOLS: ToolDef[] = [
         query: { type: 'string', description: 'Keep only sanctioned entities whose name contains this text (case-insensitive).' },
         screen: { type: 'string', minLength: 2, maxLength: 200, description: 'Screen a name, alias or IMO identifier against the seeded lists (2-200 characters).' },
         min_score: { type: 'number', minimum: 0, maximum: 100, default: 70, description: 'Minimum screening score from 0 to 100 (default 70); applies only with screen.' },
-        limit: { type: 'number', description: 'Cap the entity list and recent pressure entries to at most this many items (default 30, pass 0 for no cap).' },
+        changes_since_days: { type: 'integer', minimum: 1, maximum: 90, description: 'Include observed designation changes and coverage gaps from the last 1-90 days. Country, entity_type, query and limit filter events; gaps remain visible.' },
+        limit: { type: 'number', description: 'Cap entities, recent pressure entries and change events (default 30, pass 0 for no cap).' },
       },
       required: [],
     },
@@ -2322,6 +2324,23 @@ export const CACHE_TOOLS: ToolDef[] = [
           } } },
         },
       },
+      changes: {
+        type: ['object', 'null'],
+        properties: {
+          version: { type: 'number' }, fetchedAt: { type: 'number' }, truncatedBefore: { type: 'number' },
+          events: { type: 'array', items: { type: 'object', properties: {
+            at: { type: 'number' }, effectiveAt: { type: 'string' },
+            op: { type: 'string', enum: ['added', 'removed', 'amended'] },
+            list: { type: 'string' }, id: { type: 'string' }, name: { type: 'string' }, et: { type: 'string' },
+            cc: { type: 'array', items: { type: 'string' } }, pr: { type: 'array', items: { type: 'string' } },
+            prevPr: { type: 'array', items: { type: 'string' } },
+          } } },
+          gaps: { type: 'array', items: { type: 'object', properties: {
+            list: { type: 'string' }, from: { type: 'number' }, to: { type: 'number' },
+            reason: { type: 'string', enum: ['retained', 'unavailable', 'held', 'baseline-unavailable'] },
+          } } },
+        },
+      },
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _postFilter: (data, params) => {
@@ -2337,6 +2356,26 @@ export const CACHE_TOOLS: ToolDef[] = [
       const etype = argStr(params.entity_type);
       const query = argStr(params.query);
       const limit = (argNum(params.limit) ?? DEFAULT_LIST_LIMIT);
+      const days = params.changes_since_days;
+      if (days !== undefined && (typeof days !== 'number' || !Number.isInteger(days) || days < 1 || days > 90)) {
+        throw new RpcValidationError('get_sanctions_data', [{ field: 'changes_since_days', description: 'Expected an integer from 1 to 90.' }]);
+      }
+      if (days === undefined) delete data.changes;
+      else {
+        const since = Date.now() - (days as number) * 86400000;
+        narrowNested(data, 'changes', 'events', e => typeof e.at === 'number' && e.at >= since
+          && (!countries.length || matchesCode(e.cc, countries))
+          && (!etype || ciIncludes(e.et, etype)) && (!query || ciIncludes(e.name, query)));
+        narrowNested(data, 'changes', 'gaps', gap => typeof gap.to === 'number' && gap.to >= since);
+        const changes = data.changes;
+        if (changes && typeof changes === 'object' && !Array.isArray(changes)) {
+          const log = changes as Record<string, unknown>;
+          delete log.sourceFetchedAt;
+          delete log.heldSources;
+          if (Array.isArray(log.events)) log.events.sort((a, b) => Number(b.at) - Number(a.at));
+        }
+        capNested(data, 'changes', 'events', limit);
+      }
       if (countries.length > 0) {
         narrowArray(data, 'entities', (e) => matchesCode(e.cc, countries));
         narrowNested(data, 'pressure', 'entries', (e) => matchesCode(e.countryCodes, countries));
@@ -2354,8 +2393,12 @@ export const CACHE_TOOLS: ToolDef[] = [
       capNested(data, 'pressure', 'entries', limit);
       return data;
     },
-    _cacheKeys: ['sanctions:entities:v1', 'sanctions:pressure:v1'],
-    _freshnessChecks: [{ key: 'seed-meta:sanctions:entities', maxStaleMin: 720 }, { key: 'seed-meta:sanctions:pressure', maxStaleMin: 720 }],
+    _cacheKeys: ['sanctions:entities:v1', 'sanctions:pressure:v1', 'sanctions:changes:v1'],
+    _freshnessChecks: [
+      { key: 'seed-meta:sanctions:entities', maxStaleMin: 720 },
+      { key: 'seed-meta:sanctions:pressure', maxStaleMin: 720 },
+      { key: 'seed-meta:sanctions:changes', maxStaleMin: 720 },
+    ],
     _apiPaths: [
       "GET /api/sanctions/v1/list-sanctions-pressure",
       "GET /api/sanctions/v1/lookup-sanction-entity",
@@ -3062,17 +3105,17 @@ export const CACHE_TOOLS: ToolDef[] = [
   },
   {
     name: 'get_supply_chain_data',
-    title: 'Shipping stress and trade flows',
+    title: 'Freight rates, supply-chain pressure and trade flows',
     _subscriptionOnly: true,
     _outputBudgetBytes: 131072,
-    description: 'Return the seeded supply-chain pressure bundle: the dry-bulk shipping stress index with per-carrier detail, monthly customs revenue flows and UN COMTRADE bilateral trade flows by reporter and HS commodity. Trade flows are monthly official statistics (customs revenue is flagged stale after 2 days), not live shipment tracking. Requires a paid plan (the COMTRADE flows are licensed for subscribers); seeded-cache read with no live fetch, weight 1 on API plans. dataset selects shipping_stress, customs-revenue or flows; commodity matches an HS code exactly or a description substring; reporter matches a numeric reporter code or name; limit caps each list (default 30, 0 for no cap).',
+    description: 'Return seeded supply-chain pressure and trade data: freight-rate indices, the NY Fed GSCPI, a BDRY and carrier-equity shipping-stress proxy, monthly customs revenue and UN COMTRADE flows. Freight includes FRED levels and history, plus SSE change percentages, direction and z-scores against stored prior observations, with at least 12 baseline points. SSE raw levels and Baltic indices are excluded. GSCPI is monthly, in standard deviations, and subject to revision. Customs revenue is stale after 2 days; freight after 7 hours; GSCPI after 2 days. Requires a paid plan; no live fetch, weight 1 on API plans. dataset selects shipping_stress, customs-revenue, flows, freight-rates or gscpi; commodity and reporter filter flows. limit caps lists, with newest GSCPI months kept chronological (default 30, 0 for no cap).',
     inputSchema: {
       type: 'object',
       properties: {
         dataset: {
           type: 'array',
-          items: { type: 'string', enum: ['shipping_stress', 'customs-revenue', 'flows'] },
-          description: 'Restrict the response to one or more sub-datasets (dry-bulk shipping stress / customs revenue / COMTRADE flows). Omit for all.',
+          items: { type: 'string', enum: ['shipping_stress', 'customs-revenue', 'flows', 'freight-rates', 'gscpi'] },
+          description: 'Restrict the response to one or more sub-datasets (equity shipping-stress proxy, customs revenue, COMTRADE flows, freight rates, GSCPI). Omit for all.',
         },
         commodity: {
           type: 'string',
@@ -3082,7 +3125,7 @@ export const CACHE_TOOLS: ToolDef[] = [
           type: 'string',
           description: 'Filter COMTRADE flows to one reporter by numeric reporter code or reporter name (e.g. "156" or "China").',
         },
-        limit: { type: 'number', description: 'Cap each list dataset (carriers, months, flows) to at most this many items (default 30, pass 0 for no cap).' },
+        limit: { type: 'number', description: 'Cap each list dataset (carriers, months, flows, freight indices and GSCPI observations) to at most this many items (default 30, pass 0 for no cap).' },
       },
       required: [],
     },
@@ -3106,6 +3149,45 @@ export const CACHE_TOOLS: ToolDef[] = [
           partner: { type: 'string' }, value: { type: ['number', 'null'] },
         } } } },
       },
+      'freight-rates': {
+        type: ['object', 'null'],
+        properties: {
+          fetchedAt: { type: ['string', 'null'] },
+          indices: { type: 'array', items: {
+            type: 'object',
+            properties: {
+              indexId: { type: 'string', enum: ['PCU483111483111', 'TSIFRGHT', 'SCFI', 'CCFI'] },
+              name: { type: 'string' }, source: { type: 'string' }, unit: { type: 'string' },
+              frequency: { type: 'string', enum: ['monthly', 'weekly'] },
+              observationDate: { type: ['string', 'null'] },
+              periodChangePct: { type: ['number', 'null'] },
+              periodChangeBasis: { type: ['string', 'null'] }, priorPeriodDate: { type: ['string', 'null'] },
+              zScore: { type: ['number', 'null'], description: 'Population z-score against stored observations excluding the latest. Null with fewer than 12 baseline points or zero variance.' },
+              baselinePoints: { type: 'integer' }, baselineStart: { type: ['string', 'null'] },
+              direction: { type: ['string', 'null'], enum: ['up', 'down', 'flat', null] },
+              currentValue: { type: ['number', 'null'], description: 'FRED series only.' },
+              history: { type: 'array', description: 'FRED series only.', items: { type: 'object', properties: {
+                date: { type: 'string' }, value: { type: 'number' },
+              } } },
+            },
+            required: ['indexId', 'source', 'frequency', 'observationDate', 'periodChangePct', 'zScore', 'baselinePoints', 'baselineStart', 'direction'],
+            additionalProperties: false,
+          } },
+        },
+      },
+      gscpi: {
+        type: ['object', 'null'],
+        description: 'Federal Reserve Bank of New York Global Supply Chain Pressure Index. Monthly values are subject to revision.',
+        properties: {
+          source: { type: 'string' }, sourceUrl: { type: 'string' },
+          series: { type: 'object', properties: {
+            series_id: { type: 'string' }, title: { type: 'string' }, units: { type: 'string' }, frequency: { type: 'string' },
+            observations: { type: 'array', items: { type: 'object', properties: {
+              date: { type: 'string' }, value: { type: 'number' },
+            } } },
+          } },
+        },
+      },
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _postFilter: (data, params) => {
@@ -3121,17 +3203,32 @@ export const CACHE_TOOLS: ToolDef[] = [
       capNested(data, 'shipping_stress', 'carriers', limit);
       capNested(data, 'customs-revenue', 'months', limit);
       capNested(data, 'flows', 'flows', limit);
+      capNested(data, 'freight-rates', 'indices', limit);
+      const series = (data.gscpi as { series?: { observations?: unknown[] } } | null)?.series;
+      if (series?.observations && limit > 0) {
+        const count = Math.floor(limit);
+        series.observations = count > 0 ? series.observations.slice(-count) : [];
+      }
       return selectDatasets(data, argStrList(params.dataset));
     },
+    _project: projectSupplyChainData,
+    _cacheLabels: { 'supply_chain:shipping:v2': 'freight-rates', 'economic:fred:v1:GSCPI:0': 'gscpi' },
     _cacheKeys: [
       'supply_chain:shipping_stress:v1',
       'trade:customs-revenue:v1',
       'comtrade:flows:v1',
+      'supply_chain:shipping:v2',
+      'economic:fred:v1:GSCPI:0',
     ],
-    _freshnessChecks: [{ key: 'seed-meta:trade:customs-revenue', maxStaleMin: 2880 }],
+    _freshnessChecks: [
+      { key: 'seed-meta:trade:customs-revenue', maxStaleMin: 2880 },
+      { key: 'seed-meta:supply_chain:shipping', maxStaleMin: 420, honorContentAge: true },
+      { key: 'seed-meta:economic:gscpi', maxStaleMin: 2880 },
+    ],
     _apiPaths: [
       "GET /api/supply-chain/v1/get-shipping-stress",
       "GET /api/trade/v1/get-customs-revenue",
+      "GET /api/supply-chain/v1/get-shipping-rates",
     ],
   },
   {
@@ -3218,7 +3315,7 @@ export const CACHE_TOOLS: ToolDef[] = [
     name: 'get_chokepoint_status',
     title: 'Maritime chokepoint status',
     _outputBudgetBytes: 131072,
-    description: 'Return the seeded maritime chokepoint snapshot: per-chokepoint vessel transit counts at 10-minute cadence, rolling transit summaries, per-port activity, oil and gas flow aggregates, baselines and the canonical 13-chokepoint registry (Suez, Hormuz, Malacca, Bab-el-Mandeb, Panama and others). Transit data is flagged stale after 30 minutes. Seeded-cache read with no live fetch: weight 1 on API plans, included in the signed-in free allowance. chokepoint narrows transit-summaries, chokepoint_transits, chokepoint-baselines and chokepoint-flows by case-insensitive substring ("hormuz"), leaving ref and _countries unfiltered; dataset selects sub-datasets; limit caps the baselines list and _countries index (default 30, 0 for no cap) while keyed maps are not capped. Paid openings use one chokepoint panel allocation; repeat views reuse it, refresh with a request_id UUID spends a new one and the same UUID retries it. API and free accounts retain per-tool accounting.',
+    description: 'Return the seeded maritime chokepoint snapshot: per-chokepoint vessel transit counts at 10-minute cadence, rolling transit summaries, a port-country coverage index, oil and gas flow aggregates, baselines and the canonical 13-chokepoint registry (Suez, Hormuz, Malacca, Bab-el-Mandeb, Panama and others). Transit data is flagged stale after 30 minutes. Seeded-cache read with no live fetch: weight 1 on API plans, included in the signed-in free allowance. chokepoint narrows transit-summaries, chokepoint_transits, chokepoint-baselines and chokepoint-flows by case-insensitive substring ("hormuz"), leaving ref and _countries unfiltered; dataset selects sub-datasets; limit caps the baselines list and _countries index (default 30, 0 for no cap) while keyed maps are not capped. Paid openings use one chokepoint panel allocation; repeat views reuse it, refresh with a request_id UUID spends a new one and the same UUID retries it. API and free accounts retain per-tool accounting.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3431,7 +3528,6 @@ export const CACHE_TOOLS: ToolDef[] = [
       { key: 'seed-meta:energy:chokepoint-flows',          maxStaleMin: 720 },            // 6h cron; 12h = 2× interval
     ],
     _apiPaths: [
-      "GET /api/intelligence/v1/get-country-port-activity",
       "GET /api/supply-chain/v1/get-chokepoint-status",
     ],
   },

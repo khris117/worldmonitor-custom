@@ -54,7 +54,7 @@ Response — identical to that tool's `tools/list` entry: the same `description`
     "content": [
       {
         "type": "text",
-        "text": "{\"name\":\"get_chokepoint_status\",\"description\":\"Live maritime chokepoint status: per-chokepoint vessel transit counts (10-min cadence), rolling transit summaries, per-port activity, plus static reference data and flow aggregates. Covers Suez, Hormuz, Malacca, Bab-el-Mandeb, Panama, etc.\",\"inputSchema\":{ /* full properties with full descriptions */ },\"outputSchema\":{ /* … */ },\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":false},\"_meta\":{ /* … */ }}"
+        "text": "{\"name\":\"get_chokepoint_status\",\"description\":\"Live maritime chokepoint status: per-chokepoint vessel transit counts (10-min cadence), rolling transit summaries, a port-country coverage index, plus static reference data and flow aggregates. Covers Suez, Hormuz, Malacca, Bab-el-Mandeb, Panama, etc.\",\"inputSchema\":{ /* full properties with full descriptions */ },\"outputSchema\":{ /* … */ },\"annotations\":{\"readOnlyHint\":true,\"destructiveHint\":false,\"idempotentHint\":true,\"openWorldHint\":false},\"_meta\":{ /* … */ }}"
       }
     ],
     "structuredContent": { "name": "get_chokepoint_status", "description": "…", "inputSchema": {}, "outputSchema": {}, "annotations": {}, "_meta": {} }
@@ -1708,7 +1708,7 @@ curl -s https://worldmonitor.app/mcp \
 
 ### `get_sanctions_data`
 
-Search OFAC SDN, OFAC Consolidated and Canada SEMA entities and country sanctions pressure. Use screen for fuzzy name, up to 10 retained aliases per entity, or exact IMO screening; query for primary-name substring search; country for pressure analysis. Screening returns score (0-100), matched_on and matched_text. A match is a lead to confirm with the issuing agency, not legal advice. Seeded-cache read, weight 1 on API plans; no request-time provider fetch. Requires a subscription. Refreshed every 6 hours and flagged stale after 12 hours.
+Read OFAC SDN and Consolidated lists, Canada SEMA sanctions and country pressure scores. Use query for primary-name substring lookup or changes_since_days (1-90) for observed additions, removals and program amendments. History includes coverage gaps, holds source diffs above 5% removals and keeps at most 10,000 events for 90 days; truncatedBefore marks cap loss. Seeded every 6 hours, stale after 12 hours, no request-time source fetch. Subscription required, weight 1. A match is a lead to confirm with the issuing agency, not legal advice.
 
 **Parameters (tool-specific):**
 
@@ -1717,12 +1717,11 @@ Search OFAC SDN, OFAC Consolidated and Canada SEMA entities and country sanction
 | `country` | string | Filter sanctioned entities and pressure scores to one ISO 3166-1 alpha-2 country code. Country names and alpha-3 codes are accepted; unresolved inputs return Invalid params. |
 | `entity_type` | string | Filter to one entity type (case-insensitive substring, e.g. "vessel", "aircraft", "person", "entity"). |
 | `query` | string | Keep only sanctioned entities whose name contains this text (case-insensitive). |
-| `screen` | string | Screen a name, alias or IMO identifier against the seeded lists (2-200 characters). |
-| `min_score` | number | Minimum screening score from 0 to 100 (default 70); applies only with screen. |
-| `limit` | number | Cap the entity list and recent pressure entries to at most this many items (default 30, pass 0 for no cap). |
+| `changes_since_days` | integer | Include observed designation changes and coverage gaps from the last 1-90 days. Country, entity_type, query and limit filter events; gaps remain visible. |
+| `limit` | number | Cap entities, recent pressure entries and change events (default 30, pass 0 for no cap). |
 
 - **API endpoints:** `GET /api/sanctions/v1/list-sanctions-pressure`, `GET /api/sanctions/v1/lookup-sanction-entity`
-- **Access:** `subscription`. Weight 1 on API plans. Accepts the universal `summary` argument.
+- **Access:** `subscription` — Pro/API subscription required. Accepts the universal `summary` argument.
 - **Kind:** cache read — sub-second response from Redis bootstrap cache.
 - **Freshness budget:** up to **12 h** before `stale: true` is flagged (set by the seeder cron's expected interval).
 
@@ -1740,6 +1739,8 @@ curl -s https://worldmonitor.app/mcp \
 ```
 
 </CodeGroup>
+
+Changes retain up to 90 days and 10,000 events, returned newest observation first. `at` is the observation time in milliseconds; `effectiveAt` is the source effective-time string, or `"0"` when unknown. Program-set changes emit `amended` with `prevPr`. `gaps` marks retained or unavailable sources, missing valid baselines and diffs held because more than 5% of prior rows disappeared. A gap is not proof of no changes. `truncatedBefore` marks history lost to the event cap, including that boundary timestamp. Without `changes_since_days`, the `changes` slot is omitted.
 
 ### `get_social_velocity`
 
@@ -2127,7 +2128,7 @@ curl -s https://worldmonitor.app/mcp \
 
 ### `get_chokepoint_status`
 
-Live maritime chokepoint status: per-chokepoint vessel transit counts (10-min cadence), rolling transit summaries, per-port activity, plus static reference data (chokepoint geometry, canonical chokepoint registry) and flow aggregates. Covers Suez, Hormuz, Malacca, Bab-el-Mandeb, Panama, etc.
+Live maritime chokepoint status: per-chokepoint vessel transit counts (10-min cadence), rolling transit summaries, port-country coverage index, plus static reference data (chokepoint geometry, canonical chokepoint registry) and flow aggregates. Covers Suez, Hormuz, Malacca, Bab-el-Mandeb, Panama, etc.
 
 **Parameters (tool-specific):**
 
@@ -2140,7 +2141,7 @@ Live maritime chokepoint status: per-chokepoint vessel transit counts (10-min ca
 | `dataset` | `array<string: transit-summaries / chokepoint_transits / _countries / chokepoint-baselines / ref / chokepoint-flows>` | Restrict the response to one or more sub-datasets. Omit for the full bundle. |
 | `limit` | number | Cap the chokepoint-baselines list and the _countries ISO2 index to at most this many items (default 30, pass 0 for no cap). Keyed-object maps (transit-summaries, chokepoint_transits, ref, chokepoint-flows) are intentionally not capped; the `chokepoint` filter narrows all of them except ref. |
 
-- **API endpoints:** `GET /api/intelligence/v1/get-country-port-activity`, `GET /api/supply-chain/v1/get-chokepoint-status`
+- **API endpoints:** `GET /api/supply-chain/v1/get-chokepoint-status`
 - **Access:** `free-account` — callable by any signed-in account; free accounts spend the daily free allowance, Pro calls spend the daily quota. Accepts the universal `summary` argument.
 - **Kind:** cache read — sub-second response from Redis bootstrap cache.
 - **Freshness budget (per slice):** `stale: true` flags when ANY contributing slice exceeds its individual budget — **30 min** for live transit summaries (relay), **36 h** for PortWatch port activity, **12 h** for chokepoint flows, **14 d** for the PortWatch chokepoint reference, and up to **~400 d** for the static chokepoint registry / geographic baselines. The bundle's `cached_at` reflects the oldest contributing seed; `stale: true` doesn't mean ALL the data is old.
@@ -2429,15 +2430,16 @@ curl -s https://worldmonitor.app/mcp \
 
 ### `get_maritime_activity`
 
-Return live vessel traffic inside one country's bounding box from the AIS snapshot: density_zones (name, intensity, ships_per_day, delta_pct) and disruptions (dark-ship events and chokepoint congestion with severity, dark_ships, vessel_count), plus snapshot_at and the bounding_box used. Results change minute to minute; the snapshot is filtered server-side to the country box with a 3-degree pad. A country without a bounding box in the dataset returns an error field. Requires a paid plan; one live fetch, weight 2 on API plans. country_code accepts alpha-2, alpha-3 or an English name. Read-only.
+Return country-scoped maritime activity. view=traffic (default) returns live AIS density_zones (intensity, ships_per_day, delta_pct), disruptions (dark-ship events and chokepoint congestion), snapshot_at and bounding_box, filtered to the country box with a 3-degree pad. A missing traffic bounding box returns an error. view=ports returns port activity with a 25-result cap, including 30-day tanker calls, import/export tanker deadweight tonnage and change against the prior 30 days; trend_delta_pct is null when prior calls are zero or unknown. PortWatch port data is scheduled, can lag real time, and returns available=false for uncovered or expired data. fetched_at is the retrieval time. Requires a paid plan; one downstream fetch for either view, weight 2 on API plans. country_code accepts alpha-2, alpha-3 or an English name. Read-only.
 
 **Parameters:**
 
 | Name | Type | Required | Description |
 |------|------|---------:|-------------|
 | `country_code` | string | **yes** | ISO 3166-1 alpha-2 country code (e.g. "AE", "SA", "JP", "EG") |
+| `view` | `traffic / ports` | no | Defaults to `traffic`; `ports` returns scheduled tanker activity by port. |
 
-- **API endpoints:** `GET /api/maritime/v1/get-vessel-snapshot`
+- **API endpoints:** `GET /api/maritime/v1/get-vessel-snapshot`, `GET /api/intelligence/v1/get-country-port-activity`
 - **Access:** `subscription` — requires a Pro subscription. RPC tool: no `summary` argument (use `jmespath` to trim the response).
 - **Kind:** live RPC — proxies a fetch to the WorldMonitor API on each call. Edge-runtime timeout: **8.0s**.
 
@@ -2450,7 +2452,7 @@ curl -s https://worldmonitor.app/mcp \
   -d '{
     "jsonrpc":"2.0","id":1,
     "method":"tools/call",
-    "params":{"name":"get_maritime_activity","arguments":{"country_code":"US"}}
+    "params":{"name":"get_maritime_activity","arguments":{"country_code":"NL","view":"ports"}}
   }'
 ```
 
@@ -2458,21 +2460,23 @@ curl -s https://worldmonitor.app/mcp \
 
 ### `get_supply_chain_data`
 
-Return the seeded supply-chain pressure bundle: the dry-bulk shipping stress index with per-carrier detail, monthly customs revenue flows and UN COMTRADE bilateral trade flows by reporter and HS commodity. Trade flows are monthly official statistics (customs revenue is flagged stale after 2 days), not live shipment tracking. Requires a paid plan (the COMTRADE flows are licensed for subscribers); seeded-cache read with no live fetch, weight 1 on API plans. dataset selects shipping_stress, customs-revenue or flows; commodity matches an HS code exactly or a description substring; reporter matches a numeric reporter code or name; limit caps each list (default 30, 0 for no cap).
+Return seeded supply-chain pressure and trade data: freight-rate indices, the NY Fed GSCPI, a BDRY and carrier-equity shipping-stress proxy, monthly customs revenue and UN COMTRADE flows. Freight includes FRED levels and history, plus SSE change percentages, direction and z-scores against stored prior observations, with at least 12 baseline points. SSE raw levels and Baltic indices are excluded. GSCPI is monthly, in standard deviations, and subject to revision. Customs revenue is stale after 2 days; freight after 7 hours; GSCPI after 2 days. Requires a paid plan; no live fetch, weight 1 on API plans. dataset selects shipping_stress, customs-revenue, flows, freight-rates or gscpi; commodity and reporter filter flows. limit caps lists, with newest GSCPI months kept chronological (default 30, 0 for no cap).
 
 **Parameters (tool-specific):**
 
 | Name | Type | Description |
 |------|------|-------------|
-| `dataset` | `array<string: shipping_stress / customs-revenue / flows>` | Restrict the response to one or more sub-datasets (dry-bulk shipping stress / customs revenue / COMTRADE flows). Omit for all. |
+| `dataset` | `array<string: shipping_stress / customs-revenue / flows / freight-rates / gscpi>` | Restrict the response to one or more sub-datasets (equity shipping-stress proxy, customs revenue, COMTRADE flows, freight rates, GSCPI). Omit for all. |
 | `commodity` | string | Filter COMTRADE flows to one commodity — matches the HS code exactly or the commodity description by substring (e.g. "2709" or "crude"). |
 | `reporter` | string | Filter COMTRADE flows to one reporter by numeric reporter code or reporter name (e.g. "156" or "China"). |
-| `limit` | number | Cap each list dataset (carriers, months, flows) to at most this many items (default 30, pass 0 for no cap). |
+| `limit` | number | Cap each list dataset (carriers, months, flows, freight indices and GSCPI observations) to at most this many items (default 30, pass 0 for no cap). |
 
-- **API endpoints:** `GET /api/supply-chain/v1/get-shipping-stress`, `GET /api/trade/v1/get-customs-revenue`
+- **API endpoints:** `GET /api/supply-chain/v1/get-shipping-stress`, `GET /api/trade/v1/get-customs-revenue`, `GET /api/supply-chain/v1/get-shipping-rates`
 - **Access:** `subscription`. Requires a Pro subscription because the bundle includes Pro-only COMTRADE flows. Accepts the universal `summary` argument.
 - **Kind:** cache read — sub-second response from Redis bootstrap cache.
-- **Freshness budget:** up to **2 d** before `stale: true` is flagged (set by the seeder cron's expected interval).
+- **Freshness budget:** freight **7 h**, GSCPI and customs revenue **2 d**.
+
+`freight-rates.indices[]` includes source, frequency, observation date, period movement and baseline statistics. The z-score uses the mean and population standard deviation of stored history excluding the latest point. It is null with fewer than 12 baseline points or zero variance. Weekly SSE history retains up to 56 points as future observations accumulate; it cannot be backfilled. `gscpi.series.observations` keeps the newest `limit` months in chronological order. GSCPI is attributed to the Federal Reserve Bank of New York, and values are subject to revision.
 
 <CodeGroup>
 
@@ -2483,7 +2487,7 @@ curl -s https://worldmonitor.app/mcp \
   -d '{
     "jsonrpc":"2.0","id":1,
     "method":"tools/call",
-    "params":{"name":"get_supply_chain_data","arguments":{}}
+    "params":{"name":"get_supply_chain_data","arguments":{"dataset":["freight-rates","gscpi"],"limit":12}}
   }'
 ```
 
