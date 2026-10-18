@@ -4590,7 +4590,7 @@ describe('get_sanctions_data change feed contract', () => {
   const tool = TOOL_REGISTRY.find(t => t.name === 'get_sanctions_data');
   const now = Date.now();
   const event = { at: now - 1000, effectiveAt: '0', op: 'added', list: 'SDN', id: 'SDN:1', name: 'Northern Star', et: 'vessel', cc: ['RU'], pr: ['TEST'] };
-  const log = { version: 1, fetchedAt: now, sourceFetchedAt: { SDN: now }, events: [
+  const log = { version: 1, fetchedAt: now, sourceFetchedAt: { SDN: now }, heldSources: ['SDN'], events: [
     event, { ...event, at: now - 2 * 86400000, op: 'amended', prevPr: ['OLD'] },
     { ...event, at: now - 8 * 86400000, op: 'removed' },
     { ...event, cc: ['CA'], name: 'Other' },
@@ -4610,6 +4610,7 @@ describe('get_sanctions_data change feed contract', () => {
     assert.deepEqual(result.changes.gaps, log.gaps);
     assert.equal(result.changes.truncatedBefore, log.truncatedBefore);
     assert.equal(result.changes.sourceFetchedAt, undefined);
+    assert.equal(result.changes.heldSources, undefined);
     assert.equal(tool._postFilter(data(), {}).changes, undefined);
     assert.equal(tool._postFilter({ changes: null }, { changes_since_days: 7 }).changes, null);
     for (const value of [0, 91, 1.5, '7', null]) {

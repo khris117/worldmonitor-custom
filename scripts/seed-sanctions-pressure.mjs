@@ -643,6 +643,9 @@ async function fetchSanctionsPressure() {
 
   const previousSnapshots = decodeSourceSnapshots(await readSeedSnapshot(SOURCE_SNAPSHOTS_KEY, { strict: true }));
   const previousChanges = await readSeedSnapshot(CHANGES_KEY, { strict: true });
+  if (previousChanges === null && await readSeedSnapshot(CHANGES_ACTIVATION_KEY, { strict: true }) !== null) {
+    throw new Error('SANCTIONS_CHANGES_HISTORY_MISSING');
+  }
   const outcomes = {};
   for (const source of OFAC_SOURCES) {
     try {

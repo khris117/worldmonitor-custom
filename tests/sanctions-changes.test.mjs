@@ -8,7 +8,7 @@ const row = (id, programs = ['IRAN']) => ({ id: `SDN:${id}`, name: `Person ${id}
 const snapshot = (rows, at = now - 6 * 3600000) => ({ fetchedAt: at, records: rows });
 const priorRows = Array.from({ length: 20 }, (_, i) => row(i));
 const run = (current, extra = {}) => buildSanctionsChanges({
-  previous: { SDN: snapshot(priorRows) }, current: { SDN: snapshot(current, now) },
+  previous: { SDN: snapshot(priorRows) }, current: { SDN: snapshot(current, extra.now ?? now) },
   health: { SDN: { status: 'ok' } }, now, history: null, ...extra,
 });
 
@@ -87,4 +87,30 @@ test('coalesces consecutive gaps and rejects malformed or future history instead
   for (const history of [{}, { version: 1, fetchedAt: now + 1, events: [], gaps: [] }]) {
     assert.throws(() => run(priorRows, { history }), /SANCTIONS_CHANGES_INVALID/);
   }
+});
+
+test('retained and unavailable runs cannot roll back the history clock after split publication', () => {
+  const first = run([...priorRows, row(21)]);
+  for (const status of ['retained', 'unavailable']) {
+    const outage = run(priorRows, { history: first, now: now + 3600000,
+      health: { SDN: { status } }, current: { SDN: status === 'retained' ? snapshot(priorRows) : null } });
+    const recovery = run([...priorRows, row(21)], { history: outage, now: now + 7200000 });
+    assert.deepEqual(recovery.events, first.events);
+    assert.equal(recovery.gaps.at(-1).reason, 'baseline-unavailable');
+  }
+});
+
+test('recovery after a held partial source starts a baseline instead of inventing restored additions', () => {
+  const partial = priorRows.slice(2);
+  const held = run(partial);
+  const outage = run(partial, { history: held, now: now + 3600000,
+    previous: { SDN: snapshot(partial, now) }, current: { SDN: snapshot(partial, now) },
+    health: { SDN: { status: 'retained' } } });
+  const recovery = run(priorRows, { history: outage, now: now + 7200000, previous: { SDN: snapshot(partial, now) } });
+  assert.deepEqual(recovery.events, []);
+  assert.equal(recovery.gaps.at(-1).reason, 'baseline-unavailable');
+  const next = run([...priorRows, row(21)], { history: recovery, now: now + 10800000,
+    previous: { SDN: snapshot(priorRows, now + 7200000) } });
+  assert.equal(next.events.length, 1);
+  assert.equal(next.events[0].op, 'added');
 });

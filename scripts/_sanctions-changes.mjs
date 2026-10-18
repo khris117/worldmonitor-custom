@@ -13,6 +13,7 @@ function validateHistory(history, now) {
   if (history === null) return;
   if (history?.version !== 1 || !validClock(history.fetchedAt) || history.fetchedAt > now
     || !Array.isArray(history.events) || !Array.isArray(history.gaps)
+    || history.heldSources !== undefined && !strings(history.heldSources)
     || history.sourceFetchedAt !== undefined && (history.sourceFetchedAt === null
       || typeof history.sourceFetchedAt !== 'object' || Array.isArray(history.sourceFetchedAt)
       || Object.values(history.sourceFetchedAt).some(at => !validClock(at) || at > history.fetchedAt))
@@ -41,17 +42,21 @@ export function buildSanctionsChanges({ history = null, previous, current, healt
   validateHistory(history, now);
   let events = (history?.events ?? []).filter(e => e.at >= now - RETENTION_MS);
   const gaps = (history?.gaps ?? []).filter(g => g.to >= now - RETENTION_MS).map(g => ({ ...g }));
+  const heldSources = new Set(history?.heldSources ?? []);
   for (const [list, sourceHealth] of Object.entries(health)) {
     const before = previous[list];
     const after = current[list];
     let reason = sourceHealth.status !== 'ok' ? sourceHealth.status : null;
     // A history write can succeed before snapshot publication fails. Hold the
     // next diff across that split instead of duplicating or inventing events.
-    if (!reason && (!before || before.fetchedAt < (history?.sourceFetchedAt?.[list] ?? 0))) reason = 'baseline-unavailable';
+    if (!reason && (!before || before.fetchedAt < (history?.sourceFetchedAt?.[list] ?? 0)
+      || heldSources.has(list))) reason = 'baseline-unavailable';
     const oldRows = new Map((before?.records ?? []).map(row => [row.id, row]));
     const newRows = new Map((after?.records ?? []).map(row => [row.id, row]));
     const removed = [...oldRows.values()].filter(row => !newRows.has(row.id));
     if (!reason && removed.length > oldRows.size * 0.05) reason = 'held';
+    if (reason === 'held') heldSources.add(list);
+    else if (sourceHealth.status === 'ok') heldSources.delete(list);
     if (reason) {
       const from = Math.min(now, before?.fetchedAt ?? history?.fetchedAt ?? now);
       const existing = gaps.find(g => g.list === list && g.reason === reason && g.to >= from);
@@ -74,7 +79,10 @@ export function buildSanctionsChanges({ history = null, previous, current, healt
     truncatedBefore = Math.max(truncatedBefore ?? 0, events[events.length - EVENT_LIMIT - 1].at);
     events = events.slice(-EVENT_LIMIT);
   }
-  const sourceFetchedAt = Object.fromEntries(Object.entries(current)
-    .filter(([, snapshot]) => snapshot).map(([list, snapshot]) => [list, snapshot.fetchedAt]));
-  return { version: 1, fetchedAt: now, sourceFetchedAt, events, gaps, ...(truncatedBefore ? { truncatedBefore } : {}) };
+  const sourceFetchedAt = { ...history?.sourceFetchedAt };
+  for (const [list, snapshot] of Object.entries(current)) {
+    if (snapshot) sourceFetchedAt[list] = Math.max(sourceFetchedAt[list] ?? 0, snapshot.fetchedAt);
+  }
+  return { version: 1, fetchedAt: now, sourceFetchedAt, heldSources: [...heldSources], events, gaps,
+    ...(truncatedBefore ? { truncatedBefore } : {}) };
 }

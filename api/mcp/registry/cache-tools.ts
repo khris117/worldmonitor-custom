@@ -2264,6 +2264,7 @@ export const CACHE_TOOLS: ToolDef[] = [
         if (changes && typeof changes === 'object' && !Array.isArray(changes)) {
           const log = changes as Record<string, unknown>;
           delete log.sourceFetchedAt;
+          delete log.heldSources;
           if (Array.isArray(log.events)) log.events.sort((a, b) => Number(b.at) - Number(a.at));
         }
         capNested(data, 'changes', 'events', limit);

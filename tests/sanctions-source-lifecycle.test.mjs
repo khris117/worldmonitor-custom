@@ -26,7 +26,7 @@ const row = (source, i) => ({
 });
 const canadian = Array.from({ length: 80 }, (_, i) => row(SEMA_SOURCE, i + 1));
 
-async function publish({ successes = ['SDN', 'CONSOLIDATED', SEMA_SOURCE], stored = null, preview = [], previousState = null, history = null, clock = now, writeError = false, readError = false, semaRecords = canadian, semaQuarantined = [], io = {} } = {}) {
+async function publish({ successes = ['SDN', 'CONSOLIDATED', SEMA_SOURCE], stored = null, preview = [], previousState = null, history = null, activated = false, clock = now, writeError = false, readError = false, semaRecords = canadian, semaQuarantined = [], io = {} } = {}) {
   const writes = [];
   let options;
   const context = vm.createContext({
@@ -36,7 +36,9 @@ async function publish({ successes = ['SDN', 'CONSOLIDATED', SEMA_SOURCE], store
     SANCTIONS_SOURCE_VERSION, SANCTIONS_MAX_CONTENT_AGE_MIN: 43200,
     readSeedSnapshot: async key => {
       if (readError) throw new Error('synthetic cache read failure');
-      return key === 'sanctions:changes:v1' ? history : stored;
+      if (key === 'sanctions:changes:v1') return history;
+      if (key === 'seed-activated:sanctions:changes') return activated ? 1 : null;
+      return stored;
     },
     verifySeedKey: async key => key === 'sanctions:pressure:v1' ? { entries: preview } : previousState,
     fetchSource: async ({ label }) => {
@@ -66,6 +68,9 @@ async function save(fresh) {
 }
 
 describe('sanctions source lifecycle', () => {
+  it('does not reset missing history after the durable activation marker exists', async () => {
+    await assert.rejects(publish({ activated: true }), /SANCTIONS_CHANGES_HISTORY_MISSING/);
+  });
   it('publishes durable changes before advancing source snapshots and keeps private history out of pressure', async () => {
     const first = await publish();
     const stored = await save(first);
