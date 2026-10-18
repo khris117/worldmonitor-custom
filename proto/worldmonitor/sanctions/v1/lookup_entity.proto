@@ -26,6 +26,7 @@ message SanctionEntityMatch {
 message LookupSanctionEntityResponse {
   repeated SanctionEntityMatch results = 1;
   int32 total = 2;
-  // Lists searched, or "unavailable" when no valid index records are available.
+  // Comma-separated lists searched; "seeded" when q is rejected before lookup;
+  // "unavailable" when no valid index records are available.
   string source = 3;
 }

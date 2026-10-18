@@ -145,7 +145,9 @@ paths:
             tags:
                 - SanctionsService
             summary: LookupSanctionEntity
-            description: LookupSanctionEntity searches the OFAC entity index by name, vessel, or aircraft.
+            description: |-
+                LookupSanctionEntity screens the seeded OFAC SDN, OFAC Consolidated and Canada SEMA lists
+                 by name, up to 10 retained aliases per entity, or an exact IMO identifier.
             operationId: LookupSanctionEntity
             parameters:
                 - name: q
@@ -566,7 +568,9 @@ components:
                     format: int32
                 source:
                     type: string
-                    description: Lists searched, or "unavailable" when no valid index records are available.
+                    description: |-
+                        Comma-separated lists searched; "seeded" when q is rejected before lookup;
+                         "unavailable" when no valid index records are available.
             description: |-
                 LookupSanctionEntityResponse contains seeded matches ranked by token-set Jaro-Winkler score.
                  A match is a lead to confirm with the issuing agency, not legal advice.
