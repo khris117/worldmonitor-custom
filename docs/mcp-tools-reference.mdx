@@ -956,7 +956,7 @@ Return seeded prediction-market contracts from multiple venues with current prob
 | `category` | string: geopolitical / tech / finance | Restrict to one market category bucket. Omit for all three. Finance also owns untagged non-geopolitical records. |
 | `query` | string | Keep only markets whose title contains this text (case-insensitive). |
 | `source` | string: kalshi / polymarket | Filter to one prediction-market source. Kalshi currently provides no classifier tags, so source=kalshi with category=tech returns no records. |
-| `sort` | string: rank / move_24h / move_7d | Default `rank` preserves seed order. Move sorts use absolute change within each bucket before the limit, with missing values last. |
+| `sort` | string: rank / move_24h / move_7d | Order each bucket by seed rank or absolute 24h/7d move before limiting. Missing moves go last. |
 | `limit` | number | Cap each category bucket to at most this many markets (default 30, pass 0 for no cap). |
 | `panel_request` | string | Paid prediction panel receipt. Reuse for internal curated reads without another daily allocation. |
 | `refresh` | boolean | Paid panel only. Start a new allocation with request_id; retry the same ID to reuse it. |
