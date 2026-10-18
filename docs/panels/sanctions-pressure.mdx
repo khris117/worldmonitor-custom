@@ -45,4 +45,8 @@ OFAC publishes list updates on an irregular cadence (daily-to-weekly). The panel
 ## API reference
 
 - [Sanctions service](https://github.com/koala73/worldmonitor/blob/main/docs/api/SanctionsService.openapi.yaml) — sanctions pressure + entity search RPCs.
-- Related: `GET /api/sanctions/v1/lookup-sanction-entity?q=...` — fuzzy entity lookup against OpenSanctions (live) with OFAC local index as a fallback.
+- Related: `GET /api/sanctions/v1/lookup-sanction-entity?q=...` — fuzzy name lookup against the seeded local index of OFAC SDN, OFAC Consolidated, and Canada SEMA records.
+
+`source` names the lists represented by record IDs in the searched index, including when no name matches. Merged records retain their primary source ID, so this label does not establish complete coverage of a list. Empty, unavailable, and unsearched states are labelled separately.
+
+The endpoint makes no OpenSanctions request and does not search UK, EU, or UN lists directly. Official UK and EU ingestion is deferred to the follow-up described in [#9352](https://github.com/koala73/worldmonitor/issues/9352).
