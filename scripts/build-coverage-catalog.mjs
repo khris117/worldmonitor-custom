@@ -58,6 +58,9 @@ export function tooltipText(html) {
     .replace(/<\/(?:p|ul)>/gi, '. ')
     .replace(/<[^>]*>/g, '')
     .replace(/&(amp|lt|gt|quot|#39|apos|nbsp);/g, (_, name) => ENTITIES[name])
+    // Tag stripping cannot catch nested or entity-encoded tags, and coverage.json
+    // hands this text to consumers unescaped, so no "<" survives at all.
+    .replace(/</g, '')
     .replace(/\s+/g, ' ')
     .replace(/\s+([;:,.])/g, '$1')
     .replace(/;\s*\./g, '.')

@@ -31,6 +31,13 @@ describe('coverage catalog text', () => {
     assert.equal(tooltipText(html), 'Global logistics: Chokepoints: transit status & scores; Unrest: protests.');
   });
 
+  it('cannot emit markup from nested tags or encoded brackets', () => {
+    for (const html of ['<scr<script>ipt>alert(1)</script> text', '&lt;script&gt;alert(1)&lt;/script&gt; text', '<<b>img src=x>']) {
+      assert.ok(!tooltipText(html).includes('<'), `${html} -> ${tooltipText(html)}`);
+    }
+    assert.equal(tooltipText('Brightness >360K.'), 'Brightness >360K.');
+  });
+
   it('keeps sentences that are not interaction hints', () => {
     assert.equal(
       tooltipText('<strong>Methodology</strong> Composite score.<br>Auto-refreshes every 5 minutes.'),
