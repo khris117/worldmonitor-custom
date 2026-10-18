@@ -39,10 +39,19 @@ describe('coverage catalog text', () => {
     assert.equal(tooltipText(undefined), '');
   });
 
-  it('keeps the first sentence of a tool description and cuts long ones on a word', () => {
-    assert.equal(firstSentence('Return rows. Seeded-cache read.'), 'Return rows.');
-    const long = `${'word '.repeat(80)}end.`;
-    const cut = firstSentence(long, 40);
+  it('summarizes a tool description from its opening sentences', () => {
+    const opening = 'Return the seeded airport disruption snapshot for monitored airports.';
+    assert.equal(firstSentence(`${opening} Seeded-cache read.`), opening);
+    assert.equal(
+      firstSentence('Despite the name, carries no tariff data. Return the price and debt bundle. Weight 1.'),
+      'Despite the name, carries no tariff data. Return the price and debt bundle.',
+    );
+    assert.equal(
+      firstSentence(`Return an evidence card for a claim: the matching clusters, a result state (${'state, '.repeat(40)}none), and more.`),
+      'Return an evidence card for a claim: the matching clusters.',
+      'an overlong sentence ends at its last clause boundary outside parentheses',
+    );
+    const cut = firstSentence(`${'word '.repeat(80)}end.`, 40);
     assert.ok(cut.endsWith('…') && cut.length <= 41, cut);
   });
 

@@ -74,13 +74,42 @@ export function tooltipText(html) {
     .trim();
 }
 
+const MIN_SUMMARY_LENGTH = 60;
+
+/**
+ * The opening of a tool description. A short opener ("Despite the name,
+ * carries no tariff data.") keeps the sentence that explains it; an overlong
+ * sentence ends at its first colon, where tool descriptions start their field
+ * lists, before falling back to a word cut.
+ */
 export function firstSentence(text, maxLength = 240) {
   const clean = String(text || '').replace(/\s+/g, ' ').trim();
-  const match = clean.match(/^.+?[.!?](?=\s|$)/);
-  const sentence = match ? match[0] : clean;
-  if (sentence.length <= maxLength) return sentence;
-  const cut = sentence.slice(0, maxLength);
+  const sentences = clean.match(/.+?[.!?](?=\s|$)|.+$/g) || [];
+  let summary = '';
+  for (const sentence of sentences) {
+    const next = summary ? `${summary} ${sentence.trim()}` : sentence.trim();
+    if (summary && next.length > maxLength) break;
+    summary = next;
+    if (summary.length >= MIN_SUMMARY_LENGTH) break;
+  }
+  if (summary.length <= maxLength) return summary;
+  const boundary = lastClauseBoundary(summary, maxLength);
+  if (boundary >= MIN_SUMMARY_LENGTH / 2) return `${summary.slice(0, boundary)}.`;
+  const cut = summary.slice(0, maxLength);
   return `${cut.slice(0, cut.lastIndexOf(' '))}…`;
+}
+
+/** Index of the last ", " "; " or ": " before maxLength that is outside parentheses. */
+function lastClauseBoundary(text, maxLength) {
+  let depth = 0;
+  let last = -1;
+  for (let index = 0; index < Math.min(text.length - 1, maxLength); index += 1) {
+    const char = text[index];
+    if (char === '(') depth += 1;
+    else if (char === ')') depth = Math.max(0, depth - 1);
+    else if (depth === 0 && (char === ',' || char === ';' || char === ':') && text[index + 1] === ' ') last = index;
+  }
+  return last;
 }
 
 function camelCase(id) {
@@ -278,10 +307,23 @@ export function coverageAnswer(counts) {
   return `World Monitor covers geopolitics, conflict, military activity, markets, commodities, energy, shipping and supply chains, aviation, infrastructure, cyber threats, natural hazards, climate and live news. It does so across ${counts.panels} dashboard panels in ${counts.panelGroups} groups, ${counts.layers} map layers and ${counts.tools} MCP tools, spread over ${counts.dashboards} dashboards. Every item is listed below by name with what it shows.`;
 }
 
+// On a phone each row becomes a card, so a description reads at full width
+// instead of inside a sideways-scrolling table.
+const CATALOG_STYLES = `      .catalog td small { color: var(--accent); font-weight: 700; }
+      .catalog td:last-child { color: var(--muted); font-size: 13px; }
+      @media (max-width: 640px) {
+        .catalog thead { display: none; }
+        .catalog table, .catalog tbody, .catalog tr, .catalog td { display: block; width: 100%; }
+        .catalog tr { margin-bottom: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+        .catalog td { border: 0; padding: 6px 12px; }
+        .catalog td:first-child { padding-top: 12px; }
+        .catalog td:last-child { padding-bottom: 12px; }
+      }`;
+
 function renderPanelTable(group, escapeHtml) {
   const rows = group.panels.map((panel) => `            <tr><td><strong>${escapeHtml(panel.name)}</strong>${panel.pro ? ' <small>Pro</small>' : ''}</td><td>${panel.description ? escapeHtml(panel.description) : '—'}</td><td>${escapeHtml(variantList(panel.variants))}</td></tr>`).join('\n');
   return `      <h3 id="panels-${slug(group.label)}">${escapeHtml(group.label)}</h3>
-      <div class="table-scroll">
+      <div class="catalog">
         <table>
           <thead><tr><th scope="col">Panel</th><th scope="col">What it shows</th><th scope="col">Dashboards</th></tr></thead>
           <tbody>
@@ -300,7 +342,7 @@ function renderLayerTable(layers, escapeHtml) {
     ].filter(Boolean).join(' ');
     return `            <tr><td><strong>${escapeHtml(layer.name)}</strong>${layer.pro ? ' <small>Pro</small>' : ''}</td><td>${detail ? escapeHtml(detail) : '—'}</td><td>${escapeHtml(variantList(layer.variants))}</td></tr>`;
   }).join('\n');
-  return `      <div class="table-scroll">
+  return `      <div class="catalog">
         <table>
           <thead><tr><th scope="col">Layer</th><th scope="col">What it shows, source and freshness</th><th scope="col">Dashboards</th></tr></thead>
           <tbody>
@@ -312,7 +354,7 @@ ${rows}
 
 function renderToolTable(tools, escapeHtml) {
   const rows = tools.map((tool) => `            <tr><td><strong>${escapeHtml(tool.title)}</strong><br><code>${escapeHtml(tool.name)}</code></td><td>${escapeHtml(tool.description)}</td><td>${escapeHtml(TOOL_ACCESS_LABEL[tool.access] || tool.access)}</td></tr>`).join('\n');
-  return `      <div class="table-scroll">
+  return `      <div class="catalog">
         <table>
           <thead><tr><th scope="col">Tool</th><th scope="col">What it returns</th><th scope="col">Access</th></tr></thead>
           <tbody>
@@ -336,7 +378,7 @@ export function renderCoveragePage({ catalog, baseUrl, lastmod, tpl }) {
         <div class="metric"><small>Dashboard panels</small><strong>${counts.panels}</strong><span>${counts.proPanels} ${counts.proPanels === 1 ? 'needs' : 'need'} Pro</span></div>
         <div class="metric"><small>Map layers</small><strong>${counts.layers}</strong><span>${counts.proLayers} ${counts.proLayers === 1 ? 'needs' : 'need'} Pro</span></div>
         <div class="metric"><small>MCP tools</small><strong>${counts.tools}</strong><span>${counts.accountFreeTools} without a paid plan</span></div>
-        <div class="metric"><small>Dashboards</small><strong>${counts.dashboards}</strong><span>${escapeHtml(VARIANTS.map((variant) => variant.name).join(', '))}</span></div>
+        <div class="metric"><small>Dashboards</small><strong>${counts.dashboards}</strong><span>${escapeHtml(proseList(VARIANTS.map((variant) => variant.name.replace(/ Monitor$/, ''))))}</span></div>
       </div>
       <h2 id="how-to-read">How to read this catalog</h2>
       <p>Each entry is generated from the registry the product reads, and each description is the text the product shows: a panel's info tooltip, a layer's explanation card, or an MCP tool's description. A dash means the product has no written description for that item yet. Data sources behind these surfaces are listed provider by provider on the <a href="/sources/">source catalog</a>. The same catalog is available as <a href="${COVERAGE_DATASET_FILE}">JSON</a>.</p>
@@ -383,6 +425,7 @@ ${renderToolTable(catalog.tools, escapeHtml)}
       { name: 'Coverage', path: COVERAGE_PAGE_PATH },
     ]),
     body,
+    extraStyles: CATALOG_STYLES,
   });
 }
 
