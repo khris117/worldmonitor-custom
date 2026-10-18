@@ -448,4 +448,4 @@ On **web**, AI Forecasts is currently in **trial** — free to anyone, including
 ## API reference
 
 - [Forecast service](https://github.com/koala73/worldmonitor/blob/main/docs/api/ForecastService.openapi.yaml) — covers `get-forecasts`, `get-forecast-scorecard`, `get-simulation-outcome`, `get-simulation-package`, and `trigger-simulation`.
-- Agents read the published forecasts with the [MCP `get_forecast_predictions` tool](/mcp-overview#ai-intelligence). Forecasts are produced by the pipeline on its own schedule; no API or MCP call starts a new run.
+- Agents read the published forecasts with the [MCP `get_forecast_predictions` tool](/mcp-overview#ai-intelligence). The forecast list is produced by the pipeline on its own schedule; no MCP tool starts a new forecast run. The `trigger-simulation` endpoint above queues a theater simulation, which is separate from the forecast list.
