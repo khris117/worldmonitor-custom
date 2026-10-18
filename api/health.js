@@ -2197,6 +2197,8 @@ const ON_DEMAND_KEYS = new Set([
   // is pending, not CRIT. GTA Update is not registered: writer disabled.
   'tpsMci',
   'tpsCallsAttended',
+  'forecastProbabilityTrail',
+  'forecastArchive',
 ]);
 
 // Legacy broad empty-data exemptions. classifyKey uses this set in both the
@@ -2248,6 +2250,8 @@ const ACTIVATION_MARKERS = {
   scorecardFiveFactor: SEED_META.scorecardFiveFactor.activationKey,
   imdCycloneMarine: SEED_META.imdCycloneMarine.activationKey,
   forecastCalibrationMap: SEED_META.forecastCalibrationMap.activationKey,
+  forecastProbabilityTrail: SEED_META.forecastProbabilityTrail.activationKey,
+  forecastArchive: SEED_META.forecastArchive.activationKey,
   marketAlertLedger: SEED_META.marketAlertLedger.activationKey,
   marketAlertScorecard: SEED_META.marketAlertScorecard.activationKey,
   supplyVulnerability: SEED_META.supplyVulnerability.activationKey,
@@ -2612,6 +2616,7 @@ const MISSING_DATA_IS_FAILURE_KEYS = new Set([
 // key itself must still exist. Do not use this set in the missing-key branch.
 const ZERO_RECORD_DATA_OK_KEYS = new Set([
   ...EMPTY_DATA_OK_KEYS,
+  'forecastArchive',
   'naturalEvents',
   // A current List query can validly return no Posts. The relay still writes
   // the canonical snapshot, so a missing xFeed key remains a hard failure.
