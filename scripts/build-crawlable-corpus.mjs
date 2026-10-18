@@ -29,7 +29,7 @@ import {
   renderContextualComparisons,
 } from './build-comparison-pages.mjs';
 import { RELATED_READING_PATH, loadRelatedReading, renderRelatedReading } from './related-reading.mjs';
-import { chokepointLiveLinks, countryLiveLinks, crisisLiveLinks, renderLiveDataLinks } from './live-pages/related-links.mjs';
+import { LIVE_PAGE_LINKS_PATH, chokepointLiveLinks, countryLiveLinks, crisisLiveLinks, renderLiveDataLinks } from './live-pages/related-links.mjs';
 import {
   USE_CASE_PAGES,
   USE_CASES_CONTENT_VERSION,
@@ -194,6 +194,7 @@ export const CHOKEPOINT_PAGE_LASTMOD_PATHS = Object.freeze([
   TRADE_ROUTES_PATH,
   CHOKEPOINT_PAGE_CONTENT_PATH,
   EIA_OIL_TRANSIT_BASELINES_PATH,
+  LIVE_PAGE_LINKS_PATH,
 ]);
 /** Compare pages interpolate live provider and chokepoint counts (#7744). */
 export const COMPARISON_PAGE_LASTMOD_PATHS = Object.freeze([
@@ -211,7 +212,7 @@ export const COMPARISON_PAGE_LASTMOD_PATHS = Object.freeze([
 // families take the later of this version and their own committed source date,
 // so template changes are reflected without pretending every deploy is fresh.
 export const CORPUS_GENERATOR_CONTENT_VERSION = '2026-09-01';
-export const COUNTRY_PAGE_CONTENT_VERSION = '2026-10-16';
+export const COUNTRY_PAGE_CONTENT_VERSION = '2026-10-18';
 export const CII_COUNTRY_PAGE_CONTENT_VERSION = '2026-09-12';
 // Exported so the #7533 guard test can recompute every family clock without
 // re-implementing the version constants themselves.
@@ -236,7 +237,7 @@ const AVAILABLE_EVIDENCE_LIMIT = 6;
 // This floor is published on country pages, so keep it aligned with
 // docs/methodology/country-resilience-index.mdx#supported-readings-on-unranked-country-pages.
 export const SUPPORTED_READING_MIN_COVERAGE = 0.5;
-export const CHOKEPOINT_PAGE_CONTENT_VERSION = '2026-09-10';
+export const CHOKEPOINT_PAGE_CONTENT_VERSION = '2026-10-18';
 const SOURCES_PAGE_CONTENT_VERSION = '2026-09-10';
 // Dataset schema versions stamp Dataset JSON-LD shape changes, per family. They
 // must NOT fold into every family's sitemap/page lastmod — that made ~90% of main
@@ -251,7 +252,7 @@ export const DATASET_SCHEMA_CONTENT_VERSION = {
   crisis: '2026-09-03',
   tools: '2026-09-03',
 };
-export const CRISIS_PAGE_CONTENT_VERSION = '2026-09-10';
+export const CRISIS_PAGE_CONTENT_VERSION = '2026-10-18';
 // TOOLS_PAGE_CONTENT_VERSION and RESEARCH_PAGE_CONTENT_VERSION are exported
 // for the same reason as the constants above: the #7533 guard recomputes
 // their families' clocks from the real values.
@@ -1924,6 +1925,7 @@ export async function loadCorpusData({
     gitFileLastmod(rootDir, COUNTRY_REGIONS_PATH),
     gitFileLastmod(rootDir, MICROSTATE_TERRITORIES_PATH),
     gitFileLastmod(rootDir, RELATED_READING_PATH),
+    gitFileLastmod(rootDir, LIVE_PAGE_LINKS_PATH),
     // Inputs of the related-country links (scripts/country-related-links.mjs).
     gitFileLastmod(rootDir, CRISIS_REGISTRY_PATH),
     gitFileLastmod(rootDir, TENSION_PAIRS_PATH),
@@ -1976,6 +1978,7 @@ export async function loadCorpusData({
   const crisesLastmod = laterDate(
     gitFileLastmod(rootDir, CRISIS_REGISTRY_PATH),
     gitFileLastmod(rootDir, RELATED_READING_PATH),
+    gitFileLastmod(rootDir, LIVE_PAGE_LINKS_PATH),
     livePulse.capturedAt,
     CRISIS_PAGE_CONTENT_VERSION,
   );

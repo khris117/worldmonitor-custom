@@ -4,6 +4,9 @@
 //
 // Pure module: no Node or DOM APIs.
 
+/** A lastmod input of every page family that renders these links. */
+export const LIVE_PAGE_LINKS_PATH = 'scripts/live-pages/related-links.mjs';
+
 const LIVE = Object.freeze({
   debt: { href: '/tools/national-debt-clock/', label: 'National debt clock: live US and world government debt' },
   outages: { href: '/tools/internet-outages/', label: 'Internet outages right now, by country' },
@@ -48,10 +51,13 @@ export const LIVE_PAGE_RELATED = Object.freeze({
   ],
 });
 
+/** A navigation block: page word budgets count it separately from prose. */
 export function renderLiveDataLinks(links, escapeHtml, heading = 'Live data') {
   if (!links.length) return '';
-  return `      <h2>${escapeHtml(heading)}</h2>
+  return `      <section data-live-data-links>
+      <h2>${escapeHtml(heading)}</h2>
       <ul class="related">
 ${links.map((link) => `        <li><a href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a></li>`).join('\n')}
-      </ul>`;
+      </ul>
+      </section>`;
 }
