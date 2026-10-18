@@ -3106,7 +3106,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     assert.equal(body.error?.code, -32603, 'all-9-null reads must surface as -32603 cache_all_null');
   });
 
-  it('get_supply_chain_data still returns its 3 slices unchanged (regression — U6 must not touch get_supply_chain_data._cacheKeys)', async () => {
+  it('get_supply_chain_data preserves legacy slices and declares missing freight and GSCPI without chokepoint data', async () => {
     process.env.UPSTASH_REDIS_REST_URL = 'https://fake.upstash.io';
     process.env.UPSTASH_REDIS_REST_TOKEN = 'fake_token';
 
@@ -3117,8 +3117,7 @@ describe('api/mcp.ts — PRO MCP Server', () => {
 
     globalThis.fetch = async (url) => {
       const u = url.toString();
-      // U6 chokepoint keys MUST NOT be queried by get_supply_chain_data — if they are,
-      // the supply-chain tool was modified, violating the CRITICAL constraint.
+      // Chokepoint data belongs to get_chokepoint_status.
       if (
         u.includes(`/get/${encodeURIComponent('supply_chain:transit-summaries:v1')}`) ||
         u.includes(`/get/${encodeURIComponent('supply_chain:chokepoint_transits:v1')}`) ||
@@ -3161,8 +3160,9 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     assert.deepEqual(payload.data['shipping_stress'], shippingStressPayload, 'get_supply_chain_data._cacheKeys must still include supply_chain:shipping_stress:v1');
     assert.deepEqual(payload.data['customs-revenue'], customsRevenuePayload, 'get_supply_chain_data._cacheKeys must still include trade:customs-revenue:v1');
     assert.deepEqual(payload.data['flows'], comtradeFlowsPayload, 'get_supply_chain_data._cacheKeys must still include comtrade:flows:v1');
-    // Exactly 3 slices — no chokepoint keys leaked in.
-    assert.equal(Object.keys(payload.data).length, 3, 'get_supply_chain_data must return exactly 3 slices (U6 must not add to it)');
+    assert.deepEqual(Object.keys(payload.data).sort(), ['customs-revenue', 'flows', 'freight-rates', 'gscpi', 'shipping_stress']);
+    assert.equal(payload.data['freight-rates'], null, 'missing freight seed remains null');
+    assert.equal(payload.data.gscpi, null, 'missing GSCPI seed remains null');
   });
 
   // --- get_airspace ---
@@ -4583,5 +4583,70 @@ describe('api/mcp.ts — U7 Pro-path', () => {
     });
     const r = await verifyInternalMcpRequest(req, 'k');
     assert.equal(r, null, 'F11: 16-digit ts must reject');
+  });
+});
+
+describe('get_sanctions_data change feed contract', () => {
+  const tool = TOOL_REGISTRY.find(t => t.name === 'get_sanctions_data');
+  const now = Date.now();
+  const event = { at: now - 1000, effectiveAt: '0', op: 'added', list: 'SDN', id: 'SDN:1', name: 'Northern Star', et: 'vessel', cc: ['RU'], pr: ['TEST'] };
+  const log = { version: 1, fetchedAt: now, sourceFetchedAt: { SDN: now }, heldSources: ['SDN'], events: [
+    event, { ...event, at: now - 2 * 86400000, op: 'amended', prevPr: ['OLD'] },
+    { ...event, at: now - 8 * 86400000, op: 'removed' },
+    { ...event, cc: ['CA'], name: 'Other' },
+  ], gaps: [{ list: 'SDN', from: now - 3 * 86400000, to: now, reason: 'retained' }], truncatedBefore: now - 30 * 86400000 };
+  const data = () => ({ entities: [], pressure: { entries: [], countries: [] }, changes: structuredClone(log) });
+  it('advertises bounded history, accurate schema, standalone cache and 12h freshness', () => {
+    assert.equal(tool.inputSchema.properties.changes_since_days.maximum, 90);
+    assert.equal(tool.outputSchema.properties.data.properties.changes.properties.events.items.properties.op.enum.length, 3);
+    assert.ok(tool._cacheKeys.includes('sanctions:changes:v1'));
+    assert.ok(tool._freshnessChecks.some(c => c.key === 'seed-meta:sanctions:changes' && c.maxStaleMin === 720));
+    assert.equal(tool._subscriptionOnly, true);
+    assert.equal(tool._execute, undefined);
+  });
+  it('filters events before the cap, sorts newest first and preserves coverage gaps', () => {
+    const result = tool._postFilter(data(), { changes_since_days: 7, country: 'RU', entity_type: 'vessel', query: 'Northern', limit: 1 });
+    assert.deepEqual(result.changes.events, [event]);
+    assert.deepEqual(result.changes.gaps, log.gaps);
+    assert.equal(result.changes.truncatedBefore, log.truncatedBefore);
+    assert.equal(result.changes.sourceFetchedAt, undefined);
+    assert.equal(result.changes.heldSources, undefined);
+    assert.equal(tool._postFilter(data(), {}).changes, undefined);
+    assert.equal(tool._postFilter({ changes: null }, { changes_since_days: 7 }).changes, null);
+    for (const value of [0, 91, 1.5, '7', null]) {
+      assert.throws(() => tool._postFilter(data(), { changes_since_days: value }));
+    }
+  });
+  it('serves changes and validates arguments through the subscribed MCP transport', async t => {
+    const previousEnv = { ...process.env };
+    const previousFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+    });
+    process.env.MCP_INTERNAL_HMAC_SECRET = HMAC_SECRET;
+    process.env.UPSTASH_REDIS_REST_URL = 'https://sanctions.changes.test';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'test';
+    process.env.MCP_TELEMETRY = 'false';
+    const cache = { 'sanctions:entities:v1': [], 'sanctions:pressure:v1': {}, 'sanctions:changes:v1': log,
+      ...Object.fromEntries(['entities', 'pressure', 'changes'].map(key => [`seed-meta:sanctions:${key}`, { fetchedAt: now, recordCount: 4 }])) };
+    globalThis.fetch = async input => {
+      const url = String(input);
+      assert.ok(url.startsWith('https://sanctions.changes.test/get/'), url);
+      const key = decodeURIComponent(new URL(url).pathname.slice(5));
+      return new Response(JSON.stringify({ result: key in cache ? JSON.stringify(cache[key]) : null }));
+    };
+    const { mcpHandler } = await import('../api/mcp.ts');
+    const { deps } = makeProDeps();
+    const response = await mcpHandler(proReq('POST', callBody('get_sanctions_data', { changes_since_days: 7, country: 'RU' })), deps);
+    const body = await response.json();
+    assert.equal(body.error, undefined, JSON.stringify(body));
+    const envelope = JSON.parse(body.result.content[0].text);
+    assert.deepEqual(envelope.data.changes.events.map(e => e.op), ['added', 'amended']);
+    assert.equal(envelope.data.changes.gaps.length, 1);
+    assert.equal(envelope.stale, false);
+    const invalid = await mcpHandler(proReq('POST', callBody('get_sanctions_data', { changes_since_days: 91 }, 102)), deps);
+    assert.equal((await invalid.json()).error.code, -32602);
   });
 });
