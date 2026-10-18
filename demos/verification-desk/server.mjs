@@ -149,15 +149,20 @@ async function tts(text) {
   return Buffer.from(await res.arrayBuffer());
 }
 
-async function readRaw(req) {
+async function readRaw(req, timeoutMs = 0) {
   const chunks = [];
   let size = 0;
-  for await (const c of req) {
-    size += c.length;
-    if (size > 64_000) throw new Error('body too large');
-    chunks.push(c);
+  const timer = timeoutMs ? setTimeout(() => req.destroy(new Error('body read timed out')), timeoutMs) : null;
+  try {
+    for await (const c of req) {
+      size += c.length;
+      if (size > 64_000) throw new Error('body too large');
+      chunks.push(c);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  } finally {
+    clearTimeout(timer);
   }
-  return Buffer.concat(chunks).toString('utf8');
 }
 
 async function readBody(req) {
@@ -184,6 +189,7 @@ const server = createServer(async (req, res) => {
     // Hosted desk: everything sits behind DESK_PASSWORD (see lib/access.mjs).
     if (access.enabled()) {
       if (url.pathname === '/login' && req.method === 'POST') {
+        const given = new URLSearchParams(await readRaw(req, 2000)).get('password');
         const retryAfter = throttle.retryAfter();
         if (retryAfter) {
           res.setHeader('Retry-After', retryAfter);
@@ -191,7 +197,6 @@ const server = createServer(async (req, res) => {
         }
         let success = false;
         try {
-          const given = new URLSearchParams(await readRaw(req)).get('password');
           success = access.passwordMatches(given);
           if (!success) {
             res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });

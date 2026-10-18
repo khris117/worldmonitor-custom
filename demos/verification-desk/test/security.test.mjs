@@ -6,6 +6,23 @@ import { once } from 'node:events';
 import { fetchArticleText } from '../lib/sources.mjs';
 import { loginThrottle } from '../lib/access.mjs';
 
+const fixtureEnv = (extra) => ({
+  PATH: process.env.PATH,
+  DESK_OFFLINE: '1',
+  DESK_HOST: '127.0.0.1',
+  DESK_PASSWORD: '',
+  DESK_PUBLIC_ORIGIN: '',
+  RAILWAY_PUBLIC_DOMAIN: '',
+  WORLDMONITOR_API_KEY: '',
+  WORLDMONITOR_MCP_TOKEN: '',
+  ANTHROPIC_API_KEY: '',
+  ELEVENLABS_API_KEY: '',
+  ELEVENLABS_VOICE_ID: '',
+  LIVEAVATAR_API_KEY: '',
+  LIVEAVATAR_AVATAR_ID: '',
+  ...extra,
+});
+
 async function startDesk(t, extra = {}) {
   const portFinder = createServer();
   await new Promise((resolve) => portFinder.listen(0, '127.0.0.1', resolve));
@@ -13,7 +30,7 @@ async function startDesk(t, extra = {}) {
   await new Promise((resolve) => portFinder.close(resolve));
   const child = spawn(process.execPath, ['--import', 'tsx', 'server.mjs'], {
     cwd: new URL('..', import.meta.url),
-    env: { PATH: process.env.PATH, DESK_OFFLINE: '1', PORT: String(port), ...extra },
+    env: fixtureEnv({ PORT: String(port), ...extra }),
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   t.after(async () => {
@@ -84,9 +101,26 @@ test('parallel login failures cannot bypass the process-wide throttle', { timeou
   assert.equal((await call('/login', { method: 'POST', headers, body: 'password=a-long-stage-password' })).status, 303);
 });
 
+test('a stalled login upload does not block a complete login and is closed', { timeout: 10000 }, async (t) => {
+  const call = await startDesk(t, { DESK_PASSWORD: 'a-long-stage-password' });
+  const { port } = await call('/api/config', { headers: { 'Sec-Fetch-Site': 'same-origin' } });
+  const slow = request({ hostname: '127.0.0.1', port, path: '/login', method: 'POST', headers: {
+    Host: `localhost:${port}`, 'Sec-Fetch-Site': 'same-origin', 'Content-Length': '1000',
+  } });
+  const closed = new Promise((resolve) => slow.once('error', resolve));
+  t.after(() => slow.destroy());
+  slow.write('password=x');
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const complete = await call('/login', { method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' }, body: 'password=a-long-stage-password' });
+  assert.equal(complete.status, 303);
+  const error = await closed;
+  assert.equal(error.code, 'ECONNRESET');
+  assert.equal((await call('/login', { method: 'POST', headers: { 'Sec-Fetch-Site': 'same-origin' }, body: 'password=a-long-stage-password' })).status, 303);
+});
+
 test('short hosted passwords fail before listening', { timeout: 15000 }, async () => {
   const child = spawn(process.execPath, ['--import', 'tsx', 'server.mjs'], {
-    cwd: new URL('..', import.meta.url), env: { PATH: process.env.PATH, DESK_OFFLINE: '1', PORT: '0', DESK_PASSWORD: 'short' }, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: new URL('..', import.meta.url), env: fixtureEnv({ PORT: '0', DESK_PASSWORD: 'short' }), stdio: ['ignore', 'pipe', 'pipe'],
   });
   let output = '';
   child.stdout.on('data', (data) => { output += data; });

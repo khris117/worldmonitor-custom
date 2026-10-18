@@ -34,7 +34,6 @@ export function authorized(req, now = Date.now()) {
 
 export const passwordMatches = (given) => enabled() && same(given ?? '', password());
 
-// Reserve before reading the body so concurrent requests cannot share an attempt.
 export function loginThrottle() {
   let busy = false;
   let failures = 0;
