@@ -72,8 +72,8 @@ function bodyHtml(record) {
     .map((market) => `            <tr><td>${market.url ? `<a href="${escapeHtml(market.url)}" rel="nofollow">${escapeHtml(market.title)}</a>` : escapeHtml(market.title)}</td><td>${market.yesPct}%</td><td>${escapeHtml(formatUsdCompact(market.volumeUsd, 1))}</td><td>${escapeHtml(market.closes || '—')}</td><td>${escapeHtml(market.source)}</td></tr>`)
     .join('\n');
   return `        <div class="grid">
-${metric('Markets tracked', String(record.total))}
-${metric('Volume traded', formatUsdCompact(record.totalVolumeUsd, 1))}
+${metric('Markets listed', String(record.total))}
+${metric('Volume traded, listed markets', formatUsdCompact(record.totalVolumeUsd, 1))}
         </div>
         <div class="table-scroll">
           <table>
