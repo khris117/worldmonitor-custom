@@ -553,7 +553,7 @@ components:
                     type: integer
                     format: int32
                     description: Maximum number of matching sanctioned entities to return.
-            description: LookupSanctionEntityRequest searches the OFAC entity index by name, vessel, or aircraft.
+            description: LookupSanctionEntityRequest searches the local OFAC and Canada SEMA index by name.
         LookupSanctionEntityResponse:
             type: object
             properties:
@@ -566,7 +566,13 @@ components:
                     format: int32
                 source:
                     type: string
-            description: LookupSanctionEntityResponse contains matched entities from OFAC + OpenSanctions.
+                    description: |-
+                        Lists represented by primary record IDs in the searched local index.
+                         Merged records retain only their primary source ID; complete list coverage is not guaranteed.
+                         Empty, unavailable, and unsearched states are labelled separately.
+            description: |-
+                LookupSanctionEntityResponse contains name matches from the local OFAC and Canada SEMA index.
+                 UK, EU, and UN lists are not searched directly.
         SanctionEntityMatch:
             type: object
             properties:

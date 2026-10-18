@@ -4,7 +4,7 @@ package worldmonitor.sanctions.v1;
 
 import "sebuf/http/annotations.proto";
 
-// LookupSanctionEntityRequest searches the OFAC entity index by name, vessel, or aircraft.
+// LookupSanctionEntityRequest searches the local OFAC and Canada SEMA index by name.
 message LookupSanctionEntityRequest {
   // Search text for a sanctioned person, organization, vessel, or aircraft.
   string q = 1 [(sebuf.http.query) = { name: "q" }];
@@ -21,9 +21,13 @@ message SanctionEntityMatch {
   repeated string programs = 5;
 }
 
-// LookupSanctionEntityResponse contains matched entities from OFAC + OpenSanctions.
+// LookupSanctionEntityResponse contains name matches from the local OFAC and Canada SEMA index.
+// UK, EU, and UN lists are not searched directly.
 message LookupSanctionEntityResponse {
   repeated SanctionEntityMatch results = 1;
   int32 total = 2;
+  // Lists represented by primary record IDs in the searched local index.
+  // Merged records retain only their primary source ID; complete list coverage is not guaranteed.
+  // Empty, unavailable, and unsearched states are labelled separately.
   string source = 3;
 }
