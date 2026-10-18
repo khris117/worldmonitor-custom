@@ -1660,7 +1660,7 @@ components:
                     format: int64
                     description: |-
                         When the seeder last fetched the outage list from Cloudflare Radar, Unix
-                         epoch milliseconds. A retained payload keeps its original time; 0 when unknown.. Warning: Values > 2^53 may lose precision in JavaScript
+                         epoch milliseconds. A retained payload keeps its original time; 0 when unknown. Warning: Values > 2^53 may lose precision in JavaScript
             description: ListInternetOutagesResponse contains internet outages matching the request.
         InternetOutage:
             type: object
