@@ -94,7 +94,7 @@ describe('direct country paid original reuse', () => {
     let historyReads = 0;
     let historyTime = now;
     globalThis.fetch = async (input, options) => {
-      if (!String(input).startsWith('https://history.test')) return gatewayFetch(input, options);
+      if (new URL(String(input)).origin !== 'https://history.test') return gatewayFetch(input, options);
       historyReads++;
       const point = { d: new Date(historyTime).toISOString().slice(0, 10), v: 'fixture-v1', s: 17, u: 1, c: 2, m: 3, n: 4, t: historyTime };
       return Response.json([{ result: [JSON.stringify(point)] }]);
