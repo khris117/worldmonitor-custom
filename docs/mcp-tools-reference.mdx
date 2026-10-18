@@ -1717,11 +1717,11 @@ Screen OFAC SDN, OFAC Consolidated and Canada SEMA entities, or read country pre
 | `country` | string | Filter sanctioned entities and pressure scores to one ISO 3166-1 alpha-2 country code. Country names and alpha-3 codes are accepted; unresolved inputs return Invalid params. |
 | `entity_type` | string | Filter to one entity type (case-insensitive substring, e.g. "vessel", "aircraft", "person", "entity"). |
 | `query` | string | Keep only sanctioned entities whose name contains this text (case-insensitive). |
-| `screen` | string | Screen a name, alias or IMO identifier against the seeded lists (2-200 characters). Omit `changes_since_days` for entity screening. |
+| `screen` | string | Screen a name, alias or IMO identifier against the seeded lists (2-200 characters). Omit changes_since_days for entity screening. |
 | `min_score` | number | Minimum screening score from 0 to 100 (default 70); applies only with screen. |
 | `changes_since_days` | integer | Select history only for the last 1-90 days. Country, entity_type and query filter events; gaps remain visible on every page. |
-| `changes_cursor` | string | Continue from `changes.nextCursor` with the same filters. Restart if the seeded history changed. |
-| `limit` | number | List cap, default 30. In history mode, 0 or a value above 100 returns at most 100 events per page; pages may be smaller to fit the response budget. Outside history mode, 0 removes the cap. |
+| `changes_cursor` | string | Continue from changes.nextCursor with the same filters. Restart if the seeded history changed. |
+| `limit` | number | List cap, default 30; 0 removes the cap except in history mode, where pages contain at most 100 events and may be smaller to fit the response budget. |
 
 - **API endpoints:** `GET /api/sanctions/v1/list-sanctions-pressure`, `GET /api/sanctions/v1/lookup-sanction-entity`
 - **Access:** `subscription` — Pro/API subscription required. Accepts the universal `summary` argument.
