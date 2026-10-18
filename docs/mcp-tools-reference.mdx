@@ -1717,7 +1717,7 @@ Read OFAC SDN and Consolidated lists, Canada SEMA sanctions and country pressure
 | `country` | string | Filter sanctioned entities and pressure scores to one ISO 3166-1 alpha-2 country code. Country names and alpha-3 codes are accepted; unresolved inputs return Invalid params. |
 | `entity_type` | string | Filter to one entity type (case-insensitive substring, e.g. "vessel", "aircraft", "person", "entity"). |
 | `query` | string | Keep only sanctioned entities whose name contains this text (case-insensitive). |
-| `changes_since_days` | integer | Include observed changes and coverage gaps from the last 1–90 days. Country, type, query and limit filter events; gaps remain visible. |
+| `changes_since_days` | integer | Include observed designation changes and coverage gaps from the last 1-90 days. Country, entity_type, query and limit filter events; gaps remain visible. |
 | `limit` | number | Cap entities, recent pressure entries and change events (default 30, pass 0 for no cap). |
 
 - **API endpoints:** `GET /api/sanctions/v1/list-sanctions-pressure`, `GET /api/sanctions/v1/lookup-sanction-entity`

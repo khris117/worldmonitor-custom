@@ -11,6 +11,7 @@ import { projectCountrySanctions } from './shared/country-sanctions-signals.mjs'
 import { loadEnvFile, runSeed, verifySeedKey, readSeedSnapshot, writeExtraKeyWithMeta } from './_seed-utils.mjs';
 import { fetchOfacSourceResponse } from './_sanctions-source.mjs';
 import { buildSanctionsChanges } from './_sanctions-changes.mjs';
+import { getOptionalUpstashCreds, upstashCommand } from './_upstash-rest.mjs';
 import { SANCTIONS_MAX_CONTENT_AGE_MIN, SANCTIONS_SOURCE_VERSION, SEMA_SOURCE, ingestSemaEntries, mergeSanctionEntries, ofacRegistrationToIdentifier, sanctionsListContentMeta } from './_sema-sanctions.mjs';
 
 loadEnvFile(import.meta.url);
@@ -27,6 +28,7 @@ const SOURCE_SNAPSHOTS_KEY = 'sanctions:source-snapshots:v1';
 const SOURCE_SNAPSHOTS_META_KEY = 'seed-meta:sanctions:source-snapshots';
 const CHANGES_KEY = 'sanctions:changes:v1';
 const CHANGES_META_KEY = 'seed-meta:sanctions:changes';
+const CHANGES_ACTIVATION_KEY = 'seed-activated:sanctions:changes';
 const CHANGES_TTL = 100 * 86400;
 // OFAC's lists change slowly, and a Railway container can lose egress to
 // treasury.gov/S3 for several runs; 12h dropped ~20k OFAC entities on 2026-09-27.
@@ -819,6 +821,9 @@ runSeed('sanctions', 'pressure', CANONICAL_KEY, fetchSanctionsPressure, {
       });
     const count = Object.values(data._sourceSnapshots).reduce((sum, snapshot) => sum + (snapshot?.records.length ?? 0), 0);
     await writeExtraKeyWithMeta(SOURCE_SNAPSHOTS_KEY, encodeSourceSnapshots(data._sourceSnapshots), SOURCE_SNAPSHOTS_TTL, count, SOURCE_SNAPSHOTS_META_KEY);
+    const creds = getOptionalUpstashCreds();
+    if (!creds) throw new Error('SANCTIONS_CHANGES_ACTIVATION_CREDENTIALS_MISSING');
+    await upstashCommand(creds, ['SET', CHANGES_ACTIVATION_KEY, '1']);
   },
   extraKeys: [
     {

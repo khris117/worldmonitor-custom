@@ -1416,7 +1416,11 @@ const SEED_META = {
   regionalSnapshots:   { key: 'seed-meta:intelligence:regional-snapshots',    maxStaleMin: 720 }, // 6h cron via seed-bundle-derived-signals; 720min = 12h = 2x interval
   regionalBriefs:      { key: 'seed-meta:intelligence:regional-briefs',      maxStaleMin: 20160 }, // weekly cron; 20160min = 14 days = 2x interval
   sanctionsEntities:   { key: 'seed-meta:sanctions:entities',                 maxStaleMin: 720 }, // same 6h producer; co-pinned with pressure so both alarm before the 18h TTL
-  sanctionsChanges:    { key: 'seed-meta:sanctions:changes',                  maxStaleMin: 720 },
+  sanctionsChanges: {
+    key: 'seed-meta:sanctions:changes', maxStaleMin: 720,
+    activationKey: 'seed-activated:sanctions:changes',
+    cutover: { mode: 'activation-marker', fromKey: null, issue: 9352, activationKey: 'seed-activated:sanctions:changes' },
+  },
   radiationWatch:      { key: 'seed-meta:radiation:observations',             maxStaleMin: 30 },
   groceryBasket:       { key: 'seed-meta:economic:grocery-basket',            maxStaleMin: 10080 }, // weekly seed; 10080 = 7 days
   bigmac:              { key: 'seed-meta:economic:bigmac',                    maxStaleMin: 10080 }, // weekly seed; 10080 = 7 days
@@ -2059,6 +2063,7 @@ const ON_DEMAND_KEYS = new Set([
   // shipping-webhook-worker Railway service is provisioned. The worker SETs the
   // durable marker on its first tick that reads the score feed; strict from then on.
   'shippingWebhookWorker',
+  'sanctionsChanges',
   // Same deployment-order bridge as chinaCoverage: Vercel can ship this reader
   // before seed-bundle-macro's next 08:00 UTC tick publishes the first CBR
   // table, and the every-15-minute freshness monitor would otherwise report an
@@ -2206,6 +2211,7 @@ const ACTIVATION_MARKERS = {
   pizzintHistory: SEED_META.pizzintHistory.activationKey,
   companyMonitoringWorker: 'seed-activated:company-monitoring:worker',
   shippingWebhookWorker: SEED_META.shippingWebhookWorker.activationKey,
+  sanctionsChanges: SEED_META.sanctionsChanges.activationKey,
   // Written by scripts/seed-cbr-rates.mjs (CBR_ACTIVATION_KEY) in runSeed's
   // afterPublish hook, so it exists only once a real table has been published.
   cbrRates: 'seed-activated:economic:cbr-rates',

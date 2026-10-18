@@ -50,6 +50,8 @@ async function publish({ successes = ['SDN', 'CONSOLIDATED', SEMA_SOURCE], store
       if (writeError) throw new Error('synthetic cache write failure');
       writes.push(normalize(args));
     },
+    getOptionalUpstashCreds: () => ({ restUrl: 'https://sanctions.test', token: 'test' }),
+    upstashCommand: async (_creds, command) => writes.push(normalize(command)),
     runSeed: (_d, _r, _k, _f, opts) => { options = opts; },
     ...io,
   });
@@ -83,6 +85,7 @@ describe('sanctions source lifecycle', () => {
     assert.equal(metaKey, 'seed-meta:sanctions:changes');
     assert.equal(diagnostics.sourceState, 'ok');
     assert.equal(next.writes[1][0], 'sanctions:source-snapshots:v1');
+    assert.deepEqual(next.writes[2], ['SET', 'seed-activated:sanctions:changes', '1']);
     const failed = await publish({ stored, history: normalize(first.data._changes), successes: [], clock: now + 6 * 3600000 });
     await save(failed);
     assert.equal(failed.data._changes.events.length, 0);
@@ -104,6 +107,13 @@ describe('sanctions source lifecycle', () => {
     assert.equal(classify(1024).status, 'OK');
     assert.equal(classify(0).status, 'EMPTY');
     assert.equal(classify(1024, { sourceState: 'error', errorCode: 'SANCTIONS_CHANGES_HELD' }).status, 'SEED_ERROR');
+    const missing = activated => health.classifyKey('sanctionsChanges', key, { allowOnDemand: true }, {
+      now, containmentEvidenceByName: new Map(), keyStrens: new Map([[key, 0]]), keyErrors: new Map(),
+      keyMetaValues: new Map(), keyMetaErrors: new Map(),
+      activationStates: new Map([['sanctionsChanges', activated]]),
+    });
+    assert.equal(missing(false).status, 'EMPTY_ON_DEMAND');
+    assert.equal(missing(true).status, 'EMPTY');
   });
 
   it('captures the actual preceding state clock and keeps expired or legacy baselines unknown', async () => {
