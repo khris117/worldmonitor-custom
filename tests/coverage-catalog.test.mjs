@@ -38,6 +38,10 @@ describe('coverage catalog text', () => {
     assert.equal(tooltipText('Brightness >360K.'), 'Brightness >360K.');
   });
 
+  it('splits sentences only at a terminator followed by a space', () => {
+    assert.equal(tooltipText('Models such as Llama 3.3 and GPT-4.1. Click to open.'), 'Models such as Llama 3.3 and GPT-4.1.');
+  });
+
   it('keeps sentences that are not interaction hints', () => {
     assert.equal(
       tooltipText('<strong>Methodology</strong> Composite score.<br>Auto-refreshes every 5 minutes.'),
@@ -107,14 +111,15 @@ describe('coverage catalog panel groups', () => {
     assert.equal(byId.europe.description, 'Headlines from France 24.');
   });
 
-  it('lists a panel once, under one group per label, with every dashboard it appears on', () => {
-    const groups = buildPanelGroups({ allPanels, categoryMap, locale });
+  it('lists a panel once, under one group per label, on the dashboards that register it', () => {
+    const isNative = (id, variant) => (id === 'markets' ? variant === 'finance' : true);
+    const groups = buildPanelGroups({ allPanels, categoryMap, locale, isNative });
     assert.deepEqual(groups.map((group) => group.label), ['Core', 'Markets']);
     const markets = groups[1].panels;
     assert.equal(markets.length, 1);
-    assert.deepEqual(markets[0].variants, ['tech', 'finance']);
+    assert.deepEqual(markets[0].variants, ['finance'], 'picker categories do not decide where a panel exists');
     assert.equal(markets[0].pro, true);
-    assert.equal(groups[0].panels[0].variants.length, 6, 'a category with no variants is on every dashboard');
+    assert.equal(groups[0].panels[0].variants.length, 6);
   });
 
   it('fails when a panel is in no picker category or a written description names no panel', () => {
@@ -168,8 +173,16 @@ describe('coverage catalog page', () => {
     assert.equal(faq?.mainEntity?.[0]?.name, 'What does World Monitor cover?');
     assert.match(html, /<link rel="canonical" href="https:\/\/www\.worldmonitor\.app\/reference\/coverage\/">/);
     assert.equal(manifest.sections.coverage.index, '/reference/coverage/');
-    const chokepoints = readFileSync(join(outDir, 'chokepoints', 'index.html'), 'utf8');
-    assert.ok(chokepoints.includes('<a href="/reference/coverage/">Coverage</a>'));
+    for (const page of ['chokepoints/index.html', 'sources/index.html', ...manifest.sections.sources.routes.map((route) => `${route.slice(1)}index.html`)]) {
+      const pageHtml = readFileSync(join(outDir, page), 'utf8');
+      assert.ok(pageHtml.includes('<a href="/reference/coverage/">Coverage</a>'), `${page} links the coverage catalog`);
+    }
+  });
+
+  it('lists each panel on the dashboards that register it', () => {
+    const panels = Object.fromEntries(dataset.panelGroups.flatMap((group) => group.panels).map((panel) => [panel.id, panel]));
+    assert.deepEqual(panels['fear-greed'].variants, ['full', 'finance']);
+    assert.ok(!panels['live-news'].variants.includes('happy'));
   });
 
   it('keeps written descriptions for panels that exist', () => {

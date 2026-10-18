@@ -84,7 +84,9 @@ export function tooltipText(html) {
     .replace(/\.(\s*\.)+/g, '.')
     .replace(/;\s*$/, '')
     .trim();
-  const sentences = flat.match(/[^.!?]+[.!?]*/g) || [];
+  // A terminator only ends a sentence before a space or the end, so "Llama 3.3"
+  // and "GPT-4.1" stay whole.
+  const sentences = flat.match(/.+?[.!?]+(?=\s|$)|.+$/g) || [];
   return sentences
     .map((sentence) => sentence.trim())
     .filter((sentence) => sentence && !UI_HINT_SENTENCE.test(sentence))
@@ -161,32 +163,30 @@ export function feedPanelDescription(names) {
     : `Headlines from ${names.length} news feeds, including ${proseList(shown)}.`;
 }
 
-function variantsFor(declared) {
-  return Array.isArray(declared) && declared.length > 0 ? declared : VARIANT_IDS;
-}
-
 /**
- * Panels grouped the way the dashboard's panel picker groups them. A panel
- * listed under several categories appears once, under the first, with the
- * union of the dashboards those categories belong to.
+ * Panels grouped the way the dashboard's panel picker groups them; a panel
+ * listed under several categories appears once, under the first. Its
+ * dashboards come from the per-variant panel registries (`isNative`), not the
+ * categories: a category spans more dashboards than some of its panels.
  */
-export function buildPanelGroups({ allPanels, categoryMap, locale, writtenDescriptions = {}, feedNames = new Map() }) {
+export function buildPanelGroups({
+  allPanels,
+  categoryMap,
+  locale,
+  writtenDescriptions = {},
+  feedNames = new Map(),
+  isNative = () => true,
+}) {
   const components = locale?.components || {};
   const headerLabels = locale?.header || {};
-  const seen = new Map();
+  const seen = new Set();
   const groups = [];
   const groupByLabel = new Map();
   for (const category of Object.values(categoryMap)) {
     const label = headerLabels[category.labelKey.replace(/^header\./, '')] || category.labelKey;
-    const variants = variantsFor(category.variants);
     for (const id of category.panelKeys) {
       const config = allPanels[id];
-      if (!config) continue;
-      const existing = seen.get(id);
-      if (existing) {
-        for (const variant of variants) existing.variants.add(variant);
-        continue;
-      }
+      if (!config || seen.has(id)) continue;
       let group = groupByLabel.get(label);
       if (!group) {
         group = { label, panels: [] };
@@ -200,19 +200,13 @@ export function buildPanelGroups({ allPanels, categoryMap, locale, writtenDescri
           || writtenDescriptions[id]
           || feedPanelDescription(feedNames.get(id)),
         pro: config.premium === 'locked',
-        variants: new Set(variants),
+        variants: VARIANT_IDS.filter((variant) => isNative(id, variant)),
       };
-      seen.set(id, entry);
+      seen.add(id);
       group.panels.push(entry);
     }
   }
-  return groups.map((group) => ({
-    label: group.label,
-    panels: group.panels.map((panel) => ({
-      ...panel,
-      variants: VARIANT_IDS.filter((variant) => panel.variants.has(variant)),
-    })),
-  }));
+  return groups;
 }
 
 export function buildLayerEntries({ registry, explanations, catalogKeys, allowedKeysForVariant, locale }) {
@@ -261,6 +255,7 @@ export async function loadCoverageCatalog({ importModule, readJson }) {
       locale,
       writtenDescriptions,
       feedNames: feedNamesByCategory(serverFeeds.VARIANT_FEEDS),
+      isNative: panels.isPanelNativeToVariant,
     }),
     layers: buildLayerEntries({
       registry: layers.LAYER_REGISTRY,
