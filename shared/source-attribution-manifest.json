@@ -983,10 +983,15 @@
       "host": "api.opensanctions.org",
       "provider": "OpenSanctions",
       "kind": "structured",
-      "observed": false,
+      "observed": true,
       "license": "OpenSanctions terms; dataset-specific license varies by source",
       "attribution": "OpenSanctions; link to the matching entity/dataset.",
-      "status": "excluded"
+      "status": "terms-review",
+      "references": [
+        {
+          "path": "server/worldmonitor/sanctions/v1/lookup-entity.ts"
+        }
+      ]
     },
     {
       "host": "api.ossinsight.io",
