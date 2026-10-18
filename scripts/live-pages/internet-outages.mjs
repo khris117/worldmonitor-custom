@@ -4,10 +4,15 @@ import {
   formatStaticDateTime,
   metric,
   renderLiveSection,
+  requireFreshTimestamp,
   UnpublishableReading,
 } from './common.mjs';
 
 const LISTED_OUTAGES = 15;
+// The seed runs every 30 minutes and health flags it after 30 (api/health.js
+// outages). Retention can keep a list alive after Radar fails; past this age
+// it is not current.
+const MAX_AGE_MS = 2 * 3_600_000;
 
 // The seeder sets severity from Cloudflare's scope (scripts/seed-internet-outages.mjs):
 // nationwide is TOTAL, regional is MAJOR, anything narrower is PARTIAL.
@@ -37,12 +42,13 @@ function causeOf(outage) {
 }
 
 /**
- * The outages feed carries no capture time, so freshness is the request time.
- * The handler fails (and the page keeps its built reading) when the seed is
- * missing, so an empty list here is a real "no disruptions" reading.
+ * `fetchedAt` is when the seeder last read Cloudflare Radar. The handler fails
+ * (and the page keeps its built reading) when the seed is missing, so an empty
+ * list here is a real "no disruptions" reading.
  */
 export function internetOutagesRecord(payload, now = Date.now()) {
   if (!Array.isArray(payload?.outages)) throw new UnpublishableReading('internet outages: no outage list');
+  const asOf = requireFreshTimestamp(payload.fetchedAt, { now, maxAgeMs: MAX_AGE_MS, label: 'internet outages' });
   const outages = payload.outages
     .map((outage) => {
       const detectedAt = finiteNumber(outage.detectedAt);
@@ -61,7 +67,7 @@ export function internetOutagesRecord(payload, now = Date.now()) {
     .filter(Boolean)
     .sort((a, b) => Date.parse(b.detectedAt) - Date.parse(a.detectedAt));
   return {
-    asOf: new Date(now).toISOString(),
+    asOf,
     total: outages.length,
     ongoing: outages.filter((outage) => outage.ongoing).length,
     countries: new Set(outages.map((outage) => outage.country)).size,
@@ -74,7 +80,10 @@ function answerText(record) {
   if (!record) return 'World Monitor has no current internet outage reading.';
   if (record.total === 0) return `As of ${formatStaticDateTime(record.asOf)}, World Monitor lists no internet disruptions in the current Cloudflare Radar window.`;
   const latest = record.outages[0];
-  return `As of ${formatStaticDateTime(record.asOf)}, World Monitor lists ${record.total} internet disruptions in ${record.countries} countries reported by Cloudflare Radar since ${formatStaticDateTime(record.oldest)}, ${record.ongoing} of them ongoing. The most recent is a ${latest.severity.toLowerCase()} disruption in ${latest.country}${latest.cause ? ` (${latest.cause.toLowerCase()})` : ''}, detected ${formatStaticDateTime(latest.detectedAt)}.`;
+  const disruptions = record.total === 1 ? '1 internet disruption' : `${record.total} internet disruptions`;
+  const countries = record.countries === 1 ? '1 country' : `${record.countries} countries`;
+  const status = record.total === 1 ? (record.ongoing ? 'still ongoing' : 'now ended') : `${record.ongoing} of them ongoing`;
+  return `As of ${formatStaticDateTime(record.asOf)}, World Monitor lists ${disruptions} in ${countries} reported by Cloudflare Radar since ${formatStaticDateTime(record.oldest)}, ${status}. ${record.total === 1 ? 'It was' : 'The most recent is'} a ${latest.severity.toLowerCase()} disruption in ${latest.country}${latest.cause ? ` (${latest.cause.toLowerCase()})` : ''}, detected ${formatStaticDateTime(latest.detectedAt)}.`;
 }
 
 function bodyHtml(record) {

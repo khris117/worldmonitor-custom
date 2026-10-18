@@ -36,7 +36,10 @@ export function requireFreshTimestamp(value, { now, maxAgeMs, label }) {
   return new Date(timestamp).toISOString();
 }
 
+// Number(null) and Number('') are 0, which would publish a missing value as a
+// real zero; absent stays null.
 export function finiteNumber(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
   const number = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(number) ? number : null;
 }

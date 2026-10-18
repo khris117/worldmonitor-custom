@@ -50,6 +50,8 @@ export function fearGreedRecord(payload, now = Date.now()) {
   const cnnScore = finiteNumber(payload.cnnFearGreed);
   const aaiiBull = finiteNumber(payload.aaiiBull);
   const aaiiBear = finiteNumber(payload.aaiiBear);
+  // The handler sends vix: 0 when VIX is unavailable.
+  const vix = finiteNumber(payload.vix);
   return {
     asOf,
     score: round1(score),
@@ -58,7 +60,7 @@ export function fearGreedRecord(payload, now = Date.now()) {
     categories,
     cnn: cnnScore !== null && cnnScore > 0 && payload.cnnLabel ? { score: cnnScore, label: String(payload.cnnLabel) } : null,
     aaii: aaiiBull !== null && aaiiBear !== null && aaiiBull + aaiiBear > 0 ? { bull: round1(aaiiBull), bear: round1(aaiiBear) } : null,
-    vix: finiteNumber(payload.vix),
+    vix: vix !== null && vix > 0 ? vix : null,
   };
 }
 

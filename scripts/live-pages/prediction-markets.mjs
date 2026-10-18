@@ -63,7 +63,7 @@ export function predictionMarketsRecord(payload, now = Date.now()) {
 function answerText(record) {
   if (!record) return 'World Monitor has no current prediction market reading. The captured markets are older than six hours or unavailable.';
   const top = record.markets[0];
-  return `As of ${formatStaticDateTime(record.asOf)}, World Monitor lists the ${record.total} most traded Polymarket and Kalshi markets it follows. The most traded is "${top.title}" on ${top.source}, priced at ${top.yesPct}% yes with ${formatUsdCompact(top.volumeUsd, 1)} traded.`;
+  return `As of ${formatStaticDateTime(record.asOf)}, World Monitor tracks ${record.total} Polymarket and Kalshi ${record.total === 1 ? 'market' : 'markets'}. The most traded is "${top.title}" on ${top.source}, priced at ${top.yesPct}% yes with ${formatUsdCompact(top.volumeUsd, 1)} traded.`;
 }
 
 function bodyHtml(record) {
@@ -72,12 +72,12 @@ function bodyHtml(record) {
     .map((market) => `            <tr><td>${market.url ? `<a href="${escapeHtml(market.url)}" rel="nofollow">${escapeHtml(market.title)}</a>` : escapeHtml(market.title)}</td><td>${market.yesPct}%</td><td>${escapeHtml(formatUsdCompact(market.volumeUsd, 1))}</td><td>${escapeHtml(market.closes || '—')}</td><td>${escapeHtml(market.source)}</td></tr>`)
     .join('\n');
   return `        <div class="grid">
-${metric('Markets listed', String(record.total))}
-${metric('Volume traded, listed markets', formatUsdCompact(record.totalVolumeUsd, 1))}
+${metric('Markets tracked', String(record.total))}
+${metric('Volume traded, all tracked markets', formatUsdCompact(record.totalVolumeUsd, 1))}
         </div>
         <div class="table-scroll">
           <table>
-            <caption>Most traded markets: the price of "yes" read as a probability</caption>
+            <caption>${record.markets.length < record.total ? `The ${record.markets.length} most traded of ${record.total} tracked markets` : 'Tracked markets by volume'}: the price of "yes" read as a probability</caption>
             <thead><tr><th scope="col">Question</th><th scope="col">Yes</th><th scope="col">Volume</th><th scope="col">Closes</th><th scope="col">Venue</th></tr></thead>
             <tbody>
 ${rows}

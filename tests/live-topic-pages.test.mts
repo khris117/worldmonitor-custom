@@ -10,7 +10,7 @@ import {
   liveTopicReading,
   liveTopicRpcPath,
 } from '../scripts/live-pages/index.mjs';
-import { liveSectionMarkers, replaceLiveSection } from '../scripts/live-pages/common.mjs';
+import { finiteNumber, liveSectionMarkers, replaceLiveSection } from '../scripts/live-pages/common.mjs';
 import { debtAt } from '../scripts/live-pages/national-debt.mjs';
 import { isPublicSharedRpcRequest, LIVE_TOPIC_RPC_PATHS } from '../src/shared/public-rpc-cache.ts';
 import { WORLD_MONITOR_ORG } from '../scripts/build-crawlable-corpus.mjs';
@@ -64,8 +64,9 @@ function debtPayload(seededAt = new Date(NOW - 2 * 24 * HOUR).toISOString()) {
   };
 }
 
-function outagesPayload() {
+function outagesPayload(fetchedAt = NOW - 20 * 60_000) {
   return {
+    fetchedAt,
     outages: [
       { id: 'a', country: 'Namibia', severity: 'OUTAGE_SEVERITY_TOTAL', categories: ['Cloudflare Radar', 'POWER OUTAGE'], detectedAt: NOW - 4 * 24 * HOUR, endedAt: NOW - 3 * 24 * HOUR, description: 'Substation fault.', link: 'https://x.com/CloudflareRadar/status/1' },
       { id: 'b', country: 'Russian Federation', severity: 'OUTAGE_SEVERITY_PARTIAL', categories: ['Cloudflare Radar', 'MILITARY ACTION'], detectedAt: NOW - 11 * 24 * HOUR, endedAt: 0, description: '', link: 'javascript:alert(1)' },
@@ -113,7 +114,7 @@ describe('live topic readings', () => {
     assert.equal(record.ongoing, 1);
     assert.equal(record.outages[0].severity, 'Nationwide');
     assert.equal(record.outages[1].link, null);
-    const empty = liveTopicReading(page('internet-outages'), { outages: [] }, NOW);
+    const empty = liveTopicReading(page('internet-outages'), { fetchedAt: NOW, outages: [] }, NOW);
     assert.equal(empty.total, 0, 'an empty seeded list is a real "no disruptions" reading');
   });
 
@@ -128,6 +129,64 @@ describe('live topic readings', () => {
   it('lets a programming error propagate instead of publishing "no reading"', () => {
     const broken = { ...page('internet-outages'), record: () => { throw new TypeError('bug'); } };
     assert.throws(() => liveTopicReading(broken, {}, NOW), TypeError);
+  });
+});
+
+describe('live topic readings never publish a missing value as a fact', () => {
+  it('treats null and empty strings as absent, not zero', () => {
+    assert.equal(finiteNumber(null), null);
+    assert.equal(finiteNumber(''), null);
+    assert.equal(finiteNumber(undefined), null);
+    assert.equal(finiteNumber(0), 0);
+    assert.equal(finiteNumber('12.5'), 12.5);
+  });
+
+  it('drops a VIX of 0, which the handler sends when VIX is unavailable', () => {
+    const topic = page('fear-and-greed-index');
+    for (const vix of [0, null]) {
+      const record = liveTopicReading(topic, { ...fearGreedPayload(), vix }, NOW);
+      assert.equal(record.vix, null);
+      assert.doesNotMatch(topic.renderSection(record, { live: true }), />VIX</);
+    }
+  });
+
+  it('drops a market without a price instead of publishing it at 0% yes', () => {
+    const payload = marketsPayload();
+    payload.markets[0].yesPrice = null as never;
+    const record = liveTopicReading(page('prediction-markets'), payload, NOW);
+    assert.deepEqual(record.markets.map((market: { title: string }) => market.title.slice(0, 3)), ['Fed']);
+  });
+
+  it('dates outages by the seeder fetch and refuses a list retained past two hours', () => {
+    const topic = page('internet-outages');
+    const fetchedAt = NOW - 20 * 60_000;
+    assert.equal(liveTopicReading(topic, outagesPayload(fetchedAt), NOW).asOf, new Date(fetchedAt).toISOString());
+    assert.equal(liveTopicReading(topic, outagesPayload(NOW - 3 * HOUR), NOW), null);
+    assert.equal(liveTopicReading(topic, outagesPayload(0), NOW), null, 'an unknown fetch time is not current');
+  });
+
+  it('writes a single disruption in the singular', () => {
+    const topic = page('internet-outages');
+    const payload = outagesPayload();
+    payload.outages = payload.outages.slice(0, 1);
+    const section = topic.renderSection(liveTopicReading(topic, payload, NOW), { live: true });
+    assert.match(section, /lists 1 internet disruption in 1 country /);
+    assert.match(section, /, now ended\./);
+    assert.doesNotMatch(section, /of them ongoing/);
+  });
+
+  it('labels market totals as every tracked market and says how many rows are shown', () => {
+    const topic = page('prediction-markets');
+    const payload = marketsPayload();
+    payload.markets = Array.from({ length: 20 }, (_, index) => ({ ...payload.markets[0], id: `m${index}`, title: `Market ${index}`, volume: 1_000_000 + index }));
+    const record = liveTopicReading(topic, payload, NOW);
+    assert.equal(record.total, 20);
+    assert.equal(record.markets.length, 15);
+    const section = topic.renderSection(record, { live: true });
+    assert.match(section, /Markets tracked/);
+    assert.match(section, /Volume traded, all tracked markets/);
+    assert.match(section, /The 15 most traded of 20 tracked markets/);
+    assert.match(section, /tracks 20 Polymarket and Kalshi markets/);
   });
 });
 

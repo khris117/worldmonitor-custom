@@ -5943,6 +5943,16 @@ describe('live-pulse snapshot injection (#7533)', () => {
               gitFileLastmod(repoRoot, data.sources.liveToolsScript),
               TOOLS_PAGE_CONTENT_VERSION,
             ),
+            'tools/natural-hazard-pulse/index.html',
+          ]],
+          // The hub links every live topic page, so their code moves it too.
+          ['toolsIndex', [
+            laterDate(
+              gitFileLastmod(repoRoot, data.sources.liveToolsScript),
+              TOOLS_PAGE_CONTENT_VERSION,
+              LIVE_TOPIC_PAGES_CONTENT_VERSION,
+              ...data.sources.liveTopicPagesInputs.map((path) => gitFileLastmod(repoRoot, path)),
+            ),
             'tools/index.html',
           ]],
           ['liveTopics', [

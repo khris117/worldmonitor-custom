@@ -1960,6 +1960,12 @@ export async function loadCorpusData({
     gitFileLastmod(rootDir, LIVE_TOOLS_SCRIPT_PATH),
     TOOLS_PAGE_CONTENT_VERSION,
   );
+  // The hub links every live topic page, so their code moves it too.
+  const toolsIndexLastmod = laterDate(
+    toolsLastmod,
+    LIVE_TOPIC_PAGES_CONTENT_VERSION,
+    ...LIVE_TOPIC_PAGES_INPUT_PATHS.map((path) => gitFileLastmod(rootDir, path)),
+  );
   // The built readings come from the pulse, so a new capture advances them.
   const liveTopicsLastmod = laterDate(
     LIVE_TOPIC_PAGES_CONTENT_VERSION,
@@ -2064,6 +2070,7 @@ export async function loadCorpusData({
       changelog: changelogLastmod,
       chokepoints: chokepointsLastmod,
       tools: toolsLastmod,
+      toolsIndex: toolsIndexLastmod,
       liveTopics: liveTopicsLastmod,
       crises: crisesLastmod,
       research: researchLastmod,
@@ -5686,7 +5693,7 @@ export async function buildCorpus({
     'tools/index.html',
     renderToolsIndex({
       baseUrl,
-      lastmod: data.lastmod.tools,
+      lastmod: data.lastmod.toolsIndex,
       crisisCount: data.crises.length,
       chokepointCount: data.chokepoints.length,
     }),
