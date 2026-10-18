@@ -121,6 +121,14 @@ describe('MCP supply chain freight projection', () => {
     assert.deepEqual(validate(tool.outputSchema, result), []);
     assert.equal((await run({ dataset: ['gscpi'], limit: 0 }, null, { series: { observations } })).data.gscpi.series.observations.length, 24);
   });
+  it('rounds positive fractional limits down without treating them as the zero opt-out', async () => {
+    const observations = [{ date: '2026-08-01', value: 0.1 }, { date: '2026-09-01', value: 0.2 }];
+    for (const [limit, expected] of [[0.5, []], [1.5, observations.slice(-1)], [0, observations]]) {
+      const result = await run({ limit }, undefined, { series: { observations } });
+      assert.deepEqual(result.data.gscpi.series.observations, expected);
+      assert.equal(result.data['freight-rates'].indices.length, limit === 0 ? 4 : Math.floor(limit));
+    }
+  });
   it('flags frozen freight observations despite a fresh heartbeat', async () => {
     const meta = { fetchedAt: Date.now(), recordCount: 4, newestItemAt: Date.now() - 40 * 86_400_000, maxContentAgeMin: 28 * 24 * 60 };
     const frozen = await run({ dataset: ['freight-rates'] }, undefined, null, { 'seed-meta:supply_chain:shipping': meta });

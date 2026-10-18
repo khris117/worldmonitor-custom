@@ -3054,7 +3054,10 @@ export const CACHE_TOOLS: ToolDef[] = [
       capNested(data, 'flows', 'flows', limit);
       capNested(data, 'freight-rates', 'indices', limit);
       const series = (data.gscpi as { series?: { observations?: unknown[] } } | null)?.series;
-      if (series?.observations && limit > 0) series.observations = series.observations.slice(-Math.floor(limit));
+      if (series?.observations && limit > 0) {
+        const count = Math.floor(limit);
+        series.observations = count > 0 ? series.observations.slice(-count) : [];
+      }
       return selectDatasets(data, argStrList(params.dataset));
     },
     _project: projectSupplyChainData,
