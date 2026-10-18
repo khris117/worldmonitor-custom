@@ -642,9 +642,16 @@ async function fetchSanctionsPressure() {
   console.log(`  Previous state: ${hasPrevious ? `${previousIds.size} known IDs` : 'none (first run or expired)'}`);
 
   const previousSnapshots = decodeSourceSnapshots(await readSeedSnapshot(SOURCE_SNAPSHOTS_KEY, { strict: true }));
-  const previousChanges = await readSeedSnapshot(CHANGES_KEY, { strict: true });
-  if (previousChanges === null && await readSeedSnapshot(CHANGES_ACTIVATION_KEY, { strict: true }) !== null) {
-    throw new Error('SANCTIONS_CHANGES_HISTORY_MISSING');
+  let previousChanges;
+  let changesReadable = true;
+  try {
+    previousChanges = await readSeedSnapshot(CHANGES_KEY, { strict: true });
+    if (previousChanges === null && await readSeedSnapshot(CHANGES_ACTIVATION_KEY, { strict: true }) !== null) {
+      throw new Error('SANCTIONS_CHANGES_HISTORY_MISSING');
+    }
+  } catch {
+    changesReadable = false;
+    console.warn('  Sanctions change history unavailable; preserving history and its baseline.');
   }
   const outcomes = {};
   for (const source of OFAC_SOURCES) {
@@ -676,8 +683,15 @@ async function fetchSanctionsPressure() {
   const eligiblePrevious = Object.fromEntries(Object.keys(outcomes).map(source => [source,
     selectSanctionsSourceSnapshot(source, { error: 'baseline' }, previousSnapshots[source], now).snapshot,
   ]));
-  const _changes = buildSanctionsChanges({ history: previousChanges, previous: eligiblePrevious,
-    current: _sourceSnapshots, health: _sourceHealth, now });
+  let _changes = null;
+  if (changesReadable) {
+    try {
+      _changes = buildSanctionsChanges({ history: previousChanges, previous: eligiblePrevious,
+        current: _sourceSnapshots, health: _sourceHealth, now });
+    } catch {
+      console.warn('  Sanctions change history invalid; preserving history and its baseline.');
+    }
+  }
   // Quarantined rows are bounded by SEMA_MAX_QUARANTINE_SHARE and belong to this
   // run's ingest only; a retained snapshot must not claim them.
   if (_sourceHealth[SEMA_SOURCE].status === 'ok' && sema.quarantined?.length) {
@@ -816,20 +830,28 @@ runSeed('sanctions', 'pressure', CANONICAL_KEY, fetchSanctionsPressure, {
   },
   zeroIsValid: true,
   beforePublish: async (data) => {
-    const currentGaps = data._changes.gaps.filter(gap => gap.to === data._changes.fetchedAt
-      && gap.reason !== 'baseline-unavailable');
-    await writeExtraKeyWithMeta(CHANGES_KEY, data._changes, CHANGES_TTL, data._changes.events.length,
-      CHANGES_META_KEY, CHANGES_TTL, undefined, {
-        sourceState: currentGaps.length ? 'error' : 'ok',
-        errorCode: currentGaps.some(gap => gap.reason === 'held') ? 'SANCTIONS_CHANGES_HELD'
-          : currentGaps.length ? 'SANCTIONS_CHANGES_SOURCE_FAILED' : null,
-        failedSources: [...new Set(currentGaps.map(gap => gap.list))],
-      });
-    const count = Object.values(data._sourceSnapshots).reduce((sum, snapshot) => sum + (snapshot?.records.length ?? 0), 0);
-    await writeExtraKeyWithMeta(SOURCE_SNAPSHOTS_KEY, encodeSourceSnapshots(data._sourceSnapshots), SOURCE_SNAPSHOTS_TTL, count, SOURCE_SNAPSHOTS_META_KEY);
+    if (!data._changes) return;
     const creds = getOptionalUpstashCreds();
-    if (!creds) throw new Error('SANCTIONS_CHANGES_ACTIVATION_CREDENTIALS_MISSING');
-    await upstashCommand(creds, ['SET', CHANGES_ACTIVATION_KEY, '1']);
+    if (!creds) {
+      console.warn('  Sanctions change history credentials unavailable; skipping history publication.');
+      return;
+    }
+    try {
+      const currentGaps = data._changes.gaps.filter(gap => gap.to === data._changes.fetchedAt
+        && gap.reason !== 'baseline-unavailable');
+      await writeExtraKeyWithMeta(CHANGES_KEY, data._changes, CHANGES_TTL, data._changes.events.length,
+        CHANGES_META_KEY, CHANGES_TTL, undefined, {
+          sourceState: currentGaps.length ? 'error' : 'ok',
+          errorCode: currentGaps.some(gap => gap.reason === 'held') ? 'SANCTIONS_CHANGES_HELD'
+            : currentGaps.length ? 'SANCTIONS_CHANGES_SOURCE_FAILED' : null,
+          failedSources: [...new Set(currentGaps.map(gap => gap.list))],
+        });
+      const count = Object.values(data._sourceSnapshots).reduce((sum, snapshot) => sum + (snapshot?.records.length ?? 0), 0);
+      await writeExtraKeyWithMeta(SOURCE_SNAPSHOTS_KEY, encodeSourceSnapshots(data._sourceSnapshots), SOURCE_SNAPSHOTS_TTL, count, SOURCE_SNAPSHOTS_META_KEY);
+      await upstashCommand(creds, ['SET', CHANGES_ACTIVATION_KEY, '1']);
+    } catch {
+      console.warn('  Sanctions change history publication failed; core sanctions publication will continue.');
+    }
   },
   extraKeys: [
     {

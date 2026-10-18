@@ -4695,6 +4695,33 @@ describe('get_sanctions_data change feed contract', () => {
       assert.throws(() => tool._postFilter(data(), { changes_since_days: value }));
     }
   });
+  it('pages a stable history within the response budget without dropping events or coverage', () => {
+    const events = Array.from({ length: 250 }, (_, i) => ({ ...event, id: `SDN:${i}`, name: '船'.repeat(1000) }));
+    const history = { ...log, events };
+    let cursor;
+    const ids = [];
+    do {
+      const args = { changes_since_days: 7, limit: 0, ...(cursor ? { changes_cursor: cursor } : {}) };
+      const page = tool._postFilter({ changes: structuredClone(history) }, args);
+      const result = tool._fitToBudget({ data: page, stale: false, cached_at: now }, tool._outputBudgetBytes, args);
+      assert.ok(Buffer.byteLength(JSON.stringify(result)) <= tool._outputBudgetBytes);
+      assert.ok(result.data.changes.events.length > 0 && result.data.changes.events.length <= 100);
+      assert.equal(result.data.changes.matchingEvents, 250);
+      assert.deepEqual(result.data.changes.gaps, log.gaps);
+      ids.push(...result.data.changes.events.map(e => e.id));
+      cursor = result.data.changes.nextCursor;
+    } while (cursor);
+    assert.equal(ids.length, 250);
+    assert.equal(new Set(ids).size, 250);
+    assert.throws(() => tool._postFilter(data(), { changes_since_days: 7, changes_cursor: `${now - 1}:1` }));
+    assert.throws(() => tool._postFilter(data(), { changes_cursor: `${now}:1` }));
+  });
+  it('anchors the paged time window to the history snapshot', () => {
+    const cachedAt = now - 6 * 3600000;
+    const older = { ...event, at: now - 7 * 86400000 - 3600000 };
+    const result = tool._postFilter({ changes: { ...log, fetchedAt: cachedAt, events: [older] } }, { changes_since_days: 7 });
+    assert.deepEqual(result.changes.events, [older]);
+  });
   it('serves changes and validates arguments through the subscribed MCP transport', async t => {
     const previousEnv = { ...process.env };
     const previousFetch = globalThis.fetch;
@@ -4709,14 +4736,24 @@ describe('get_sanctions_data change feed contract', () => {
     process.env.MCP_TELEMETRY = 'false';
     const cache = { 'sanctions:entities:v1': [], 'sanctions:pressure:v1': {}, 'sanctions:changes:v1': log,
       ...Object.fromEntries(['entities', 'pressure', 'changes'].map(key => [`seed-meta:sanctions:${key}`, { fetchedAt: now, recordCount: 4 }])) };
+    const reads = [];
     globalThis.fetch = async input => {
       const url = String(input);
       assert.ok(url.startsWith('https://sanctions.changes.test/get/'), url);
       const key = decodeURIComponent(new URL(url).pathname.slice(5));
+      reads.push(key);
       return new Response(JSON.stringify({ result: key in cache ? JSON.stringify(cache[key]) : null }));
     };
     const { mcpHandler } = await import('../api/mcp.ts');
     const { deps } = makeProDeps();
+    cache['seed-meta:sanctions:changes'] = { fetchedAt: now - 13 * 3600000, recordCount: 4 };
+    const ordinary = await mcpHandler(proReq('POST', callBody('get_sanctions_data', {}, 99)), deps);
+    const ordinaryBody = await ordinary.json();
+    assert.equal(ordinaryBody.error, undefined, JSON.stringify(ordinaryBody));
+    assert.equal(JSON.parse(ordinaryBody.result.content[0].text).stale, false);
+    assert.ok(!reads.some(key => key.includes('changes')));
+    reads.length = 0;
+    cache['seed-meta:sanctions:changes'] = { fetchedAt: now, recordCount: 4 };
     const response = await mcpHandler(proReq('POST', callBody('get_sanctions_data', { changes_since_days: 7, country: 'RU' })), deps);
     const body = await response.json();
     assert.equal(body.error, undefined, JSON.stringify(body));
@@ -4724,7 +4761,27 @@ describe('get_sanctions_data change feed contract', () => {
     assert.deepEqual(envelope.data.changes.events.map(e => e.op), ['added', 'amended']);
     assert.equal(envelope.data.changes.gaps.length, 1);
     assert.equal(envelope.stale, false);
+    assert.deepEqual(Object.keys(envelope.data), ['changes']);
+    assert.deepEqual(reads.sort(), ['sanctions:changes:v1', 'seed-meta:sanctions:changes'].sort());
     const invalid = await mcpHandler(proReq('POST', callBody('get_sanctions_data', { changes_since_days: 91 }, 102)), deps);
     assert.equal((await invalid.json()).error.code, -32602);
+    cache['sanctions:changes:v1'] = { ...log, events: Array.from({ length: 250 }, (_, i) => ({ ...event, id: `SDN:${i}`, name: '船'.repeat(1000) })) };
+    let cursor;
+    const ids = [];
+    do {
+      const args = { changes_since_days: 7, limit: 0, ...(cursor ? { changes_cursor: cursor } : {}) };
+      const pageResponse = await mcpHandler(proReq('POST', callBody('get_sanctions_data', args, 103 + ids.length)), deps);
+      const pageBody = await pageResponse.json();
+      assert.equal(pageBody.error, undefined, JSON.stringify(pageBody));
+      assert.equal(pageBody.result.isError, undefined, JSON.stringify(pageBody));
+      const text = pageBody.result.content[0].text;
+      assert.ok(Buffer.byteLength(text) <= tool._outputBudgetBytes);
+      const page = JSON.parse(text).data.changes;
+      assert.ok(page.events.length > 0);
+      ids.push(...page.events.map(e => e.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    assert.equal(ids.length, 250);
+    assert.equal(new Set(ids).size, 250);
   });
 });
