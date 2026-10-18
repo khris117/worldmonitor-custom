@@ -107,9 +107,12 @@ describe('rootless Mintlify route canonicalization', () => {
 
   it('does not intercept product routes or non-read methods', async () => {
     const originalFetch = globalThis.fetch;
+    // The only fetch allowed is the CSP stamp's read of the built document,
+    // which passes a non-HTML answer through untouched.
     let fetched = 0;
-    globalThis.fetch = async () => {
-      fetched += 1;
+    globalThis.fetch = async (input) => {
+      const inner = new URL(String(input));
+      if (inner.searchParams.get('wm-built') !== '1') fetched += 1;
       return new Response('not html', { status: 200, headers: { 'content-type': 'text/plain' } });
     };
     try {

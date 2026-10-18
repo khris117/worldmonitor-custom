@@ -9,8 +9,6 @@ export const RETIRED_STATIC_SCRIPT_NONCE = 'wm-static-bootstrap';
 export const STAMPED_DOCUMENT_CACHE_CONTROL = 'private, no-store';
 export const STAMPED_DOCUMENT_CDN_CACHE_CONTROL = 'no-store';
 
-export const CSP_RAW_REQUEST_HEADER = 'x-wm-csp-raw';
-
 const NONCE_BYTES = 18;
 
 export function createCspNonce() {

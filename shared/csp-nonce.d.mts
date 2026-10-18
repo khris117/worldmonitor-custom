@@ -2,7 +2,6 @@ export const CSP_NONCE_PLACEHOLDER: string;
 export const RETIRED_STATIC_SCRIPT_NONCE: string;
 export const STAMPED_DOCUMENT_CACHE_CONTROL: string;
 export const STAMPED_DOCUMENT_CDN_CACHE_CONTROL: string;
-export const CSP_RAW_REQUEST_HEADER: string;
 
 export function createCspNonce(): string;
 export function contentSecurityPolicyWithNonce(policy: string, nonce: string): string;

@@ -6,7 +6,6 @@ import { describe, it, afterEach } from 'node:test';
 import middleware, { config as middlewareConfig } from '../middleware.ts';
 import {
   CSP_NONCE_PLACEHOLDER,
-  CSP_RAW_REQUEST_HEADER,
   RETIRED_STATIC_SCRIPT_NONCE,
   STAMPED_DOCUMENT_CACHE_CONTROL,
   STAMPED_DOCUMENT_CDN_CACHE_CONTROL,
@@ -114,17 +113,39 @@ describe('per-response CSP nonce', () => {
     }
   });
 
+  it('routes every dotted SPA rewrite into middleware', () => {
+    const vercel = JSON.parse(read('vercel.json'));
+    const dynamicHtml = vercel.rewrites.filter(
+      ({ source, destination }: { source: string; destination: string }) =>
+        source.includes(':') && destination.endsWith('.html'),
+    );
+    assert.ok(dynamicHtml.length > 0);
+    for (const { source } of dynamicHtml) {
+      const prefix = source.slice(0, source.indexOf(':'));
+      assert.ok(
+        middlewareConfig.matcher.includes(`${prefix}:path*`),
+        `${source} needs ${prefix}:path* in config.matcher so a dotted value is stamped`,
+      );
+    }
+  });
+
   it('middleware responses agree on the nonce, differ, and are not cached', async () => {
-    globalThis.fetch = async (_input, init) => {
-      const headers = new Headers(init?.headers);
-      assert.equal(headers.get(CSP_RAW_REQUEST_HEADER), '1');
+    const seen: Array<{ url: string; headers: Headers }> = [];
+    globalThis.fetch = async (input, init) => {
+      seen.push({ url: String(input), headers: new Headers(init?.headers) });
       return new Response(DOCUMENT, {
         status: 200,
         headers: { 'content-type': 'text/html; charset=utf-8', etag: '"built"' },
       });
     };
-    const request = () => new Request('https://www.worldmonitor.app/dashboard', {
-      headers: { accept: 'text/html' },
+    const request = () => new Request('https://www.worldmonitor.app/dashboard?utm_source=x', {
+      headers: {
+        accept: 'text/html',
+        'if-none-match': '"built"',
+        'if-modified-since': 'Sat, 17 Oct 2026 00:00:00 GMT',
+        range: 'bytes=0-10',
+        cookie: 'session=secret',
+      },
     });
     const first = await middleware(request());
     const second = await middleware(request());
@@ -140,9 +161,115 @@ describe('per-response CSP nonce', () => {
     assert.equal(first.headers.get('cdn-cache-control'), STAMPED_DOCUMENT_CDN_CACHE_CONTROL);
     assert.equal(first.headers.get('vercel-cdn-cache-control'), STAMPED_DOCUMENT_CDN_CACHE_CONTROL);
     assert.equal(first.headers.get('etag'), null);
+    assert.equal(first.headers.get('x-middleware-override-headers'), null);
+    // The inner fetch is a separate cache key (Cloudflare keys on URL, not on
+    // request headers) and carries none of the client's validators.
+    for (const call of seen) {
+      const inner = new URL(call.url);
+      assert.equal(inner.pathname, '/dashboard');
+      assert.equal(inner.searchParams.get('wm-built'), '1');
+      assert.equal(inner.searchParams.get('utm_source'), 'x');
+      for (const name of ['if-none-match', 'if-modified-since', 'range', 'cookie']) {
+        assert.equal(call.headers.get(name), null, name);
+      }
+      assert.equal(call.headers.get('accept'), 'text/html');
+    }
   });
 
-  it('does not stamp a platform redirect or a raw inner fetch', async () => {
+  it('stamps a request with no Accept header', async () => {
+    let accept: string | null = null;
+    globalThis.fetch = async (_input, init) => {
+      accept = new Headers(init?.headers).get('accept');
+      return new Response(DOCUMENT, { status: 200, headers: { 'content-type': 'text/html' } });
+    };
+    const response = await middleware(new Request('https://www.worldmonitor.app/countries/'));
+    assert.ok(response instanceof Response);
+    nonceAgreement(await response.text(), response.headers.get('content-security-policy') ?? '');
+    assert.equal(accept, 'text/html');
+  });
+
+  it('stamps a dotted stock symbol route', async () => {
+    globalThis.fetch = async () =>
+      new Response(DOCUMENT, { status: 200, headers: { 'content-type': 'text/html' } });
+    const response = await middleware(new Request('https://www.worldmonitor.app/stocks/GLEN.L', {
+      headers: { accept: 'text/html' },
+    }));
+    assert.ok(response instanceof Response);
+    nonceAgreement(await response.text(), response.headers.get('content-security-policy') ?? '');
+  });
+
+  it('answers an uncached 503 when the document cannot be fetched', async () => {
+    globalThis.fetch = async () => {
+      throw new DOMException('timed out', 'TimeoutError');
+    };
+    const response = await middleware(new Request('https://www.worldmonitor.app/dashboard', {
+      headers: { accept: 'text/html' },
+    }));
+    assert.ok(response instanceof Response);
+    assert.equal(response.status, 503);
+    assert.equal(response.headers.get('cache-control'), STAMPED_DOCUMENT_CACHE_CONTROL);
+    assert.equal(response.headers.get('cdn-cache-control'), STAMPED_DOCUMENT_CDN_CACHE_CONTROL);
+    assert.equal(response.headers.get('vercel-cdn-cache-control'), STAMPED_DOCUMENT_CDN_CACHE_CONTROL);
+    assert.ok(!(await response.text()).includes(CSP_NONCE_PLACEHOLDER));
+  });
+
+  it('never re-fetches a page path that vercel.json rewrites to a handler', async () => {
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response(null, { status: 302, headers: { location: 'https://client.example/cb' } });
+    };
+    for (const path of [
+      '/oauth/authorize-pro?nonce=n&grant=g',
+      '/oauth/authorize',
+      '/ask',
+      '/a2a',
+      '/agent/auth',
+      '/.well-known/oauth-protected-resource/mcp',
+    ]) {
+      assert.equal(await middleware(new Request(`https://www.worldmonitor.app${path}`, {
+        headers: { accept: 'text/html' },
+      })), undefined, path);
+    }
+    assert.equal(calls, 0);
+  });
+
+  it('passes through every representation Cloudflare never caches without a fetch', async () => {
+    const { NEGOTIATED_MEDIA_TYPES, RSC_REQUEST_HEADERS } = await import('../scripts/cloudflare-cache-rule.mjs');
+    let calls = 0;
+    globalThis.fetch = async () => {
+      calls += 1;
+      return new Response(DOCUMENT, { status: 200, headers: { 'content-type': 'text/html' } });
+    };
+    for (const type of NEGOTIATED_MEDIA_TYPES) {
+      assert.equal(await middleware(new Request('https://www.worldmonitor.app/countries/', {
+        headers: { accept: type.toUpperCase() },
+      })), undefined, type);
+    }
+    for (const name of RSC_REQUEST_HEADERS) {
+      assert.equal(await middleware(new Request('https://www.worldmonitor.app/countries/', {
+        headers: { accept: 'text/html', [name]: '1' },
+      })), undefined, name);
+    }
+    assert.equal(calls, 0);
+    // Accept values Cloudflare does cache are stamped.
+    for (const accept of ['*/*', 'application/json']) {
+      const response = await middleware(new Request('https://www.worldmonitor.app/countries/', {
+        headers: { accept },
+      }));
+      assert.ok(response instanceof Response, accept);
+    }
+  });
+
+  it('keeps the /api bot gate for a client that sends the old raw marker', async () => {
+    const response = await middleware(new Request('https://www.worldmonitor.app/api/market/v1/list-market-quotes', {
+      headers: { 'user-agent': 'curl/8.1.2', 'x-wm-csp-raw': '1' },
+    }));
+    assert.ok(response instanceof Response);
+    assert.equal(response.status, 403);
+  });
+
+  it('does not stamp a platform redirect or a built-page inner fetch', async () => {
     let calls = 0;
     globalThis.fetch = async () => {
       calls += 1;
@@ -154,8 +281,8 @@ describe('per-response CSP nonce', () => {
     assert.equal(calls, 1);
 
     calls = 0;
-    assert.equal(await middleware(new Request('https://www.worldmonitor.app/settings.html', {
-      headers: { accept: 'text/html', [CSP_RAW_REQUEST_HEADER]: '1' },
+    assert.equal(await middleware(new Request('https://www.worldmonitor.app/settings.html?wm-built=1', {
+      headers: { accept: 'text/html' },
     })), undefined);
     assert.equal(calls, 0);
   });
