@@ -2292,14 +2292,14 @@ export const CACHE_TOOLS: ToolDef[] = [
     title: 'Sanctions lists and pressure scores',
     _subscriptionOnly: true,
     _outputBudgetBytes: 131072,
-    description: 'Read OFAC SDN and Consolidated lists, Canada SEMA sanctions and country pressure scores. query filters primary names. changes_since_days (1-90) selects history only: observed additions, removals and program amendments, paged via changes_cursor, at most 100 events per page. Coverage gaps include held diffs above 5% removals; history keeps 90 days/10,000 events, with truncatedBefore marking cap loss. Seeded every 6 hours, stale after 12 hours; no request-time source fetch. Subscription required, weight 1. A match is a lead to confirm with the issuing agency, not legal advice.',
+    description: 'Screen OFAC SDN, OFAC Consolidated and Canada SEMA entities, or read country pressure and designation changes. screen matches names, up to 10 aliases and exact IMO IDs, returning score/matched_on/matched_text; query filters primary names. changes_since_days (1-90) selects history only, paged by changes_cursor, max 100 events/page. Gaps include held diffs above 5% removals; history keeps 90 days/10,000 events (truncatedBefore marks cap loss). Seeded every 6 hours, stale after 12 hours; no live fetch. Subscription required, weight 1. Matches are leads to confirm with the issuing agency, not legal advice.',
     inputSchema: {
       type: 'object',
       properties: {
         country: { type: 'string', description: 'Filter sanctioned entities and pressure scores to one ISO 3166-1 alpha-2 country code. Country names and alpha-3 codes are accepted; unresolved inputs return Invalid params.' },
         entity_type: { type: 'string', description: 'Filter to one entity type (case-insensitive substring, e.g. "vessel", "aircraft", "person", "entity").' },
         query: { type: 'string', description: 'Keep only sanctioned entities whose name contains this text (case-insensitive).' },
-        screen: { type: 'string', minLength: 2, maxLength: 200, description: 'Screen a name, alias or IMO identifier against the seeded lists (2-200 characters).' },
+        screen: { type: 'string', minLength: 2, maxLength: 200, description: 'Screen a name, alias or IMO identifier against the seeded lists (2-200 characters). Omit changes_since_days for entity screening.' },
         min_score: { type: 'number', minimum: 0, maximum: 100, default: 70, description: 'Minimum screening score from 0 to 100 (default 70); applies only with screen.' },
         changes_since_days: { type: 'integer', minimum: 1, maximum: 90, description: 'Select history only for the last 1-90 days. Country, entity_type and query filter events; gaps remain visible on every page.' },
         changes_cursor: { type: 'string', maxLength: 64, description: 'Continue from changes.nextCursor with the same filters. Restart if the seeded history changed.' },
@@ -2368,6 +2368,9 @@ export const CACHE_TOOLS: ToolDef[] = [
       const query = argStr(params.query);
       const limit = (argNum(params.limit) ?? DEFAULT_LIST_LIMIT);
       const days = params.changes_since_days;
+      if (days !== undefined && params.screen !== undefined) {
+        throw new RpcValidationError('get_sanctions_data', [{ field: 'screen', description: 'Use screen without changes_since_days; history supports query.' }]);
+      }
       const cursor = sanctionsChangesCursor(params.changes_cursor);
       if (days === undefined && params.changes_cursor !== undefined) {
         throw new RpcValidationError('get_sanctions_data', [{ field: 'changes_cursor', description: 'Requires changes_since_days.' }]);

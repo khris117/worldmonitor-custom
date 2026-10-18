@@ -4694,6 +4694,7 @@ describe('get_sanctions_data change feed contract', () => {
     for (const value of [0, 91, 1.5, '7', null]) {
       assert.throws(() => tool._postFilter(data(), { changes_since_days: value }));
     }
+    assert.throws(() => tool._postFilter(data(), { screen: 'Northern Star', changes_since_days: 7 }));
   });
   it('pages a stable history within the response budget without dropping events or coverage', () => {
     const events = Array.from({ length: 250 }, (_, i) => ({ ...event, id: `SDN:${i}`, name: '船'.repeat(1000) }));
