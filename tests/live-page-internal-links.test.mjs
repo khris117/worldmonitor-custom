@@ -72,6 +72,15 @@ describe('internal links to the live data pages', () => {
     }
   });
 
+  it('adds crude stocks only to crisis trackers tied to an oil chokepoint', () => {
+    for (const slug of ['red-sea-security', 'hormuz-gulf-security']) {
+      assert.ok(linksIn(pages.get(`/crises/${slug}/`)).has('/tools/crude-oil-inventories/'), slug);
+    }
+    for (const slug of ['afghanistan-crisis', 'haiti-gang-crisis']) {
+      assert.ok(!linksIn(pages.get(`/crises/${slug}/`)).has('/tools/crude-oil-inventories/'), `${slug} touches no oil chokepoint`);
+    }
+  });
+
   it('leaves no live page reachable only from the hub', () => {
     for (const page of LIVE_TOPIC_PAGES) {
       const from = inbound(page.path).filter((path) => path !== '/tools/');
