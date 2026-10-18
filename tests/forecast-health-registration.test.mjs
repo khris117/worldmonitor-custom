@@ -5,6 +5,15 @@ import { __testing__ } from '../api/health.js';
 import { assessFunnelDiversity, buildFunnelHealthMeta } from '../scripts/_forecast-funnel.mjs';
 
 describe('forecast resolution health registration', () => {
+  it('pairs probability trail and archive keys with their producer clocks', () => {
+    for (const [name, key, meta, minutes] of [
+      ['forecastProbabilityTrail', 'forecast:probability-trail:v1', 'seed-meta:forecast:probability-trail', 90],
+      ['forecastArchive', 'forecast:archive:v1', 'seed-meta:forecast:archive', 2160],
+    ]) {
+      assert.equal(__testing__.STANDALONE_KEYS[name], key);
+      assert.deepEqual(__testing__.SEED_META[name], { key: meta, maxStaleMin: minutes });
+    }
+  });
   it('classifies the resolution ledger and scorecard as standalone health checks', () => {
     assert.equal(__testing__.STANDALONE_KEYS.forecastResolutions, 'forecast:resolutions:v1');
     assert.equal(__testing__.STANDALONE_KEYS.forecastScorecard, 'forecast:scorecard:v1');
