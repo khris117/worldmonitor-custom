@@ -62,23 +62,20 @@ describe('per-response CSP nonce', () => {
   });
 
   it('leaves the retired static nonce only in the shared constant', () => {
-    let hits: string[] = [];
+    let output = '';
     try {
-      hits = execFileSync('rg', [
+      output = execFileSync('git', [
+        'grep',
         '-l',
-        '--fixed-strings',
-        '--glob', '!node_modules/**',
-        '--glob', '!**/node_modules/**',
-        '--glob', '!dist/**',
-        '--glob', '!.git/**',
+        '-F',
         RETIRED_STATIC_SCRIPT_NONCE,
-        '.',
-      ], { cwd: new URL('.', ROOT), encoding: 'utf8' }).trim().split('\n');
+      ], { cwd: new URL('.', ROOT), encoding: 'utf8' });
     } catch (error) {
       const status = (error as { status?: number }).status;
       if (status !== 1) throw error;
     }
-    assert.deepEqual(hits, ['./shared/csp-nonce.mjs']);
+    const hits = output.trim() ? output.trim().split('\n') : [];
+    assert.deepEqual(hits, ['shared/csp-nonce.mjs']);
   });
 
   it('committed CSP headers do not allow the placeholder or the retired nonce', () => {

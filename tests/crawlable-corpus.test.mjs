@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, it } from 'node:test';
 import { brotliCompressSync, constants as zlibConstants } from 'node:zlib';
 
+import { CSP_NONCE_PLACEHOLDER } from '../shared/csp-nonce.mjs';
+
 import { Window } from 'happy-dom';
 import ts from 'typescript';
 
@@ -1064,14 +1066,14 @@ function assertSourceDerivedTemporalCoverage(dataset, {
   }
 }
 
-function productionScriptNonce() {
+function crawlableScriptNonce() {
   const config = JSON.parse(readFileSync(join(repoRoot, 'vercel.json'), 'utf8'));
   const csp = config.headers
     .flatMap((rule) => rule.headers || [])
     .find((header) => header.key === 'Content-Security-Policy' && header.value.includes("'strict-dynamic'"));
-  const nonce = csp?.value.match(/'nonce-([^']+)'/)?.[1];
-  assert.ok(nonce, 'production CSP must declare a strict-dynamic script nonce');
-  return nonce;
+  assert.ok(csp, 'production CSP must declare strict-dynamic');
+  assert.equal(/'nonce-/.test(csp.value), false, 'production CSP must not authorize a static script nonce');
+  return CSP_NONCE_PLACEHOLDER;
 }
 
 // The corpus-wide @context sweep is an absence assertion — it stays green if
@@ -2359,7 +2361,7 @@ describe('crawlable corpus generator', () => {
           assert.ok(!['c', 'country', 'chokepoint'].some(key => url.searchParams.has(key)), `${route} publishes a legacy dashboard link: ${url}`);
         }
       }
-      const liveScriptTag = `<script type="module" nonce="${productionScriptNonce()}" src="/tools/live-tools.js"></script>`;
+      const liveScriptTag = `<script type="module" nonce="${crawlableScriptNonce()}" src="/tools/live-tools.js"></script>`;
       assert.ok(manifest.sections.changelog.count >= 2, `expected paginated changelog pages, got ${manifest.sections.changelog.count}`);
       assert.equal(
         manifest.sections.changelog.routes.length,
@@ -3000,7 +3002,7 @@ describe('crawlable corpus generator', () => {
       assert.equal(ukraineCiiDataset?.measurementTechnique, 'World Monitor CII v8');
       assert.equal(ukraineCiiDataset?.spatialCoverage?.['@type'], 'Place');
       assert.ok(ukraineResilienceDataset, 'CII country pages must retain the CRI Dataset');
-      assert.ok(norway.includes(liveScriptTag), 'country live script must match the production CSP nonce');
+      assert.ok(norway.includes(liveScriptTag), 'country live script must carry the shared CSP nonce placeholder');
       // Deep-link CTA into the live map (opens the maximized country brief). `&` is HTML-escaped.
       // Untagged: `ref=` would be captured as an affiliate referral code, and a
       // utm_* tag is a 308 hop through the middleware index-noise strip (#8603).
@@ -4548,7 +4550,7 @@ describe('crawlable corpus generator', () => {
         /Observed score inputs: .+\. Context only \(not score inputs\): AIS event count (?:\(.+\)|unavailable); transit count (?:\(.+\)|unavailable)\.$/,
       );
       assert.doesNotMatch(hormuz, /data-chokepoint-status-mapping/);
-      assert.ok(hormuz.includes(liveScriptTag), 'chokepoint live script must match the production CSP nonce');
+      assert.ok(hormuz.includes(liveScriptTag), 'chokepoint live script must carry the shared CSP nonce placeholder');
       assert.doesNotMatch(hormuz, /id="app"/, 'chokepoint page must be raw static HTML, not the SPA shell');
       assert.doesNotMatch(hormuz, /Connecting…/);
       assert.doesNotMatch(hormuz, /data-chokepoint-score>—/);
@@ -4960,7 +4962,7 @@ describe('crawlable corpus generator', () => {
       assert.match(redSea, /data-country-code="YE" data-country-name="Yemen"/);
       assert.match(redSea, /Missing countries are unavailable, not zero/);
       assert.match(redSea, /HAPI\/HDX humanitarian conflict summaries/);
-      assert.ok(redSea.includes(liveScriptTag), 'crisis live script must match the production CSP nonce');
+      assert.ok(redSea.includes(liveScriptTag), 'crisis live script must carry the shared CSP nonce placeholder');
       assert.doesNotMatch(redSea, /id="app"/);
       assert.doesNotMatch(redSea, /Connecting…/);
       assert.doesNotMatch(redSea, /data-crisis-events>—/);
