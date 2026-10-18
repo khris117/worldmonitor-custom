@@ -9,11 +9,15 @@ import {
   requireFreshTimestamp,
   UnpublishableReading,
 } from './common.mjs';
-import ISO3_TO_ISO2 from '../../shared/iso3-to-iso2.json' with { type: 'json' };
+import ISO2_TO_ISO3 from '../../shared/iso2-to-iso3.js';
 
 // Monthly seed; health allows 60 days (api/health.js nationalDebt).
 const MAX_AGE_MS = 60 * 24 * 3_600_000;
 const TOP_COUNTRIES = 10;
+
+// Inverted from the JS map: Vercel's middleware bundler rejects JSON import
+// attributes, and this module is bundled into middleware.ts.
+const ISO3_TO_ISO2 = Object.fromEntries(Object.entries(ISO2_TO_ISO3).map(([iso2, iso3]) => [iso3, iso2]));
 
 const COUNTRY_NAMES = new Intl.DisplayNames(['en'], { type: 'region' });
 

@@ -1,5 +1,7 @@
 import { afterEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 
 import middleware from '../middleware';
 import {
@@ -236,5 +238,30 @@ ${topic.renderSection(null, { live: false })}
     stubFetch(() => Response.json(fearGreedPayload()));
     assert.equal(await middleware(request('HEAD')), undefined);
     assert.equal(await middleware(new Request(builtUrl, { headers: { accept: 'text/html' } })), undefined);
+  });
+});
+
+describe('live topic modules in the middleware bundle', () => {
+  // Vercel's middleware bundler rejects import attributes
+  // (`with { type: 'json' }`): "Expected ";" but found "with"" failed the
+  // #9367 preview build, while Node and tsx load them fine.
+  it('uses no import attributes anywhere in the middleware import graph', () => {
+    const root = resolve(import.meta.dirname, '..');
+    const seen = new Set<string>();
+    const pending = [join(root, 'middleware.ts')];
+    while (pending.length > 0) {
+      const file = pending.pop()!;
+      if (seen.has(file)) continue;
+      seen.add(file);
+      const source = readFileSync(file, 'utf8');
+      assert.doesNotMatch(source, /\bfrom\s+['"][^'"]+['"]\s+(?:with|assert)\s*\{/, `${file.slice(root.length + 1)} uses an import attribute`);
+      for (const [, specifier] of source.matchAll(/\bfrom\s+['"](\.{1,2}\/[^'"]+)['"]/g)) {
+        const target = [specifier, `${specifier}.ts`, `${specifier}/index.ts`]
+          .map((candidate) => join(dirname(file), candidate))
+          .find((candidate) => existsSync(candidate) && statSync(candidate).isFile() && !candidate.endsWith('.json'));
+        if (target) pending.push(target);
+      }
+    }
+    assert.ok([...seen].some((file) => file.endsWith('national-debt.mjs')), 'the walk reaches the topic modules');
   });
 });
