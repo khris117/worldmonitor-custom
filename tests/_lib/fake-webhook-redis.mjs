@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 
 import {
   FANOUT_TRIM_SCRIPT,
+  HAZARD_INIT_SCRIPT,
   HAZARD_SEEN_SCRIPT,
   LOCK_RENEW_SCRIPT,
   PRUNE_SCRIPT,
@@ -140,6 +141,12 @@ export function fakeRedis(initial = {}) {
           store.set(keys[1], zset);
           ttl.set(keys[1], Number(argv[2]));
           return added;
+        }
+        if (script === HAZARD_INIT_SCRIPT) {
+          const hash = store.get(keys[1]) ?? {};
+          for (let i = 1; i + 1 < argv.length; i += 2) if (!(argv[i] in hash)) hash[argv[i]] = argv[i + 1];
+          store.set(keys[1], hash);
+          return 1;
         }
         if (script === HAZARD_SEEN_SCRIPT) {
           const zset = store.get(keys[1]) instanceof Map ? store.get(keys[1]) : new Map();

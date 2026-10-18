@@ -34,8 +34,9 @@
  *     natural:events:v1 and diffs their ids against `webhook:seen:natural.hazard:v1`
  *     (scored by when each id was last in a feed). An unseen, open hazard
  *     inside the registry's new window is delivered through the same pending,
- *     cap and tombstone pipeline; a feed with no seen id yet is marked seen
- *     without delivering (bootstrap), and another agency's copy of a seen quake
+ *     cap and tombstone pipeline; the first-ever read of a feed is marked
+ *     seen without delivering (bootstrap, remembered in
+ *     `webhook:seen:natural.hazard:init:v1`), and another agency's copy of a seen quake
  *     or storm is not a new hazard. Countries come from lib/point-to-iso2.mjs.
  * Delivery state per (subscriber, entity) lives in `webhook:state:<id>:v1`
  * (chokepoint ids, `cii:<CC>`, `occ:<eventId>` and `occ-cap` fields share the
@@ -112,6 +113,13 @@ export const HAZARD_RULE = Object.freeze({
   otherNewWithinMs: HAZARD.dedupe.newWithinSeconds.other * 1000,
   seenWindowMs: HAZARD.dedupe.seenWindowSeconds * 1000,
 });
+/**
+ * Hash of the hazard feeds the worker has read at least once (field `eq` or
+ * `nat`, value the first-read ms). No TTL and never pruned: a feed bootstraps
+ * once, ever, so a quiet feed whose seen ids were all pruned (NHC off-season)
+ * or a lost seen set does not swallow the next real event.
+ */
+export const HAZARD_INIT_KEY = `webhook:seen:${HAZARD_EVENT}:init:v1`;
 /** Cross-agency earthquake match (registry dedupe.crossSource). */
 export const QUAKE_MATCH = Object.freeze({ seconds: 120, km: 150, magnitude: 0.6 });
 const OCCURRENCE_REASONS = Object.freeze({ [NEWS_EVENT]: 'breaking_news', [MARKET_EVENT]: 'large_move', [HAZARD_EVENT]: 'new_hazard' });
@@ -190,6 +198,8 @@ export const SEEN_ADD_SCRIPT = `${FENCE}redis.call('ZREMRANGEBYSCORE', KEYS[2], 
 // The natural.hazard seen set: same arguments, but ZADD without NX, so the
 // score is when the id was last in a feed and an id still in a feed is never
 // pruned.
+// Marks hazard feeds initialized (HSETNX feed firstReadMs pairs from ARGV[2]); no TTL.
+export const HAZARD_INIT_SCRIPT = `${FENCE}for i = 2, #ARGV - 1, 2 do redis.call('HSETNX', KEYS[2], ARGV[i], ARGV[i + 1]) end return 1`;
 export const HAZARD_SEEN_SCRIPT = `${FENCE}redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[2]) local added = 0 for i = 4, #ARGV - 1, 2 do added = added + redis.call('ZADD', KEYS[2], ARGV[i], ARGV[i + 1]) end redis.call('EXPIRE', KEYS[2], ARGV[3]) return added`;
 
 export function stateKey(subscriberId) {
@@ -686,20 +696,26 @@ export function emptyHazardCounters() {
  * `feeds.naturalEvents` is null when that key was unreadable: its ids are
  * neither diffed nor refreshed. For each readable feed:
  *   - an id already seen is refreshed (its score becomes `now`);
- *   - a feed with no seen id at all bootstraps: every id is marked seen and
- *     nothing is delivered, so a first deploy or a lost seen set never floods;
+ *   - a feed read for the first time ever (absent from `feeds.initialized`,
+ *     the HAZARD_INIT_KEY fields, and with no seen id) bootstraps: every id
+ *     is marked seen and nothing is delivered, so a first deploy never
+ *     floods; once initialized a feed never bootstraps again, even with
+ *     every seen id pruned or the seen set lost;
  *   - otherwise an unseen id is delivered when its event time is within the
  *     registry's new window and it is not closed, unless it is another
  *     agency's copy of a seen quake or storm (registry dedupe.crossSource).
  * Within a tick the higher-priority row of one hazard goes first (USGS over
  * Earthquakes Canada; NHC, then GDACS and western-Pacific cyclones, then
  * EONET), so the richer record is the one delivered.
- * Returns the occurrences, the [score, member] seen writes and counters.
+ * Returns the occurrences, the [score, member] seen writes, the feeds to
+ * mark initialized and counters.
  */
 export function diffHazards(feeds, seen, now, rule = HAZARD_RULE) {
   const counters = emptyHazardCounters();
   const occurrences = [];
   const writes = [];
+  const initWrites = [];
+  const initialized = new Set(feeds.initialized ?? []);
   const known = new Map([...seen].map(([eventId, entry]) => [eventId, { ...entry, members: [...entry.members], storms: new Set(entry.storms) }]));
   const feedRows = [
     ['eq', feeds.earthquakes, earthquakeCandidate, rule.quakeNewWithinMs],
@@ -708,7 +724,10 @@ export function diffHazards(feeds, seen, now, rule = HAZARD_RULE) {
   for (const [feed, rows, toCandidate, newWithinMs] of feedRows) {
     if (!Array.isArray(rows)) continue;
     const prefix = `${feed}:`;
-    const bootstrap = ![...seen.keys()].some((eventId) => eventId.startsWith(prefix));
+    // The persistent marker decides; seen ids also count, for a seen set
+    // written before the marker existed.
+    const bootstrap = !initialized.has(feed) && ![...seen.keys()].some((eventId) => eventId.startsWith(prefix));
+    if (!initialized.has(feed)) initWrites.push(feed);
     const candidates = rows.map(toCandidate).filter(Boolean)
       .sort((a, b) => a.priority - b.priority || (a.timeMs ?? 0) - (b.timeMs ?? 0));
     const feedIds = new Set(candidates.map((candidate) => candidate.eventId));
@@ -755,7 +774,7 @@ export function diffHazards(feeds, seen, now, rule = HAZARD_RULE) {
       }
     }
   }
-  return { occurrences, writes, counters };
+  return { occurrences, writes, initWrites, counters };
 }
 
 function scopeList(value) {
@@ -1210,10 +1229,11 @@ function seededArray(row, field) {
 }
 
 /**
- * Reads both hazard feeds (seed envelopes) and the hazard seen set in one
- * round trip. A missing or malformed key comes back as a null feed, which
- * diffHazards leaves alone; null overall when the round trip or the seen-set
- * read fails, since diffing without the seen set would re-deliver everything.
+ * Reads both hazard feeds (seed envelopes), the hazard seen set and the
+ * initialized-feeds marker in one round trip. A missing or malformed key comes
+ * back as a null feed, which diffHazards leaves alone; null overall when the
+ * round trip, the seen-set or the marker read fails, since diffing without
+ * them would re-deliver everything or bootstrap wrongly.
  */
 export async function readHazardFeeds({ redis }) {
   let rows;
@@ -1222,12 +1242,15 @@ export async function readHazardFeeds({ redis }) {
       ['GET', EARTHQUAKES_KEY],
       ['GET', NATURAL_EVENTS_KEY],
       ['ZRANGE', seenKey(HAZARD_EVENT), '0', '-1'],
+      ['HGETALL', HAZARD_INIT_KEY],
     ]);
   } catch {
     return null;
   }
-  if (!Array.isArray(rows) || rows.length !== 3 || !rows[2] || rows[2].error) return null;
+  if (!Array.isArray(rows) || rows.length !== 4 || [rows[2], rows[3]].some((row) => !row || row.error)) return null;
+  const init = Array.isArray(rows[3].result) ? rows[3].result : [];
   return {
+    initialized: init.filter((_, index) => index % 2 === 0),
     earthquakes: seededArray(rows[0], 'earthquakes'),
     naturalEvents: seededArray(rows[1], 'events'),
     seen: parseHazardSeen(Array.isArray(rows[2].result) ? rows[2].result : []),
@@ -1585,6 +1608,16 @@ async function evaluate({ redis, lock, deliver, fetchImpl, env, now }) {
       ...hazardDiff.writes.flatMap(([score, member]) => [String(score), member]),
     ]]), 1, 'hazard seen write');
     assertFenced([written.result]);
+  }
+  // After the seen ids: a tick that dies in between re-reads ids, which keep
+  // the feed from bootstrapping anyway.
+  if (hazardDiff?.initWrites.length) {
+    const tickMs = now();
+    const [marked] = assertRows(await redis([[
+      'EVAL', HAZARD_INIT_SCRIPT, '2', fence.key, HAZARD_INIT_KEY,
+      fence.token, ...hazardDiff.initWrites.flatMap((feed) => [feed, String(tickMs)]),
+    ]]), 1, 'hazard init write');
+    assertFenced([marked.result]);
   }
   const swapped = assertFenced(await runBatched(redis, settledRecords, (record) => [
     'EVAL', RECORD_CAS_SCRIPT, '2', fence.key, webhookKey(record.subscriberId),

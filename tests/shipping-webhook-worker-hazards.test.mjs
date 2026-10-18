@@ -6,6 +6,7 @@ import {
   BACKFILL_CURSOR_KEY,
   CHOKEPOINT_STATUS_KEY,
   EARTHQUAKES_KEY,
+  HAZARD_INIT_KEY,
   HAZARD_RULE,
   LOCK_KEY,
   NATURAL_EVENTS_KEY,
@@ -158,6 +159,18 @@ describe('diffHazards', () => {
     assert.equal(result.counters.bootstrapped, 2);
     assert.deepEqual(result.writes.map(([, member]) => member.split('|')[0]).sort(), ['eq:us6000u2mq', 'nat:EONET_25339']);
     assert.ok(result.writes.every(([score]) => score === NOW));
+  });
+
+  it('an initialized feed never bootstraps again, even with every seen id pruned; the first-ever read does and asks to be marked', () => {
+    const pruned = diffHazards({ earthquakes: [quake()], naturalEvents: [], initialized: ['eq', 'nat'] }, new Map(), NOW);
+    assert.deepEqual(ids(pruned), ['eq:us6000u2mq'], 'a quiet feed whose seen ids were all pruned still delivers its next event');
+    assert.deepEqual(pruned.initWrites, []);
+    const first = diffHazards({ earthquakes: [quake()], naturalEvents: null }, new Map(), NOW);
+    assert.deepEqual(first.occurrences, []);
+    assert.deepEqual(first.initWrites, ['eq'], 'only the readable feed is marked');
+    const legacy = diffHazards({ earthquakes: [quake()], naturalEvents: [] }, parseHazardSeen(['eq:us0000warm']), NOW);
+    assert.deepEqual(ids(legacy), ['eq:us6000u2mq'], 'seen ids written before the marker existed still count');
+    assert.deepEqual(legacy.initWrites, ['eq', 'nat']);
   });
 
   it('bootstraps each feed on its own: an earthquake-only seen set still swallows the first natural-events read', () => {
@@ -430,6 +443,21 @@ describe('runTick: natural.hazard deliveries', () => {
 
     await tick(fake, deliver, NOW + 10 * MIN);
     assert.equal(sent.length, 1, 'a seen id never fires again');
+  });
+
+  it('the first tick marks both feeds initialized with no TTL; with the seen set lost afterwards, the next quake is still delivered', async () => {
+    const fake = seeded();
+    const { sent, deliver } = deliverStub();
+    await tick(fake, deliver);
+    assert.deepEqual(Object.keys(fake.store.get(HAZARD_INIT_KEY)).sort(), ['eq', 'nat']);
+    assert.equal(fake.store.get(HAZARD_INIT_KEY).eq, String(NOW));
+    assert.equal(fake.ttl.has(HAZARD_INIT_KEY), false, 'the marker never expires');
+    fake.store.delete(SEEN);
+    setFeed(fake, { earthquakes: [quake()] });
+    await tick(fake, deliver, NOW + 5 * MIN);
+    assert.deepEqual(sent.map((s) => s.payload.eventId).sort(), ['eq:us6000u2mq', 'nat:EONET_1'],
+      'the trade the marker makes: a lost seen set re-delivers what is still inside its new window, once, rather than swallow the next real event');
+    assert.equal(fake.store.get(HAZARD_INIT_KEY).eq, String(NOW), 'HSETNX keeps the first-read time');
   });
 
   it('a failed delivery is retried next tick under the same id from the stored payload, though the id is now seen', async () => {
