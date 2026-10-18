@@ -4601,7 +4601,9 @@ describe('get_sanctions_data screening contract', () => {
     assert.equal(tool._execute, undefined);
     assert.equal(tool._subscriptionOnly, true);
     assert.ok(tool._freshnessChecks.every(check => check.maxStaleMin === 720));
-    assert.equal(tool._freshnessChecks.length, 2);
+    for (const key of ['seed-meta:sanctions:entities', 'seed-meta:sanctions:pressure']) {
+      assert.ok(tool._freshnessChecks.some(check => check.key === key));
+    }
   });
   it('screens aliases before limiting and composes country, type and primary-name filters', () => {
     const data = { entities: index, pressure: { entries: [], countries: [] } };

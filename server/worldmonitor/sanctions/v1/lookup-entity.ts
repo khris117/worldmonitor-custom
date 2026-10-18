@@ -20,6 +20,7 @@ export const lookupSanctionEntity: SanctionsServiceHandler['lookupSanctionEntity
   const raw = await getCachedJson(ENTITY_INDEX_KEY, true);
   if (!Array.isArray(raw)) return { results: [], total: 0, source: 'unavailable' };
   const index = sanctionsIndexRecords(raw);
+  if (!index.length) return { results: [], total: 0, source: 'unavailable' };
   const lists = [...new Set(index.flatMap(entry => entry.sl?.length ? entry.sl : [entry.id.split(':')[0] ?? 'OFAC']))].sort();
   const matches = screenSanctions(index, q);
   return {

@@ -23,6 +23,16 @@ test('screens exact aliases and reports the original matched text', () => {
   assert.equal(hit?.matched_text, 'Northern Star Shipping');
 });
 
+test('prefers an exact alias over a primary name with an equal token-subset score', () => {
+  const [hit] = screenSanctions([{ ...index[0], name: 'Northern Star Shipping', al: ['Northern Star'] }], 'Northern Star');
+  assert.equal(hit?.matched_on, 'alias');
+  assert.equal(hit?.matched_text, 'Northern Star');
+});
+
+test('a shared generic token does not make unrelated multi-token names strong matches', () => {
+  assert.deepEqual(screenSanctions(index, 'Rosneft Trading'), []);
+});
+
 test('matches IMO identifiers exactly and does not fuzzy-match a different identifier', () => {
   for (const query of ['IMO 1234567', 'imo:1234567', '1234567']) {
     const [hit] = screenSanctions(index, query);

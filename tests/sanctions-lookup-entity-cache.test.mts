@@ -74,3 +74,8 @@ test('REST Redis failure never makes a provider request', async t => {
   assert.equal(response.source, 'unavailable');
   assert.ok(requests.every(url => url.startsWith('https://redis.screen.test/')));
 });
+
+test('REST empty index reports unavailable source coverage', async t => {
+  installIndex(t, []);
+  assert.equal((await lookup('Test Person')).source, 'unavailable');
+});

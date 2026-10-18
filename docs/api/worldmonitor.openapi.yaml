@@ -28183,7 +28183,7 @@ paths:
             parameters:
                 - name: q
                   in: query
-                  description: Search text for a sanctioned person, organization, vessel, or aircraft.
+                  description: Search a name, up to 10 retained aliases per entity, or an exact IMO identifier (2-200 characters).
                   required: false
                   example: "example"
                   schema:
@@ -55999,12 +55999,12 @@ components:
             properties:
                 q:
                     type: string
-                    description: Search text for a sanctioned person, organization, vessel, or aircraft.
+                    description: Search a name, up to 10 retained aliases per entity, or an exact IMO identifier (2-200 characters).
                 maxResults:
                     type: integer
                     format: int32
                     description: Maximum number of matching sanctioned entities to return.
-            description: LookupSanctionEntityRequest searches the OFAC entity index by name, vessel, or aircraft.
+            description: LookupSanctionEntityRequest screens the seeded OFAC SDN, OFAC Consolidated and Canada SEMA index.
         worldmonitor_sanctions_v1_LookupSanctionEntityResponse:
             type: object
             properties:
@@ -56017,7 +56017,10 @@ components:
                     format: int32
                 source:
                     type: string
-            description: LookupSanctionEntityResponse contains matched entities from OFAC + OpenSanctions.
+                    description: Lists searched, or "unavailable" when no valid index records are available.
+            description: |-
+                LookupSanctionEntityResponse contains seeded matches ranked by token-set Jaro-Winkler score.
+                 A match is a lead to confirm with the issuing agency, not legal advice.
         worldmonitor_sanctions_v1_SanctionEntityMatch:
             type: object
             properties:

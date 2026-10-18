@@ -63,6 +63,8 @@ function tokenSetScore(a: string, b: string): number {
   if (!a || !b) return 0;
   const left = new Set(a.split(' '));
   const right = new Set(b.split(' '));
+  const rightTokens = [...right];
+  if (![...left].every(token => rightTokens.some(candidate => jaroWinkler(token, candidate) >= 0.8))) return 0;
   const shared = [...left].filter(token => right.has(token)).sort();
   const joined = (tokens: string[]) => tokens.join(' ');
   const leftText = joined([...shared, ...[...left].filter(token => !right.has(token)).sort()]);
@@ -84,12 +86,15 @@ export function screenSanctions(raw: unknown, query: string, minScore = 70): San
       continue;
     }
     let score = tokenSetScore(needle, normalizeSanctionsName(entry.name));
+    let exact = needle === normalizeSanctionsName(entry.name);
     let matched_on: SanctionsScreenMatch['matched_on'] = 'name';
     let matched_text = entry.name;
     for (const alias of entry.al ?? []) {
-      const aliasScore = tokenSetScore(needle, normalizeSanctionsName(alias));
-      if (aliasScore > score) {
+      const normalized = normalizeSanctionsName(alias);
+      const aliasScore = tokenSetScore(needle, normalized);
+      if (aliasScore > score || aliasScore === score && normalized === needle && !exact) {
         score = aliasScore;
+        exact = normalized === needle;
         matched_on = 'alias';
         matched_text = alias;
       }

@@ -2191,7 +2191,7 @@ export const CACHE_TOOLS: ToolDef[] = [
     title: 'Sanctions lists and pressure scores',
     _subscriptionOnly: true,
     _outputBudgetBytes: 131072,
-    description: 'Search OFAC SDN, OFAC Consolidated and Canada SEMA entities and country sanctions pressure. Use screen for fuzzy name, alias or exact IMO screening; query for primary-name substring search; country for pressure analysis. Screening returns score (0-100), matched_on and matched_text. A match is a lead to confirm with the issuing agency, not legal advice. Seeded-cache read, weight 1 on API plans; no request-time provider fetch. Requires a subscription. Refreshed every 6 hours and flagged stale after 12 hours.',
+    description: 'Search OFAC SDN, OFAC Consolidated and Canada SEMA entities and country sanctions pressure. Use screen for fuzzy name, up to 10 retained aliases per entity, or exact IMO screening; query for primary-name substring search; country for pressure analysis. Screening returns score (0-100), matched_on and matched_text. A match is a lead to confirm with the issuing agency, not legal advice. Seeded-cache read, weight 1 on API plans; no request-time provider fetch. Requires a subscription. Refreshed every 6 hours and flagged stale after 12 hours.',
     inputSchema: {
       type: 'object',
       properties: {
