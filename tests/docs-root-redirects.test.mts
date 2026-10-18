@@ -122,7 +122,7 @@ describe('rootless Mintlify route canonicalization', () => {
           undefined,
           `${path} must keep the product sandbox/Vercel contract`
         );
-        assert.equal(fetched, path.endsWith('.json') ? 0 : 1, path);
+        assert.equal(fetched, 0, path);
       }
     } finally {
       globalThis.fetch = originalFetch;

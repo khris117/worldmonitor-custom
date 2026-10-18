@@ -62,10 +62,14 @@ function shouldStampDocument(request: Request, url: URL): boolean {
   const path = url.pathname;
   if (path === '/api' || path.startsWith('/api/')) return false;
   if (!usesDashboardContentSecurityPolicy(path)) return false;
+  if (path === '/mcp' || path.startsWith('/mcp/')) return false;
   const last = path.split('/').pop() ?? '';
   if (last.includes('.') && !last.endsWith('.html')) return false;
   const accept = request.headers.get('accept');
-  return !accept || (acceptQuality(accept, 'text/html', true) ?? 0) > 0;
+  // Browsers send Accept: text/html. A missing Accept stays on the platform
+  // response; the static CSP does not allow the placeholder, so scripts fail closed.
+  if (!accept) return false;
+  return (acceptQuality(accept, 'text/html', true) ?? 0) > 0;
 }
 
 function deliverHtmlDocument(body: string, headers: Headers, status = 200): Response {
