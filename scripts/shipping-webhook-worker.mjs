@@ -30,6 +30,13 @@
  *     expired tombstone for a day) is what stops a replayed, multi-variant or
  *     republished copy from firing twice; `webhook:seen:<event>:v1` (sorted
  *     set scored by first-seen ms) only counts those copies for the summary.
+ *   - `natural.hazard` (occurrence): reads seismology:earthquakes:v1 and
+ *     natural:events:v1 and diffs their ids against `webhook:seen:natural.hazard:v1`
+ *     (scored by when each id was last in a feed). An unseen, open hazard
+ *     inside the registry's new window is delivered through the same pending,
+ *     cap and tombstone pipeline; a feed with no seen id yet is marked seen
+ *     without delivering (bootstrap), and another agency's copy of a seen quake
+ *     or storm is not a new hazard. Countries come from lib/point-to-iso2.mjs.
  * Delivery state per (subscriber, entity) lives in `webhook:state:<id>:v1`
  * (chokepoint ids, `cii:<CC>`, `occ:<eventId>` and `occ-cap` fields share the
  * hash); delivery counters live on the subscriber record. Delivery is
@@ -48,7 +55,9 @@ import {
   releaseLock,
 } from './_seed-utils.mjs';
 import { CII_RISK_SCORE_CACHE_KEYS } from './_cii-risk-cache-keys.mjs';
+import { unwrapEnvelope } from './_seed-envelope-source.mjs';
 import { isMainModule } from './lib/main-module.mjs';
+import { hazardCountryCodes } from './lib/point-to-iso2.mjs';
 import {
   ALL_INDEX_KEY,
   DELIVERY_FAILURE_CEILING,
@@ -93,7 +102,19 @@ export const OCCURRENCE_STATE_PREFIX = 'occ:';
 export const OCCURRENCE_CAP_FIELD = 'occ-cap';
 /** A delivered occurrence stays in the state hash this long so a replay is a no-op. */
 export const DELIVERED_TOMBSTONE_MS = 24 * 3_600_000;
-const OCCURRENCE_REASONS = Object.freeze({ [NEWS_EVENT]: 'breaking_news', [MARKET_EVENT]: 'large_move' });
+export const HAZARD_EVENT = 'natural.hazard';
+const HAZARD = EVENT_REGISTRY.events[HAZARD_EVENT];
+export const EARTHQUAKES_KEY = HAZARD.source.redisKeys[0];
+export const NATURAL_EVENTS_KEY = HAZARD.source.redisKeys[1];
+/** When an unseen hazard id still counts as new, and how long a seen id outlives its last appearance. */
+export const HAZARD_RULE = Object.freeze({
+  quakeNewWithinMs: HAZARD.dedupe.newWithinSeconds.earthquakes * 1000,
+  otherNewWithinMs: HAZARD.dedupe.newWithinSeconds.other * 1000,
+  seenWindowMs: HAZARD.dedupe.seenWindowSeconds * 1000,
+});
+/** Cross-agency earthquake match (registry dedupe.crossSource). */
+export const QUAKE_MATCH = Object.freeze({ seconds: 120, km: 150, magnitude: 0.6 });
+const OCCURRENCE_REASONS = Object.freeze({ [NEWS_EVENT]: 'breaking_news', [MARKET_EVENT]: 'large_move', [HAZARD_EVENT]: 'new_hazard' });
 const MARKET_ASSET_CLASSES = new Set(['equity', 'commodity', 'crypto']);
 const RISK_SURGE = EVENT_REGISTRY.events[RISK_SURGE_EVENT];
 export const RISK_SURGE_RULE = Object.freeze({
@@ -166,6 +187,10 @@ export const FANOUT_TRIM_SCRIPT = `${FENCE}redis.call('LTRIM', KEYS[2], 0, -(ton
 // the cutoff ARGV[2], keeps the set alive for ARGV[3] seconds. ARGV[4..] are
 // score, member pairs.
 export const SEEN_ADD_SCRIPT = `${FENCE}redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[2]) local added = 0 for i = 4, #ARGV - 1, 2 do added = added + redis.call('ZADD', KEYS[2], 'NX', ARGV[i], ARGV[i + 1]) end redis.call('EXPIRE', KEYS[2], ARGV[3]) return added`;
+// The natural.hazard seen set: same arguments, but ZADD without NX, so the
+// score is when the id was last in a feed and an id still in a feed is never
+// pruned.
+export const HAZARD_SEEN_SCRIPT = `${FENCE}redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', ARGV[2]) local added = 0 for i = 4, #ARGV - 1, 2 do added = added + redis.call('ZADD', KEYS[2], ARGV[i], ARGV[i + 1]) end redis.call('EXPIRE', KEYS[2], ARGV[3]) return added`;
 
 export function stateKey(subscriberId) {
   return `webhook:state:${subscriberId}:v1`;
@@ -439,6 +464,264 @@ export function normalizeTeeMessage(raw, now = Date.now()) {
   };
 }
 
+// natural.hazard: rows of the two seeded feeds become occurrences.
+
+const GDACS_ALERT_EMOJI = /^\s*(\u{1F534}|\u{1F7E0})\s*/u;
+const NHC_ADVISORY_ID = /^(nhc-[A-Z]{2}\d{2})-[^-]+$/;
+const STORM_CLASSIFICATION = /^(?:super typhoon|typhoon|hurricane|major hurricane|tropical storm|tropical depression|tropical cyclone|severe tropical storm|severe cyclonic storm|very severe cyclonic storm|cyclonic storm|cyclone|subtropical storm|subtropical depression|post-tropical cyclone|potential tropical cyclone|remnants of|storm|depression)\s+/i;
+
+/**
+ * NHC row ids embed the advisory number (nhc-AL09-12, seed-natural-events.mjs),
+ * so a new advisory would read as a new storm. Basin and storm number are the
+ * storm's identity for the season.
+ */
+export function stableHazardId(id) {
+  const match = NHC_ADVISORY_ID.exec(id);
+  return match ? match[1] : id;
+}
+
+/** The storm name with its classification and GDACS season suffix stripped, lower-cased: "Super Typhoon Champi" and "CHAMPI-26" are both "champi". */
+export function stormKey(name) {
+  const bare = String(name ?? '').trim().replace(STORM_CLASSIFICATION, '').replace(/-\d{2}$/, '');
+  return bare.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function naturalSource(row) {
+  const id = String(row.id);
+  if (id.startsWith('EONET_')) return 'eonet';
+  if (id.startsWith('nhc-')) return 'nhc';
+  if (id.startsWith('gdacs-')) return 'gdacs';
+  if (id.startsWith('hko-warning:')) return 'hko';
+  const named = typeof row.sourceName === 'string' ? row.sourceName.trim().toLowerCase() : '';
+  return named || (id.startsWith('cyclone:') ? 'gdacs' : 'eonet');
+}
+
+function hazardTimeMs(value) {
+  const ms = finiteNumber(value);
+  return ms !== null && ms > 0 ? ms : null;
+}
+
+/**
+ * Pure. One earthquake row of seismology:earthquakes:v1 as a candidate:
+ * its event id, seen-set fingerprint, event time and delivery payload (minus
+ * the per-subscription fields). Null for a row the worker cannot place.
+ */
+export function earthquakeCandidate(row) {
+  if (!row || typeof row.id !== 'string' || !row.id) return null;
+  const lat = finiteNumber(row.location?.latitude);
+  const lon = finiteNumber(row.location?.longitude);
+  const magnitude = finiteNumber(row.magnitude);
+  if (lat === null || lon === null || magnitude === null) return null;
+  const occurredMs = hazardTimeMs(row.occurredAt);
+  const place = typeof row.place === 'string' ? row.place.trim() : '';
+  const eventId = `eq:${row.id}`;
+  const quake = occurredMs === null ? null : { t: occurredMs, lat, lon, mag: magnitude };
+  return {
+    eventId,
+    feed: 'eq',
+    priority: row.source === 'nrcan' ? 1 : 0,
+    timeMs: occurredMs,
+    closed: false,
+    quake,
+    storm: null,
+    payload: {
+      eventId,
+      hazardType: 'earthquakes',
+      title: place ? `M${magnitude.toFixed(1)} - ${place}` : `M${magnitude.toFixed(1)} earthquake`,
+      source: row.source === 'nrcan' ? 'nrcan' : 'usgs',
+      sourceUrl: typeof row.sourceUrl === 'string' && row.sourceUrl ? row.sourceUrl : null,
+      lat,
+      lon,
+      countryCodes: hazardCountryCodes({ lat, lon, text: place }),
+      occurredAt: occurredMs === null ? null : isoFromMs(occurredMs),
+      magnitude,
+      depthKm: finiteNumber(row.depthKm),
+      nearTestSite: row.nearTestSite === true,
+      alertLevel: null,
+      stormName: null,
+      stormCategory: null,
+      windKt: null,
+    },
+  };
+}
+
+const NATURAL_PRIORITY = Object.freeze({ nhc: 0, gdacs: 1, hko: 2, eonet: 3 });
+
+/**
+ * Pure. One row of natural:events:v1 as a candidate. Earthquake rows (GDACS
+ * EQ) are skipped: the earthquake feed carries the same quakes with a
+ * magnitude. GDACS rows carry alertLevel (older rows only the title emoji,
+ * which is read as a fallback and stripped from the title).
+ */
+export function naturalEventCandidate(row) {
+  if (!row || typeof row.id !== 'string' || !row.id || row.category === 'earthquakes') return null;
+  const lat = finiteNumber(row.lat);
+  const lon = finiteNumber(row.lon);
+  if (lat === null || lon === null || typeof row.category !== 'string' || !row.category) return null;
+  const source = naturalSource(row);
+  const rawTitle = typeof row.title === 'string' ? row.title : '';
+  const emoji = GDACS_ALERT_EMOJI.exec(rawTitle)?.[1];
+  const title = rawTitle.replace(GDACS_ALERT_EMOJI, '').trim();
+  let alertLevel = null;
+  if (row.id.startsWith('gdacs-')) {
+    alertLevel = row.alertLevel === 'Red' || row.alertLevel === 'Orange'
+      ? row.alertLevel
+      : emoji === '\u{1F534}' ? 'Red' : emoji === '\u{1F7E0}' ? 'Orange' : null;
+  }
+  const storm = row.category === 'severeStorms';
+  const stormName = typeof row.stormName === 'string' && row.stormName.trim()
+    ? row.stormName.trim()
+    : storm && STORM_CLASSIFICATION.test(title) ? title.replace(STORM_CLASSIFICATION, '').trim() || null : null;
+  const unit = typeof row.magnitudeUnit === 'string' ? row.magnitudeUnit.trim().toLowerCase() : '';
+  const windKt = finiteNumber(row.windKt) > 0
+    ? finiteNumber(row.windKt)
+    : storm && (unit === 'kt' || unit === 'kts') && finiteNumber(row.magnitude) > 0 ? finiteNumber(row.magnitude) : null;
+  const timeMs = hazardTimeMs(row.date);
+  const eventId = `nat:${stableHazardId(row.id)}`;
+  return {
+    eventId,
+    feed: 'nat',
+    priority: NATURAL_PRIORITY[source] ?? (row.id.startsWith('cyclone:') ? 1 : 3),
+    timeMs,
+    closed: row.closed === true,
+    quake: null,
+    storm: storm && stormName ? stormKey(stormName) || null : null,
+    payload: {
+      eventId,
+      hazardType: row.category,
+      title: title || row.categoryTitle || row.category,
+      source,
+      sourceUrl: typeof row.sourceUrl === 'string' && row.sourceUrl ? row.sourceUrl : null,
+      lat,
+      lon,
+      countryCodes: hazardCountryCodes({ lat, lon, text: title }),
+      occurredAt: timeMs === null ? null : isoFromMs(timeMs),
+      magnitude: null,
+      depthKm: null,
+      nearTestSite: null,
+      alertLevel,
+      stormName: storm ? stormName : null,
+      stormCategory: Number.isInteger(row.stormCategory) ? row.stormCategory : null,
+      windKt,
+    },
+  };
+}
+
+/** Seen-set member: the event id, plus the fingerprint cross-source matching needs. */
+function hazardMember(candidate) {
+  if (candidate.quake) {
+    const { t, lat, lon, mag } = candidate.quake;
+    return `${candidate.eventId}|q:${t},${lat.toFixed(2)},${lon.toFixed(2)},${mag}`;
+  }
+  return candidate.storm ? `${candidate.eventId}|s:${candidate.storm}` : candidate.eventId;
+}
+
+/**
+ * Pure. ZRANGE output of the hazard seen set -> Map(eventId -> {members,
+ * quake, storms}). A storm renamed after it was first seen (Tropical
+ * Depression Nineteen, then Melissa) keeps one member per name, so another
+ * agency's copy under either name is recognized.
+ */
+export function parseHazardSeen(members) {
+  const seen = new Map();
+  for (const member of Array.isArray(members) ? members : []) {
+    if (typeof member !== 'string' || !member) continue;
+    const bar = member.indexOf('|');
+    const eventId = bar === -1 ? member : member.slice(0, bar);
+    const tag = bar === -1 ? '' : member.slice(bar + 1);
+    if (!seen.has(eventId)) seen.set(eventId, { eventId, members: [], quake: null, storms: new Set() });
+    const entry = seen.get(eventId);
+    entry.members.push(member);
+    if (tag.startsWith('q:')) {
+      const [t, lat, lon, mag] = tag.slice(2).split(',').map(Number);
+      if ([t, lat, lon, mag].every(Number.isFinite) && !entry.quake) entry.quake = { t, lat, lon, mag };
+    } else if (tag.startsWith('s:') && tag.length > 2) {
+      entry.storms.add(tag.slice(2));
+    }
+  }
+  return seen;
+}
+
+function distanceKm(a, b) {
+  const rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad;
+  const dLon = (b.lon - a.lon) * rad;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function sameQuake(a, b) {
+  return Math.abs(a.t - b.t) <= QUAKE_MATCH.seconds * 1000
+    && Math.abs(a.mag - b.mag) <= QUAKE_MATCH.magnitude + 1e-9
+    && distanceKm(a, b) <= QUAKE_MATCH.km;
+}
+
+export function emptyHazardCounters() {
+  return { feedIds: 0, new: 0, bootstrapped: 0, stale: 0, closed: 0, crossSource: 0 };
+}
+
+/**
+ * Pure. Diffs the two feeds against the seen set. `feeds.earthquakes` or
+ * `feeds.naturalEvents` is null when that key was unreadable: its ids are
+ * neither diffed nor refreshed. For each readable feed:
+ *   - an id already seen is refreshed (its score becomes `now`);
+ *   - a feed with no seen id at all bootstraps: every id is marked seen and
+ *     nothing is delivered, so a first deploy or a lost seen set never floods;
+ *   - otherwise an unseen id is delivered when its event time is within the
+ *     registry's new window and it is not closed, unless it is another
+ *     agency's copy of a seen quake or storm (registry dedupe.crossSource).
+ * Within a tick the higher-priority row of one hazard goes first (USGS over
+ * Earthquakes Canada; NHC, then GDACS and western-Pacific cyclones, then
+ * EONET), so the richer record is the one delivered.
+ * Returns the occurrences, the [score, member] seen writes and counters.
+ */
+export function diffHazards(feeds, seen, now, rule = HAZARD_RULE) {
+  const counters = emptyHazardCounters();
+  const occurrences = [];
+  const writes = [];
+  const known = new Map([...seen].map(([eventId, entry]) => [eventId, { ...entry, members: [...entry.members], storms: new Set(entry.storms) }]));
+  const feedRows = [
+    ['eq', feeds.earthquakes, earthquakeCandidate, rule.quakeNewWithinMs],
+    ['nat', feeds.naturalEvents, naturalEventCandidate, rule.otherNewWithinMs],
+  ];
+  for (const [feed, rows, toCandidate, newWithinMs] of feedRows) {
+    if (!Array.isArray(rows)) continue;
+    const prefix = `${feed}:`;
+    const bootstrap = ![...seen.keys()].some((eventId) => eventId.startsWith(prefix));
+    const candidates = rows.map(toCandidate).filter(Boolean)
+      .sort((a, b) => a.priority - b.priority || (a.timeMs ?? 0) - (b.timeMs ?? 0));
+    const tickIds = new Set();
+    for (const candidate of candidates) {
+      if (tickIds.has(candidate.eventId)) continue;
+      tickIds.add(candidate.eventId);
+      counters.feedIds += 1;
+      const existing = known.get(candidate.eventId);
+      if (existing) {
+        for (const member of existing.members) writes.push([now, member]);
+        if (candidate.storm && !existing.storms.has(candidate.storm)) {
+          writes.push([now, hazardMember(candidate)]);
+          existing.storms.add(candidate.storm);
+        }
+        continue;
+      }
+      const member = hazardMember(candidate);
+      writes.push([now, member]);
+      const duplicate = [...known.values()].some((other) => (candidate.quake && other.quake && sameQuake(candidate.quake, other.quake))
+        || (candidate.storm && other.storms.has(candidate.storm)));
+      known.set(candidate.eventId, { eventId: candidate.eventId, members: [member], quake: candidate.quake, storms: new Set(candidate.storm ? [candidate.storm] : []) });
+      if (bootstrap) counters.bootstrapped += 1;
+      else if (candidate.closed) counters.closed += 1;
+      else if (candidate.timeMs === null || now - candidate.timeMs > newWithinMs) counters.stale += 1;
+      else if (duplicate) counters.crossSource += 1;
+      else {
+        counters.new += 1;
+        occurrences.push({ event: HAZARD_EVENT, eventId: candidate.eventId, publishedAt: now, payload: candidate.payload });
+      }
+    }
+  }
+  return { occurrences, writes, counters };
+}
+
 function scopeList(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item) : [];
 }
@@ -488,6 +771,18 @@ export function matchOccurrence(record, occurrence) {
     const minAbsPct = finiteNumber(scope.minAbsPct) ?? 0;
     if (Math.abs(payload.changePct) < minAbsPct) return null;
     if ((scope.direction === 'up' || scope.direction === 'down') && payload.direction !== scope.direction) return null;
+    return {};
+  }
+  if (occurrence.event === HAZARD_EVENT) {
+    const hazardTypes = scopeList(scope.hazardTypes);
+    if (hazardTypes.length && !hazardTypes.includes(payload.hazardType)) return null;
+    const minMagnitude = finiteNumber(scope.minMagnitude);
+    if (payload.hazardType === 'earthquakes' && minMagnitude !== null && !(payload.magnitude >= minMagnitude)) return null;
+    // Every GDACS event WorldMonitor stores is Orange or Red (the seeder drops
+    // Green), so an unknown level (a western-Pacific cyclone) passes Orange only.
+    if (scope.minAlertLevel === 'Red' && payload.source === 'gdacs' && payload.alertLevel !== 'Red') return null;
+    const countries = scopeList(scope.countries);
+    if (countries.length && !payload.countryCodes.some((code) => countries.includes(code))) return null;
     return {};
   }
   return null;
@@ -702,9 +997,11 @@ export function emptyOccurrenceCounters() {
  * `occurrences` are the fan-out messages drained this tick, oldest first,
  * copies included: a subscriber takes the first copy of an eventId that
  * matches its scope and skips the rest through its `occ:` field; `prunes`
- * maps a subscriberId to the state fields to HDEL.
+ * maps a subscriberId to the state fields to HDEL. `hazards` are the
+ * natural.hazard occurrences diffHazards found new this tick (null when
+ * neither hazard feed was readable), handled the same way.
  */
-export function planTick({ chokepoints, riskScores = null, occurrences = null, records, states, now, scoresFetchedAt, riskFetchedAt = null, makeId = makeDeliveryId }) {
+export function planTick({ chokepoints, riskScores = null, occurrences = null, hazards = null, records, states, now, scoresFetchedAt, riskFetchedAt = null, makeId = makeDeliveryId }) {
   const byId = new Map((chokepoints ?? [])
     .filter((cp) => typeof cp?.id === 'string' && Number.isFinite(cp.disruptionScore))
     .map((cp) => [cp.id, cp]));
@@ -727,9 +1024,10 @@ export function planTick({ chokepoints, riskScores = null, occurrences = null, r
       if (!riskScores) continue;
       planRiskSurgeRecord({ record, previous, next, ciiByCountry, now, triggeredAt, riskFetchedAt, makeId, deliveries });
     } else if (OCCURRENCE_RULES[eventType]) {
-      if (!occurrences) continue;
+      const source = eventType === HAZARD_EVENT ? hazards : occurrences;
+      if (!source) continue;
       const prune = [];
-      planOccurrenceRecord({ record, previous, next, prune, occurrences, now, triggeredAt, makeId, deliveries, counters });
+      planOccurrenceRecord({ record, previous, next, prune, occurrences: source, now, triggeredAt, makeId, deliveries, counters });
       if (prune.length) prunes.set(record.subscriberId, prune);
     } else {
       continue;
@@ -869,6 +1167,37 @@ export async function readFanout({ redis, now = Date.now() }) {
   return { count: messages.length, occurrences, unreadable };
 }
 
+function seededArray(row, field) {
+  if (!row || row.error || typeof row.result !== 'string') return null;
+  const { data } = unwrapEnvelope(row.result);
+  return Array.isArray(data?.[field]) ? data[field] : null;
+}
+
+/**
+ * Reads both hazard feeds (seed envelopes) and the hazard seen set in one
+ * round trip. A missing or malformed key comes back as a null feed, which
+ * diffHazards leaves alone; null overall when the round trip or the seen-set
+ * read fails, since diffing without the seen set would re-deliver everything.
+ */
+export async function readHazardFeeds({ redis }) {
+  let rows;
+  try {
+    rows = await redis([
+      ['GET', EARTHQUAKES_KEY],
+      ['GET', NATURAL_EVENTS_KEY],
+      ['ZRANGE', seenKey(HAZARD_EVENT), '0', '-1'],
+    ]);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(rows) || rows.length !== 3 || !rows[2] || rows[2].error) return null;
+  return {
+    earthquakes: seededArray(rows[0], 'earthquakes'),
+    naturalEvents: seededArray(rows[1], 'events'),
+    seen: parseHazardSeen(Array.isArray(rows[2].result) ? rows[2].result : []),
+  };
+}
+
 /**
  * Counts the drained copies whose eventId was already seen, in an earlier
  * tick (the global seen set) or earlier in this drain (the relay publishes one
@@ -999,11 +1328,13 @@ async function writeWorkerStatus(redis, fence, summary, now) {
     sourceState: summary.sourceState,
     riskSourceState: summary.riskSourceState,
     fanoutState: summary.fanoutState,
+    hazardSourceState: summary.hazardSourceState,
     deliveries: summary.deliveries,
     failures: summary.failures,
     deactivated: summary.deactivated,
     pruned: summary.pruned,
     occurrences: summary.occurrences,
+    hazards: summary.hazards,
     scoresFetchedAt: summary.scoresFetchedAt,
     riskFetchedAt: summary.riskFetchedAt,
   };
@@ -1013,6 +1344,7 @@ async function writeWorkerStatus(redis, fence, summary, now) {
     deliveries: summary.deliveries,
     failures: summary.failures,
     occurrences: summary.occurrences,
+    hazards: summary.hazards,
     scoresFetchedAt: summary.scoresFetchedAt,
     riskFetchedAt: summary.riskFetchedAt,
   };
@@ -1049,10 +1381,14 @@ async function evaluate({ redis, lock, deliver, fetchImpl, env, now }) {
   const status = await readChokepointStatus({ redis, fetchImpl, env });
   const riskScores = await readRiskScores({ redis, fetchImpl, env });
   const fanout = await readFanout({ redis, now: now() });
+  const hazardFeeds = await readHazardFeeds({ redis });
+  const hazardsReadable = Boolean(hazardFeeds && (hazardFeeds.earthquakes || hazardFeeds.naturalEvents));
   const summary = {
     sourceState: 'ok',
     riskSourceState: riskScores ? 'ok' : 'error',
     fanoutState: fanout ? 'ok' : 'error',
+    hazardSourceState: !hazardsReadable ? 'error' : hazardFeeds.earthquakes && hazardFeeds.naturalEvents ? 'ok' : 'partial',
+    hazards: emptyHazardCounters(),
     subscribers: 0,
     deliveries: 0,
     failures: 0,
@@ -1069,7 +1405,7 @@ async function evaluate({ redis, lock, deliver, fetchImpl, env, now }) {
   // not hold back a country.risk_surge or a breaking-news delivery. Only when
   // no source is readable is there nothing to do this tick.
   if (!status) summary.sourceState = 'error';
-  if (!status && !riskScores && !fanout) {
+  if (!status && !riskScores && !fanout && !hazardsReadable) {
     await writeWorkerStatus(redis, fence, summary, now);
     return summary;
   }
@@ -1105,11 +1441,14 @@ async function evaluate({ redis, lock, deliver, fetchImpl, env, now }) {
     summary.occurrences.unreadable = fanout.unreadable;
     summary.occurrences.duplicates = await countSeen(redis, fanout.occurrences);
   }
+  const hazardDiff = hazardsReadable ? diffHazards(hazardFeeds, hazardFeeds.seen, now()) : null;
+  if (hazardDiff) summary.hazards = hazardDiff.counters;
 
   const { deliveries, nextStates, prunes, counters } = planTick({
     chokepoints: status?.chokepoints ?? null,
     riskScores,
     occurrences,
+    hazards: hazardDiff ? hazardDiff.occurrences : null,
     records,
     states,
     now: now(),
@@ -1197,6 +1536,19 @@ async function evaluate({ redis, lock, deliver, fetchImpl, env, now }) {
       ]]), 1, 'fan-out trim');
       assertFenced([trimmed.result]);
     }
+  }
+  // The hazard seen set is written after the pending state too: a tick that
+  // dies first re-diffs the same rows, and each subscriber's occ: field makes
+  // the second pass a no-op. Every id in a readable feed is refreshed, so the
+  // prune only drops ids gone from both feeds for the whole seen window.
+  if (hazardDiff?.writes.length) {
+    const tickMs = now();
+    const [written] = assertRows(await redis([[
+      'EVAL', HAZARD_SEEN_SCRIPT, '2', fence.key, seenKey(HAZARD_EVENT),
+      fence.token, String(tickMs - HAZARD_RULE.seenWindowMs), String(Math.ceil((HAZARD_RULE.seenWindowMs * 2) / 1000)),
+      ...hazardDiff.writes.flatMap(([score, member]) => [String(score), member]),
+    ]]), 1, 'hazard seen write');
+    assertFenced([written.result]);
   }
   const swapped = assertFenced(await runBatched(redis, settledRecords, (record) => [
     'EVAL', RECORD_CAS_SCRIPT, '2', fence.key, webhookKey(record.subscriberId),
@@ -1300,7 +1652,9 @@ async function main() {
           + `subscribers=${result.subscribers} deliveries=${result.deliveries} failures=${result.failures} `
           + `deactivated=${result.deactivated} pruned=${result.pruned} backfilled=${result.backfilled} `
           + `occ.drained=${occ.drained} occ.duplicates=${occ.duplicates} occ.matched=${occ.matched} `
-          + `occ.suppressed=${occ.suppressed} occ.expired=${occ.expired}`,
+          + `occ.suppressed=${occ.suppressed} occ.expired=${occ.expired} `
+          + `hazard=${result.hazardSourceState} haz.new=${result.hazards?.new ?? 0} `
+          + `haz.bootstrapped=${result.hazards?.bootstrapped ?? 0} haz.crossSource=${result.hazards?.crossSource ?? 0}`,
         );
       }
     } catch (error) {
