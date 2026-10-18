@@ -102,6 +102,17 @@ describe('hazardCountryCodes', () => {
     assert.deepEqual(hazardCountryCodes({ lat: 19.6, lon: -155.5, text: 'Volcano' }), ['US'], 'Hawaii still places');
   });
 
+  it('a longer region name beats the shorter country inside it, wherever it appears', () => {
+    assert.equal(textToIso2('Wildfire near Santa Fe in New Mexico'), 'US', 'not Mexico');
+    assert.equal(textToIso2('off the coast of New Jersey'), 'US', 'not Jersey');
+    assert.equal(textToIso2('Flood in Papua New Guinea'), 'PG');
+    assert.equal(textToIso2('Bushfire near Dubbo in New South Wales'), 'AU', 'an Australian state names Australia');
+    assert.equal(textToIso2('Flood in Mexico'), 'MX', 'the country alone still resolves');
+    assert.equal(textToIso2('Flood in Guinea'), 'GN');
+    assert.equal(textToIso2('Flood in Equatorial Guinea'), 'GQ');
+    assert.equal(textToIso2('Flood in Guinea-Bissau'), 'GW');
+  });
+
   it('reads a US state named anywhere in the text, not only after the last comma', () => {
     assert.deepEqual(hazardCountryCodes({ lat: 43.6, lon: -127.4, text: 'off the coast of Oregon' }), ['US'], 'not Canada, whose box contains the point');
   });

@@ -101,10 +101,18 @@ const CANADA_PROVINCES = new Set([
   'quebec', 'saskatchewan', 'yukon',
 ]);
 
-// Georgia is left to the country list and settled by the point.
-const REGIONS_LONGEST_FIRST = [
+// GDACS and EONET name Australian fires and floods by state ("New South
+// Wales" would otherwise match nothing, or Wales if it were listed).
+const AUSTRALIA_STATES = ['new south wales', 'queensland', 'south australia', 'western australia', 'tasmania', 'northern territory', 'australian capital territory'];
+
+// Countries, US states, Canadian provinces and Australian states in one longest-first pass, so
+// "new mexico" wins over "mexico" and "papua new guinea" over "guinea".
+// Georgia stays a country name and is settled by the point.
+const PLACES_LONGEST_FIRST = [
+  ...NAMES_LONGEST_FIRST.map((name) => [name, COUNTRY_NAMES[name]]),
   ...[...US_STATES].map((name) => [name, 'US']),
   ...[...CANADA_PROVINCES].map((name) => [name, 'CA']),
+  ...AUSTRALIA_STATES.map((name) => [name, 'AU']),
 ].sort((a, b) => b[0].length - a[0].length);
 
 /** "Georgia" is the one name both the country list and the US states carry: inside the US box it is the state. */
@@ -114,11 +122,8 @@ function georgia(lat, lon) {
 
 function scanForCountry(normalized, lat, lon) {
   const padded = ` ${normalized} `;
-  for (const name of NAMES_LONGEST_FIRST) {
-    if (padded.includes(` ${name} `)) return name === 'georgia' ? georgia(lat, lon) : COUNTRY_NAMES[name];
-  }
-  for (const [name, code] of REGIONS_LONGEST_FIRST) {
-    if (padded.includes(` ${name} `)) return code;
+  for (const [name, code] of PLACES_LONGEST_FIRST) {
+    if (padded.includes(` ${name} `)) return name === 'georgia' ? georgia(lat, lon) : code;
   }
   return null;
 }
@@ -128,9 +133,8 @@ function scanForCountry(normalized, lat, lon) {
  * country, a US state or a Canadian province in USGS, NRCan and EONET IRWIN
  * places; USGS writes California as `CA`, which would otherwise read as
  * Canada, and NRCan writes provinces as codes, two of which (NL, PE) are also
- * country codes. Otherwise any country, then any US state or Canadian
- * province, named in the text, longest name first. Georgia is settled by the
- * point.
+ * country codes. Otherwise any country, US state or Canadian province named
+ * in the text, longest name first. Georgia is settled by the point.
  */
 export function textToIso2(text, { lat = Number.NaN, lon = Number.NaN } = {}) {
   if (typeof text !== 'string' || !text.trim()) return null;
