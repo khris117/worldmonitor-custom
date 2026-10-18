@@ -5,12 +5,12 @@
   "description": "Real-time global intelligence across conflict, markets, energy, trade, shipping and cyber.",
   "kind": "product",
   "icon": "https://www.worldmonitor.app/favico/apple-touch-icon.png",
-  "version": "1.36.0",
+  "version": "1.37.0",
   "url": "https://worldmonitor.app/mcp",
   "serverUrl": "https://worldmonitor.app/mcp",
   "serverInfo": {
     "name": "worldmonitor",
-    "version": "1.36.0",
+    "version": "1.37.0",
     "description": "WorldMonitor's live global-intelligence stack as an MCP server, with per-outlet source ratings and a publicly scored forecast record, serving real-time data and AI-generated briefs in these domains: markets, commodities and macro; energy; conflicts, country risk, sanctions, cyber threats and chokepoints; maritime, aviation and supply chains; climate and natural disasters; health signals; displacement and humanitarian crises; AI briefs, forecasts and intel history; tariffs and trade policy.",
     "vendor": "WorldMonitor",
     "homepage": "https://www.worldmonitor.app"
@@ -148,7 +148,7 @@
     },
     {
       "name": "get_prediction_markets",
-      "description": "Return seeded prediction-market contracts from multiple venues with current probabilities, grouped into three buckets: geopolitical (including elections), tech (AI, crypto, science) and finance (economics, plus the untagged fallback for non-geopolitical records). Flagged stale when the seed is older than 90 minutes. Kalshi currently supplies no classifier tags, so source=kalshi with category=tech returns no records and other non-geopolitical Kalshi records fall back to finance. Seeded-cache read with no live fetch: weight 1 on API plans, included in the signed-in free allowance. query matches titles case-insensitively; limit caps each bucket (default 30, 0 for no cap). Dedicated paid connections reuse one panel allocation across openings and filters; refresh with a request_id starts a new one and the same ID retries it. API allowances retain per-tool billing.",
+      "description": "Return seeded prediction-market contracts from multiple venues with current probabilities, grouped into three buckets: geopolitical (including elections), tech (AI, crypto, science) and finance (economics, plus the untagged fallback for non-geopolitical records). Flagged stale when the seed is older than 90 minutes. Kalshi currently supplies no classifier tags, so source=kalshi with category=tech returns no records and other non-geopolitical Kalshi records fall back to finance. Seeded-cache read with no live fetch: weight 1 on API plans, included in the signed-in free allowance. query matches titles case-insensitively; limit caps each bucket (default 30, 0 for no cap). Dedicated paid connections reuse one panel allocation across openings and filters; refresh with a request_id starts a new one and the same ID retries it. API allowances retain per-tool billing. change24h/change7d are percentage-point moves (7d: Polymarket only); sort=move_24h|move_7d ranks by absolute move.",
       "_meta": {
         "worldmonitor/access": "free-account",
         "worldmonitor/category": "markets-economy"
@@ -469,14 +469,6 @@
     {
       "name": "get_forecast_theaters",
       "description": "Return the latest forecast simulation theater summaries: for each theater its original paths, actors with optional roles, reactions, stabilizers, invalidators, source run and time, and completion counts. A read of the stored simulation output; there is no run selector and no simulation trigger. Source time is separate from forecast generation and does not establish freshness; partial, unknown and unavailable results are reported as such. Requires a paid plan; one downstream fetch, weight 2 on API plans. Dedicated Pro plans read it inside an open forecasts panel with its signed panel_request, sharing that allocation and its 64 uncached-read limit; API plans read it without panel_request. Read-only.",
-      "_meta": {
-        "worldmonitor/access": "subscription",
-        "worldmonitor/category": "ai-intelligence"
-      }
-    },
-    {
-      "name": "generate_forecasts",
-      "description": "Return the published AI forecasts through the paid forecast API, filtered server-side by domain and region, each with probability, scenarios, signals and a per-forecast case file. Despite the name, a call generates nothing. The list is produced by the forecasting pipeline on its own schedule (rule-based probabilities with LLM-written narrative, republished on the pipeline's own cadence); a call returns the latest published run and does not start a new one. An oversized response omits the case files and reports the omitted count in transportCoverage; a narrower domain or region filter returns them. Requires a paid plan; one downstream request, weight 2 on API plans. domain is one of conflict, market, supply_chain, political, military, cyber, infrastructure; region is free text such as \"Middle East\". Read-only.",
       "_meta": {
         "worldmonitor/access": "subscription",
         "worldmonitor/category": "ai-intelligence"
