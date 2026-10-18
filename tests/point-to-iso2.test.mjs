@@ -27,8 +27,8 @@ describe('pointToIso2 (bounding boxes, smallest first)', () => {
     assert.equal(pointToIso2(95, 10), null);
   });
 
-  it('is only a fallback: Canada\'s box contains Seattle', () => {
-    assert.equal(pointToIso2(47.6, -122.3), 'CA');
+  it('is only a fallback: the contiguous US box contains Windsor, Ontario', () => {
+    assert.equal(pointToIso2(42.3, -83.0), 'US');
   });
 });
 
@@ -45,11 +45,22 @@ describe('textToIso2 (agency place strings and titles)', () => {
     assert.equal(textToIso2('5 km NW of Ridgecrest, CA'), 'US');
     assert.equal(textToIso2('Wildfire CYRUS, Kern, California'), 'US');
     assert.equal(textToIso2('64 km SW of Adak, Alaska'), 'US');
+    assert.equal(textToIso2('Wildfire Bear Trap, Socorro, New Mexico'), 'US', 'the state, not Mexico');
   });
 
   it('settles Georgia by the point: the US state inside the US box, the country otherwise', () => {
     assert.equal(textToIso2('Wildfire Bay Branch, Ware, Georgia', { lat: 31.2, lon: -82.3 }), 'US');
     assert.equal(textToIso2('10 km N of Tbilisi, Georgia', { lat: 41.8, lon: 44.8 }), 'GE');
+    assert.equal(textToIso2('Wildfires in Georgia', { lat: 31.2, lon: -82.3 }), 'US', 'also when the name is found inside a title');
+    assert.equal(textToIso2('Earthquake in Georgia', { lat: 42, lon: 44 }), 'GE');
+  });
+
+  it('reads Earthquakes Canada province codes as Canada, not as the countries that share them (NL, PE)', () => {
+    assert.equal(textToIso2('192 km SW of Port Hardy, BC'), 'CA');
+    assert.equal(textToIso2('40 km E of St. John\'s, NL'), 'CA');
+    assert.equal(textToIso2('12 km N of Charlottetown, PE'), 'CA');
+    assert.equal(textToIso2('30 km W of Iqaluit, NU'), 'CA');
+    assert.equal(textToIso2('15 km S of Sudbury, Ontario'), 'CA');
   });
 
   it('finds a country named anywhere in a title, longest name first', () => {
@@ -69,7 +80,8 @@ describe('textToIso2 (agency place strings and titles)', () => {
 });
 
 describe('hazardCountryCodes', () => {
-  it('prefers the agency text over the box, so Seattle is US and not Canada', () => {
+  it('prefers the agency text over the box, so Windsor is Canada and not the US', () => {
+    assert.deepEqual(hazardCountryCodes({ lat: 42.3, lon: -83.0, text: '5 km S of Windsor, Ontario, Canada' }), ['CA']);
     assert.deepEqual(hazardCountryCodes({ lat: 47.6, lon: -122.3, text: '10 km NE of Seattle, Washington' }), ['US']);
   });
 
@@ -80,5 +92,17 @@ describe('hazardCountryCodes', () => {
   it('is empty in open ocean with no named country', () => {
     assert.deepEqual(hazardCountryCodes({ lat: -14.8, lon: -163.2, text: 'Tropical Cyclone 01P' }), []);
     assert.deepEqual(hazardCountryCodes({ lat: 0.17, lon: -19.86, text: 'central Mid-Atlantic Ridge' }), []);
+  });
+
+  it('replaces the boxes overseas territories stretch across oceans: France (Guiana) and the United States (Hawaii, Alaska)', () => {
+    assert.deepEqual(hazardCountryCodes({ lat: 35.2, lon: -35.9, text: 'northern Mid-Atlantic Ridge' }), [], 'France\'s published box reaches the northern ridge');
+    assert.deepEqual(hazardCountryCodes({ lat: 30, lon: -140, text: 'Hurricane Kiko' }), [], 'the published US box covers the north-east Pacific');
+    assert.deepEqual(hazardCountryCodes({ lat: 46.5, lon: 2.5, text: 'Storm' }), ['FR'], 'metropolitan France still places');
+    assert.deepEqual(hazardCountryCodes({ lat: 61.2, lon: -149.9, text: 'Storm' }), ['US'], 'Alaska still places');
+    assert.deepEqual(hazardCountryCodes({ lat: 19.6, lon: -155.5, text: 'Volcano' }), ['US'], 'Hawaii still places');
+  });
+
+  it('reads a US state named anywhere in the text, not only after the last comma', () => {
+    assert.deepEqual(hazardCountryCodes({ lat: 43.6, lon: -127.4, text: 'off the coast of Oregon' }), ['US'], 'not Canada, whose box contains the point');
   });
 });

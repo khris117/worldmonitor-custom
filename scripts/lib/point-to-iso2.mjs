@@ -7,7 +7,8 @@
  * (scripts/shared/country-bboxes.json) overlap at every border (Canada's box
  * covers Seattle), so they only place a point the text does not name: the
  * smallest box containing it wins, the ordering seed-climate-disasters.mjs
- * uses. Railway runs the worker with rootDirectory=scripts, so everything here
+ * uses, with tighter boxes for the two countries whose published box spans
+ * open ocean (BOX_OVERRIDES). Railway runs the worker with rootDirectory=scripts, so everything here
  * reads the scripts/shared copies.
  */
 
@@ -26,7 +27,22 @@ function longitudeSpan([, west, , east]) {
   return west > east ? 360 - west + east : east - west;
 }
 
+// The published boxes for France (French Guiana) and the United States
+// (Alaska to Hawaii) span open ocean: France's reaches the northern
+// Mid-Atlantic Ridge and the US box most of the north-east Pacific. Their
+// territories are placed with tighter boxes instead [south, west, north, east].
+const BOX_OVERRIDES = Object.freeze({
+  FR: [[41.3, -5.2, 51.1, 9.6]], // metropolitan France and Corsica
+  US: [
+    [24.4, -124.8, 49.4, -66.9], // contiguous states
+    [54.4, -168.2, 71.4, -129.9], // Alaska, east of the Bering Strait (Chukotka is Russia)
+    [51.2, -179.9, 55.4, -164], // Aleutians
+    [18.9, -160.3, 22.3, -154.8], // Hawaii
+  ],
+});
+
 const BBOXES_SMALLEST_FIRST = Object.entries(COUNTRY_BBOXES)
+  .flatMap(([code, bbox]) => (BOX_OVERRIDES[code] ? BOX_OVERRIDES[code].map((box) => [code, box]) : [[code, bbox]]))
   .filter(([, bbox]) => Array.isArray(bbox) && bbox.length === 4 && bbox.every(Number.isFinite))
   .sort(([, a], [, b]) => (a[2] - a[0]) * longitudeSpan(a) - (b[2] - b[0]) * longitudeSpan(b));
 
@@ -76,20 +92,45 @@ const NAMES_LONGEST_FIRST = Object.keys(COUNTRY_NAMES)
   .filter((name) => name.length >= 3)
   .sort((a, b) => b.length - a.length);
 
-function scanForCountry(normalized) {
+// Earthquakes Canada ends a place with a province or territory code
+// ("192 km SW of Port Hardy, BC"); NL and PE are also country codes.
+const CANADA_PROVINCE_CODES = new Set(['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT']);
+const CANADA_PROVINCES = new Set([
+  'alberta', 'british columbia', 'manitoba', 'new brunswick', 'newfoundland and labrador', 'newfoundland',
+  'labrador', 'nova scotia', 'northwest territories', 'nunavut', 'ontario', 'prince edward island',
+  'quebec', 'saskatchewan', 'yukon',
+]);
+
+// Georgia is left to the country list and settled by the point.
+const REGIONS_LONGEST_FIRST = [
+  ...[...US_STATES].map((name) => [name, 'US']),
+  ...[...CANADA_PROVINCES].map((name) => [name, 'CA']),
+].sort((a, b) => b[0].length - a[0].length);
+
+/** "Georgia" is the one name both the country list and the US states carry: inside the US box it is the state. */
+function georgia(lat, lon) {
+  return validPoint(lat, lon) && US_BBOX && inBox(lat, lon, US_BBOX) ? 'US' : 'GE';
+}
+
+function scanForCountry(normalized, lat, lon) {
   const padded = ` ${normalized} `;
   for (const name of NAMES_LONGEST_FIRST) {
-    if (padded.includes(` ${name} `)) return COUNTRY_NAMES[name];
+    if (padded.includes(` ${name} `)) return name === 'georgia' ? georgia(lat, lon) : COUNTRY_NAMES[name];
+  }
+  for (const [name, code] of REGIONS_LONGEST_FIRST) {
+    if (padded.includes(` ${name} `)) return code;
   }
   return null;
 }
 
 /**
  * The country an agency's text names, or null. The last comma segment is the
- * country (or a US state) in USGS, NRCan and EONET IRWIN places; USGS writes
- * California as `CA`, which would otherwise read as Canada. "Georgia" is the
- * one name both lists carry: the point decides (inside the US box: the state).
- * Otherwise any country named in the text, longest name first.
+ * country, a US state or a Canadian province in USGS, NRCan and EONET IRWIN
+ * places; USGS writes California as `CA`, which would otherwise read as
+ * Canada, and NRCan writes provinces as codes, two of which (NL, PE) are also
+ * country codes. Otherwise any country, then any US state or Canadian
+ * province, named in the text, longest name first. Georgia is settled by the
+ * point.
  */
 export function textToIso2(text, { lat = Number.NaN, lon = Number.NaN } = {}) {
   if (typeof text !== 'string' || !text.trim()) return null;
@@ -97,15 +138,15 @@ export function textToIso2(text, { lat = Number.NaN, lon = Number.NaN } = {}) {
   const last = segments.length > 1 ? segments[segments.length - 1] : '';
   if (last) {
     if (last === 'CA') return 'US';
+    if (CANADA_PROVINCE_CODES.has(last)) return 'CA';
     const token = normalize(last).replace(/ region$/, '');
-    if (token === 'georgia') {
-      return validPoint(lat, lon) && US_BBOX && inBox(lat, lon, US_BBOX) ? 'US' : 'GE';
-    }
+    if (token === 'georgia') return georgia(lat, lon);
     if (US_STATES.has(token)) return 'US';
+    if (CANADA_PROVINCES.has(token)) return 'CA';
     const code = countryNameToIso2(last.replace(/\s+region$/i, ''));
     if (code && KNOWN_CODES.has(code)) return code;
   }
-  return scanForCountry(normalize(text));
+  return scanForCountry(normalize(text), lat, lon);
 }
 
 /**

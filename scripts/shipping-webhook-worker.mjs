@@ -491,7 +491,6 @@ function naturalSource(row) {
   if (id.startsWith('EONET_')) return 'eonet';
   if (id.startsWith('nhc-')) return 'nhc';
   if (id.startsWith('gdacs-')) return 'gdacs';
-  if (id.startsWith('hko-warning:')) return 'hko';
   const named = typeof row.sourceName === 'string' ? row.sourceName.trim().toLowerCase() : '';
   return named || (id.startsWith('cyclone:') ? 'gdacs' : 'eonet');
 }
@@ -518,6 +517,9 @@ export function earthquakeCandidate(row) {
   const quake = occurredMs === null ? null : { t: occurredMs, lat, lon, mag: magnitude };
   return {
     eventId,
+    family: eventId,
+    alsoRecord: [],
+    windowExempt: false,
     feed: 'eq',
     priority: row.source === 'nrcan' ? 1 : 0,
     timeMs: occurredMs,
@@ -545,7 +547,7 @@ export function earthquakeCandidate(row) {
   };
 }
 
-const NATURAL_PRIORITY = Object.freeze({ nhc: 0, gdacs: 1, hko: 2, eonet: 3 });
+const NATURAL_PRIORITY = Object.freeze({ nhc: 0, gdacs: 1, eonet: 2 });
 
 /**
  * Pure. One row of natural:events:v1 as a candidate. Earthquake rows (GDACS
@@ -555,6 +557,10 @@ const NATURAL_PRIORITY = Object.freeze({ nhc: 0, gdacs: 1, hko: 2, eonet: 3 });
  */
 export function naturalEventCandidate(row) {
   if (!row || typeof row.id !== 'string' || !row.id || row.category === 'earthquakes') return null;
+  // A Hong Kong Observatory signal's id names the signal (hko-warning:TC8NE),
+  // not the storm, so a later storm's same signal would read as seen; the
+  // storm itself arrives through the cyclone feeds.
+  if (row.id.startsWith('hko-warning:')) return null;
   const lat = finiteNumber(row.lat);
   const lon = finiteNumber(row.lon);
   if (lat === null || lon === null || typeof row.category !== 'string' || !row.category) return null;
@@ -577,11 +583,22 @@ export function naturalEventCandidate(row) {
     ? finiteNumber(row.windKt)
     : storm && (unit === 'kt' || unit === 'kts') && finiteNumber(row.magnitude) > 0 ? finiteNumber(row.magnitude) : null;
   const timeMs = hazardTimeMs(row.date);
-  const eventId = `nat:${stableHazardId(row.id)}`;
+  const family = `nat:${stableHazardId(row.id)}`;
+  // GDACS: an escalation to Red is a second event (`:red`), so a Red scope
+  // hears of it; a Red event that falls back to Orange is not new. A GDACS
+  // row's date is when GDACS opened the event, often while it was Green and
+  // not stored, so GDACS rows are new when first seen at Orange or Red,
+  // however old that date is (the bootstrap keeps a first read silent).
+  const gdacs = row.id.startsWith('gdacs-');
+  const red = gdacs && alertLevel === 'Red';
+  const eventId = red ? `${family}:red` : family;
   return {
     eventId,
+    family,
+    alsoRecord: red ? [family] : [],
+    windowExempt: gdacs,
     feed: 'nat',
-    priority: NATURAL_PRIORITY[source] ?? (row.id.startsWith('cyclone:') ? 1 : 3),
+    priority: NATURAL_PRIORITY[source] ?? (row.id.startsWith('cyclone:') ? 1 : 2),
     timeMs,
     closed: row.closed === true,
     quake: null,
@@ -608,12 +625,12 @@ export function naturalEventCandidate(row) {
 }
 
 /** Seen-set member: the event id, plus the fingerprint cross-source matching needs. */
-function hazardMember(candidate) {
+function hazardMember(candidate, eventId = candidate.eventId) {
   if (candidate.quake) {
     const { t, lat, lon, mag } = candidate.quake;
-    return `${candidate.eventId}|q:${t},${lat.toFixed(2)},${lon.toFixed(2)},${mag}`;
+    return `${eventId}|q:${t},${lat.toFixed(2)},${lon.toFixed(2)},${mag}`;
   }
-  return candidate.storm ? `${candidate.eventId}|s:${candidate.storm}` : candidate.eventId;
+  return candidate.storm ? `${eventId}|s:${candidate.storm}` : eventId;
 }
 
 /**
@@ -648,6 +665,10 @@ function distanceKm(a, b) {
   const dLon = (b.lon - a.lon) * rad;
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
   return 2 * 6371.0088 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function quakeAgency(eventId) {
+  return eventId.startsWith('eq:nrcan:') ? 'nrcan' : 'usgs';
 }
 
 function sameQuake(a, b) {
@@ -690,28 +711,43 @@ export function diffHazards(feeds, seen, now, rule = HAZARD_RULE) {
     const bootstrap = ![...seen.keys()].some((eventId) => eventId.startsWith(prefix));
     const candidates = rows.map(toCandidate).filter(Boolean)
       .sort((a, b) => a.priority - b.priority || (a.timeMs ?? 0) - (b.timeMs ?? 0));
+    const feedIds = new Set(candidates.map((candidate) => candidate.eventId));
     const tickIds = new Set();
     for (const candidate of candidates) {
       if (tickIds.has(candidate.eventId)) continue;
       tickIds.add(candidate.eventId);
       counters.feedIds += 1;
-      const existing = known.get(candidate.eventId);
-      if (existing) {
-        for (const member of existing.members) writes.push([now, member]);
+      // A Red GDACS row also keeps its Orange id seen, so falling back to
+      // Orange is not new (alsoRecord); the Orange id alone does not make the
+      // Red id seen, so an escalation is.
+      if (known.has(candidate.eventId)) {
+        const seenAs = [candidate.eventId, ...candidate.alsoRecord].filter((eventId) => known.has(eventId));
+        for (const eventId of seenAs) for (const member of known.get(eventId).members) writes.push([now, member]);
+        for (const eventId of candidate.alsoRecord.filter((id) => !known.has(id))) writes.push([now, hazardMember(candidate, eventId)]);
+        const existing = known.get(seenAs[0]);
         if (candidate.storm && !existing.storms.has(candidate.storm)) {
-          writes.push([now, hazardMember(candidate)]);
+          writes.push([now, hazardMember(candidate, existing.eventId)]);
           existing.storms.add(candidate.storm);
         }
         continue;
       }
-      const member = hazardMember(candidate);
-      writes.push([now, member]);
-      const duplicate = [...known.values()].some((other) => (candidate.quake && other.quake && sameQuake(candidate.quake, other.quake))
-        || (candidate.storm && other.storms.has(candidate.storm)));
-      known.set(candidate.eventId, { eventId: candidate.eventId, members: [member], quake: candidate.quake, storms: new Set(candidate.storm ? [candidate.storm] : []) });
+      // Another agency's copy of a seen hazard; never the same event's own
+      // lower alert level (a GDACS escalation shares its storm name).
+      // A matching quake is a copy only when it came from the other agency or
+      // its id has left the feed (replaced): two quakes the feed still lists
+      // side by side are a doublet, not one event.
+      const duplicate = [...known.values()].some((other) => !(other.eventId === candidate.family || other.eventId.startsWith(`${candidate.family}:`))
+        && ((candidate.quake && other.quake && sameQuake(candidate.quake, other.quake)
+            && (!feedIds.has(other.eventId) || quakeAgency(other.eventId) !== quakeAgency(candidate.eventId)))
+          || (candidate.storm && other.storms.has(candidate.storm))));
+      for (const eventId of [candidate.eventId, ...candidate.alsoRecord]) {
+        const member = hazardMember(candidate, eventId);
+        writes.push([now, member]);
+        known.set(eventId, { eventId, members: [member], quake: candidate.quake, storms: new Set(candidate.storm ? [candidate.storm] : []) });
+      }
       if (bootstrap) counters.bootstrapped += 1;
       else if (candidate.closed) counters.closed += 1;
-      else if (candidate.timeMs === null || now - candidate.timeMs > newWithinMs) counters.stale += 1;
+      else if (!candidate.windowExempt && (candidate.timeMs === null || now - candidate.timeMs > newWithinMs)) counters.stale += 1;
       else if (duplicate) counters.crossSource += 1;
       else {
         counters.new += 1;

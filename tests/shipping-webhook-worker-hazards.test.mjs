@@ -204,6 +204,27 @@ describe('diffHazards', () => {
     assert.equal(result.counters.crossSource, 1);
   });
 
+  it('two separate quakes that are both still in the feed are two events, however close', () => {
+    const seen = warmSeen(`eq:us6000frst|q:${NOW - 6 * MIN},51.98,157.27,5.8`);
+    const result = diffHazards({
+      earthquakes: [quake({ id: 'us6000frst', occurredAt: NOW - 6 * MIN, magnitude: 5.8 }), quake({ id: 'us6000scnd', occurredAt: NOW - 5 * MIN, magnitude: 5.8, location: { latitude: 52.3, longitude: 157.6 } })],
+      naturalEvents: [],
+    }, seen, NOW);
+    assert.deepEqual(ids(result), ['eq:us6000scnd'], 'a doublet is not a replacement: the first id is still published');
+    const sameTick = diffHazards({
+      earthquakes: [quake({ id: 'us6000aaaa', magnitude: 5.8 }), quake({ id: 'us6000bbbb', occurredAt: NOW - 4 * MIN, magnitude: 5.9 })],
+      naturalEvents: [],
+    }, warmSeen(), NOW);
+    assert.deepEqual(ids(sameTick).sort(), ['eq:us6000aaaa', 'eq:us6000bbbb']);
+  });
+
+  it('a USGS id that replaces a seen one (the old id gone from the feed) is the same quake', () => {
+    const seen = warmSeen(`eq:ak0261abcd|q:${NOW - 5 * MIN},51.98,157.27,6.9`);
+    const result = diffHazards({ earthquakes: [quake()], naturalEvents: [] }, seen, NOW);
+    assert.deepEqual(result.occurrences, []);
+    assert.equal(result.counters.crossSource, 1);
+  });
+
   it('one storm from NHC and EONET in one tick is one delivery, from NHC', () => {
     const result = diffHazards({ earthquakes: [], naturalEvents: [
       natural({ id: 'EONET_25063', title: 'Hurricane Melissa', sourceName: 'NOAA_NHC', lat: 17.9, lon: -76.5 }),
@@ -218,6 +239,44 @@ describe('diffHazards', () => {
     const result = diffHazards({ earthquakes: [], naturalEvents: [natural()] }, seen, NOW);
     assert.deepEqual(result.occurrences, []);
     assert.equal(result.counters.crossSource, 1);
+  });
+
+  it('a GDACS event is new when first seen at Orange or Red, however long ago GDACS opened it (it may have been Green, which is not stored)', () => {
+    const flood = natural({ id: 'gdacs-FL-1001', title: '\u{1F7E0} Flood in Nigeria', category: 'floods', sourceName: 'GDACS', alertLevel: 'Orange', lat: 9, lon: 7, date: NOW - 10 * 24 * HOUR });
+    const result = diffHazards({ earthquakes: [], naturalEvents: [flood] }, warmSeen(), NOW);
+    assert.deepEqual(ids(result), ['nat:gdacs-FL-1001']);
+  });
+
+  it('a GDACS escalation from Orange to Red is a second event; a Red event that falls back to Orange is not new', () => {
+    const orange = natural({ id: 'gdacs-FL-1001', title: '\u{1F7E0} Flood in Nigeria', category: 'floods', sourceName: 'GDACS', alertLevel: 'Orange', lat: 9, lon: 7, date: NOW - 4 * 24 * HOUR });
+    const red = { ...orange, title: '\u{1F534} Flood in Nigeria', alertLevel: 'Red' };
+    const first = diffHazards({ earthquakes: [], naturalEvents: [orange] }, warmSeen(), NOW);
+    assert.deepEqual(ids(first), ['nat:gdacs-FL-1001']);
+    const escalated = diffHazards({ earthquakes: [], naturalEvents: [red] }, parseHazardSeen(['eq:us0000warm', ...first.writes.map(([, m]) => m)]), NOW + HOUR);
+    assert.deepEqual(ids(escalated), ['nat:gdacs-FL-1001:red']);
+    assert.equal(escalated.occurrences[0].payload.alertLevel, 'Red');
+    const back = diffHazards({ earthquakes: [], naturalEvents: [orange] }, parseHazardSeen(['eq:us0000warm', ...escalated.writes.map(([, m]) => m)]), NOW + 2 * HOUR);
+    assert.deepEqual(back.occurrences, []);
+
+    const redFirst = diffHazards({ earthquakes: [], naturalEvents: [red] }, warmSeen(), NOW);
+    assert.deepEqual(ids(redFirst), ['nat:gdacs-FL-1001:red'], 'first seen at Red: one event');
+    const thenOrange = diffHazards({ earthquakes: [], naturalEvents: [orange] }, parseHazardSeen(['eq:us0000warm', ...redFirst.writes.map(([, m]) => m)]), NOW + HOUR);
+    assert.deepEqual(thenOrange.occurrences, [], 'a de-escalation is not a new event');
+  });
+
+  it('a GDACS cyclone\'s escalation to Red is not swallowed as a copy of itself by the storm-name match', () => {
+    const tc = natural({ id: 'gdacs-TC-1000', title: '\u{1F7E0} Tropical Cyclone KIKO-26', stormName: 'KIKO-26', sourceName: 'GDACS', alertLevel: 'Orange', lat: 15, lon: -125 });
+    const first = diffHazards({ earthquakes: [], naturalEvents: [tc] }, warmSeen(), NOW);
+    const escalated = diffHazards({ earthquakes: [], naturalEvents: [{ ...tc, alertLevel: 'Red' }] }, parseHazardSeen(['eq:us0000warm', ...first.writes.map(([, m]) => m)]), NOW + HOUR);
+    assert.deepEqual(ids(escalated), ['nat:gdacs-TC-1000:red']);
+  });
+
+  it('skips Hong Kong Observatory warning signals: the id names the signal, not the storm, which the cyclone feeds carry', () => {
+    assert.equal(naturalEventCandidate(natural({ id: 'hko-warning:TC8NE', title: 'Hong Kong No. 8 Northeast Gale or Storm Signal', sourceName: 'HKO', lat: 22.3, lon: 114.17 })), null);
+  });
+
+  it('keeps an id seen for 30 days after it leaves the feeds, so an EONET event that drops out and returns is not new again', () => {
+    assert.equal(HAZARD_RULE.seenWindowMs, 30 * 24 * HOUR);
   });
 
   it('a storm renamed after first sight keeps both names, so a later copy under the new name is still the same storm', () => {
