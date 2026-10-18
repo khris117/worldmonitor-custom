@@ -191,7 +191,7 @@ test('a fetched article is credited to the publisher of its own link', async () 
 
 test('article text: scripts with spaced end tags are dropped, entities decode once', async () => {
   const { fetchArticleText } = await import('../lib/sources.mjs');
-  const body = `<p>Officials said 31 people died.</p><script>var x = "200 dead";</script ><style>.a{}</style >
+  const body = `<p>${'İstanbul '.repeat(40)}Officials said 31 people died.</p><script>var x = "200 dead";</script ><style>.a{}</style >
     <p>Tom &amp;lt;Jerry&amp;gt; &quot;quoted&quot; &amp; more ${'filler text '.repeat(30)}</p>`;
   const text = await fetchArticleText('https://example.com/a', { fetchImpl: async () => new Response(body), lookupImpl: async () => [{ address: '93.184.215.14' }] });
   assert.ok(text.includes('31 people died'));

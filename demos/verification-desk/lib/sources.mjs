@@ -97,7 +97,7 @@ const ENTITIES = { nbsp: ' ', amp: '&', quot: '"', '#39': "'", apos: "'" };
 
 // Plain text for figure checks only; it is never rendered as HTML.
 function stripHtml(html) {
-  const lower = html.toLowerCase();
+  const lower = html.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
   const parts = [];
   let cursor = 0;
   while (cursor < html.length) {
