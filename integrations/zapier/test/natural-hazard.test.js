@@ -41,6 +41,7 @@ const NATURAL = {
     { id: 'gdacs-DR-1', title: '\u{1F7E0} Drought in Kenya', category: 'drought', categoryTitle: 'Drought', lat: 0, lon: 38, date: T0 + 4 * HOUR, magnitude: 0, magnitudeUnit: '', sourceUrl: '', sourceName: 'GDACS', closed: false },
     { id: 'gdacs-EQ-1500', title: '\u{1F7E0} Earthquake in Russia', category: 'earthquakes', categoryTitle: 'Earthquake', lat: 51.9, lon: 157.2, date: T0, magnitude: 0, magnitudeUnit: '', sourceUrl: '', sourceName: 'GDACS', closed: false },
     { id: 'EONET_25232', title: 'Wildfire CYRUS, Kern, California', category: 'wildfires', categoryTitle: 'Wildfires', lat: 35.7, lon: -118.42, date: T0 + 5 * HOUR, magnitude: 543, magnitudeUnit: 'acres', sourceUrl: 'https://irwin.doi.gov/observer/incidents/1', sourceName: 'IRWIN', closed: false },
+    { id: 'hko-warning:TC8NE', title: 'Hong Kong No. 8 Northeast Gale or Storm Signal', category: 'severeStorms', categoryTitle: 'Tropical Cyclone Warning', lat: 22.3, lon: 114.17, date: T0 + 7 * HOUR, magnitude: 0, magnitudeUnit: '', sourceUrl: '', sourceName: 'HKO', closed: false },
     { id: 'EONET_10', title: 'Old closed flood', category: 'floods', categoryTitle: 'Floods', lat: 1, lon: 1, date: T0 + 6 * HOUR, magnitude: 0, magnitudeUnit: '', sourceUrl: '', sourceName: 'EO', closed: true },
   ],
   fetchedAt: T0 + 6 * HOUR,
@@ -115,10 +116,10 @@ describe('trigger natural_hazard (REST hook)', () => {
       'eq:us6000u2y1',
       'nat:EONET_25232',
       'nat:gdacs-DR-1',
-      'nat:gdacs-FL-1103',
+      'nat:gdacs-FL-1103:red',
       'nat:nhc-AL13',
       'eq:us6000u2mq',
-    ], 'M4.8 is under the 5.5 default, closed and GDACS earthquake rows are skipped, the NHC advisory number is dropped');
+    ], 'M4.8 is under the 5.5 default; closed, GDACS earthquake and HKO signal rows are skipped; the NHC advisory number is dropped; a Red GDACS id ends in :red');
     for (const row of rows) {
       assert.deepEqual(Object.keys(row).sort(), Object.keys(trigger.sample).sort(), `${row.eventId}: sample rows and deliveries share one field set`);
       assert.deepEqual(row.countryCodes, [], 'samples are not geocoded; deliveries are');
@@ -129,7 +130,7 @@ describe('trigger natural_hazard (REST hook)', () => {
     assert.equal(quake.occurredAt, '2026-10-16T03:35:31.925Z');
     assert.equal(quake.nearTestSite, false);
     assert.equal(rows.find((r) => r.eventId === 'eq:us6000u2y1').nearTestSite, true);
-    const flood = rows.find((r) => r.eventId === 'nat:gdacs-FL-1103');
+    const flood = rows.find((r) => r.eventId === 'nat:gdacs-FL-1103:red');
     assert.equal(flood.title, 'Flood in Nigeria');
     assert.equal(flood.alertLevel, 'Red');
     assert.equal(flood.source, 'gdacs');
@@ -145,7 +146,19 @@ describe('trigger natural_hazard (REST hook)', () => {
     assert.deepEqual(quakes.map((r) => r.eventId), ['eq:us6000u2mq']);
     mockFeeds();
     const red = await appTester(trigger.performList, { authData: AUTH, inputData: { hazard_types: ['floods', 'drought'], min_alert_level: 'Red' } });
-    assert.deepEqual(red.map((r) => r.eventId), ['nat:gdacs-FL-1103']);
+    assert.deepEqual(red.map((r) => r.eventId), ['nat:gdacs-FL-1103:red']);
+  });
+
+  it('performList keeps the other feed when one list fails, and fails only when both do', async () => {
+    nock(BASE_URL).get(PATHS.earthquakes).reply(503, { message: 'unavailable' });
+    nock(BASE_URL).get(PATHS.naturalEvents).reply(200, NATURAL);
+    const rows = await appTester(trigger.performList, { authData: AUTH, inputData: {} });
+    assert.ok(rows.length > 0);
+    assert.ok(rows.every((r) => r.eventId.startsWith('nat:')));
+
+    nock(BASE_URL).get(PATHS.earthquakes).reply(401, { message: 'invalid key' });
+    nock(BASE_URL).get(PATHS.naturalEvents).reply(401, { message: 'invalid key' });
+    await assert.rejects(() => appTester(trigger.performList, { authData: AUTH, inputData: {} }), /rejected the API key/);
   });
 
   it('when the scope leaves nothing, the newest hazards are shown so the editor has rows', async () => {

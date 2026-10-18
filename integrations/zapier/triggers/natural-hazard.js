@@ -79,7 +79,6 @@ function naturalSource(event) {
   if (id.startsWith('EONET_')) return 'eonet';
   if (id.startsWith('nhc-')) return 'nhc';
   if (id.startsWith('gdacs-')) return 'gdacs';
-  if (id.startsWith('hko-warning:')) return 'hko';
   const named = typeof event.sourceName === 'string' ? event.sourceName.trim().toLowerCase() : '';
   return named || (id.startsWith('cyclone:') ? 'gdacs' : 'eonet');
 }
@@ -88,6 +87,7 @@ function naturalRow(event) {
   const lat = finite(event && event.lat);
   const lon = finite(event && event.lon);
   if (!event || typeof event.id !== 'string' || !event.id || event.category === 'earthquakes' || event.closed === true) return null;
+  if (event.id.startsWith('hko-warning:')) return null;
   if (lat === null || lon === null || !event.category || !(finite(event.date) > 0)) return null;
   const rawTitle = typeof event.title === 'string' ? event.title : '';
   const emoji = (GDACS_ALERT_EMOJI.exec(rawTitle) || [])[1];
@@ -107,7 +107,8 @@ function naturalRow(event) {
     ? event.windKt
     : storm && (unit === 'kt' || unit === 'kts') && finite(event.magnitude) > 0 ? event.magnitude : null;
   const match = NHC_ADVISORY_ID.exec(event.id);
-  return row(`nat:${match ? match[1] : event.id}`, {
+  // An escalation to Red is a second event, so a Red GDACS id ends in :red.
+  return row(`nat:${match ? match[1] : event.id}${alertLevel === 'Red' ? ':red' : ''}`, {
     hazardType: event.category,
     title: title || event.categoryTitle || event.category,
     source: naturalSource(event),
@@ -137,12 +138,21 @@ function matches(item, { hazardTypes, minMagnitude, minAlertLevel }) {
 // scope leaves nothing, the newest hazards are shown so the editor has rows.
 const performList = async (z, bundle) => {
   const inputs = readInputs(bundle);
+  // One failed list still leaves the other's rows; both failing is an error
+  // (an invalid key fails both).
   const [quakes, natural] = await Promise.all([
-    z.request({ url: `${BASE_URL}${PATHS.earthquakes}` }),
-    z.request({ url: `${BASE_URL}${PATHS.naturalEvents}` }),
+    z.request({ url: `${BASE_URL}${PATHS.earthquakes}`, skipThrowForStatus: true }),
+    z.request({ url: `${BASE_URL}${PATHS.naturalEvents}`, skipThrowForStatus: true }),
   ]);
-  const quakeList = quakes.data && Array.isArray(quakes.data.earthquakes) ? quakes.data.earthquakes : [];
-  const eventList = natural.data && Array.isArray(natural.data.events) ? natural.data.events : [];
+  const failed = (response) => !response || response.status >= 400;
+  if (failed(quakes) && failed(natural)) {
+    if (quakes.status === 401) {
+      throw new z.errors.ExpiredAuthError('WorldMonitor rejected the API key. Reconnect with an active wm_ key from Settings, API Keys.');
+    }
+    throw new z.errors.Error(`WorldMonitor API error ${quakes.status} on both hazard lists.`, 'ApiError', quakes.status);
+  }
+  const quakeList = !failed(quakes) && quakes.data && Array.isArray(quakes.data.earthquakes) ? quakes.data.earthquakes : [];
+  const eventList = !failed(natural) && natural.data && Array.isArray(natural.data.events) ? natural.data.events : [];
   const seen = new Set();
   const rows = [...quakeList.map(earthquakeRow), ...eventList.map(naturalRow)]
     .filter((item) => item && !seen.has(item.id) && seen.add(item.id))
