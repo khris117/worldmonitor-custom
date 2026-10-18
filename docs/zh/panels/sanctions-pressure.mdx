@@ -42,4 +42,4 @@ OFAC 以不规律频率（每日到每周）发布列表更新。面板读取最
 ## API 参考
 
 - [Sanctions service](https://github.com/koala73/worldmonitor/blob/main/docs/api/SanctionsService.openapi.yaml) — 制裁压力 + 实体搜索 RPC。
-- 相关：`GET /api/sanctions/v1/lookup-sanction-entity?q=...` — 对 OpenSanctions（实时）的模糊实体查询，OFAC 本地索引作为回退。
+- 相关：`GET /api/sanctions/v1/lookup-sanction-entity?q=...` — 在已缓存的 OFAC SDN、OFAC Consolidated 和加拿大 SEMA 索引中按名称、别名或精确 IMO 编号筛选。响应列出搜索的数据来源，不会实时请求外部提供方。匹配结果是需向发布机构核实的线索，不构成法律建议。

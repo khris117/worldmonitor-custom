@@ -1344,7 +1344,7 @@ curl -s https://worldmonitor.app/mcp \
 
 ### `get_sanctions_data`
 
-OFAC SDN 制裁实体列表和按国家分列的制裁压力评分。适用于合规筛选和地缘政治压力分析。
+搜索 OFAC SDN、OFAC Consolidated 和加拿大 SEMA 实体及国家制裁压力评分。`screen` 支持名称、别名和精确 IMO 编号，返回 `score`（0-100）、`matched_on` 和 `matched_text`。匹配结果是需向发布机构核实的线索，不构成法律建议。
 
 **参数（工具特定）：**
 
@@ -1353,11 +1353,14 @@ OFAC SDN 制裁实体列表和按国家分列的制裁压力评分。适用于�
 | `country` | string | 将制裁实体和压力评分筛选为一个 ISO 3166-1 alpha-2 国家代码。 |
 | `entity_type` | string | 筛选为一种实体类型（不区分大小写的子串，例如 "vessel"、"aircraft"、"person"、"entity"）。 |
 | `query` | string | 仅保留名称包含此文本的制裁实体（不区分大小写）。 |
+| `screen` | string | 按名称、别名或 IMO 编号筛选，长度 2-200 字符。 |
+| `min_score` | number | 最低匹配分数 0-100，默认 70，仅与 `screen` 一起使用。 |
 | `limit` | number | 将实体列表和近期压力条目限制为最多这么多项（默认 30，传 0 表示不限）。 |
 
 - **API 端点：** `GET /api/sanctions/v1/list-sanctions-pressure`, `GET /api/sanctions/v1/lookup-sanction-entity`
+- **访问：** 需要订阅，API 套餐权重为 1。
 - **类型：** 缓存读取 — 来自 Redis 引导缓存的亚秒级响应。
-- **新鲜度预算：** 标记 `stale: true` 前最多 **1 天**（由 seeder cron 的预期间隔设定）。
+- **新鲜度预算：** 标记 `stale: true` 前最多 **12 小时**（由 seeder cron 的预期间隔设定）。
 
 <CodeGroup>
 
@@ -1368,7 +1371,7 @@ curl -s https://worldmonitor.app/mcp \
   -d '{
     "jsonrpc":"2.0","id":1,
     "method":"tools/call",
-    "params":{"name":"get_sanctions_data","arguments":{}}
+    "params":{"name":"get_sanctions_data","arguments":{"screen":"Northern Star","min_score":70}}
   }'
 ```
 

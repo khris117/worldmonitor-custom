@@ -1,3 +1,4 @@
+import { screenSanctions } from '../../../server/_shared/sanctions-screen';
 import ISO2_TO_ISO3 from '../../../shared/iso2-to-iso3.js';
 import { MARKET_ASSET_CLASSES } from '../../../shared/panel-admission';
 import { normalizeSocialVelocity } from '../../_social-velocity.js';
@@ -2190,13 +2191,15 @@ export const CACHE_TOOLS: ToolDef[] = [
     title: 'Sanctions lists and pressure scores',
     _subscriptionOnly: true,
     _outputBudgetBytes: 131072,
-    description: 'OFAC SDN sanctioned entities list and sanctions pressure scores by country. Useful for compliance screening and geopolitical pressure analysis.',
+    description: 'Search OFAC SDN, OFAC Consolidated and Canada SEMA entities and country sanctions pressure. Use screen for fuzzy name, alias or exact IMO screening; query for primary-name substring search; country for pressure analysis. Screening returns score (0-100), matched_on and matched_text. A match is a lead to confirm with the issuing agency, not legal advice. Seeded-cache read, weight 1 on API plans; no request-time provider fetch. Requires a subscription. Refreshed every 6 hours and flagged stale after 12 hours.',
     inputSchema: {
       type: 'object',
       properties: {
         country: { type: 'string', description: 'Filter sanctioned entities and pressure scores to one ISO 3166-1 alpha-2 country code. Country names and alpha-3 codes are accepted; unresolved inputs return Invalid params.' },
         entity_type: { type: 'string', description: 'Filter to one entity type (case-insensitive substring, e.g. "vessel", "aircraft", "person", "entity").' },
         query: { type: 'string', description: 'Keep only sanctioned entities whose name contains this text (case-insensitive).' },
+        screen: { type: 'string', minLength: 2, maxLength: 200, description: 'Screen a name, alias or IMO identifier against the seeded lists (2-200 characters).' },
+        min_score: { type: 'number', minimum: 0, maximum: 100, default: 70, description: 'Minimum screening score from 0 to 100 (default 70); applies only with screen.' },
         limit: { type: 'number', description: 'Cap the entity list and recent pressure entries to at most this many items (default 30, pass 0 for no cap).' },
       },
       required: [],
@@ -2210,7 +2213,11 @@ export const CACHE_TOOLS: ToolDef[] = [
         items: { type: 'object', properties: {
           // Up to three ISO country codes per entity (scripts/seed-sanctions-pressure.mjs).
           name: { type: 'string' }, cc: { type: 'array', items: { type: 'string' } }, et: { type: 'string' },
-          addr: { type: 'string' },
+          id: { type: 'string' }, pr: { type: 'array', items: { type: 'string' } },
+          al: { type: 'array', maxItems: 10, items: { type: 'string' } },
+          ids: { type: 'array', items: { type: 'string' } }, sl: { type: 'array', items: { type: 'string' } },
+          score: { type: 'number', minimum: 0, maximum: 100 },
+          matched_on: { enum: ['name', 'alias', 'identifier'] }, matched_text: { type: 'string' },
         } },
       },
       pressure: {
@@ -2227,6 +2234,14 @@ export const CACHE_TOOLS: ToolDef[] = [
     }),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _postFilter: (data, params) => {
+      if (params.screen !== undefined && (typeof params.screen !== 'string'
+        || params.screen.trim().length < 2 || params.screen.trim().length > 200)) {
+        throw new RpcValidationError('get_sanctions_data', [{ field: 'screen', description: 'Expected 2-200 characters.' }]);
+      }
+      if (params.min_score !== undefined && (typeof params.min_score !== 'number'
+        || !Number.isFinite(params.min_score) || params.min_score < 0 || params.min_score > 100)) {
+        throw new RpcValidationError('get_sanctions_data', [{ field: 'min_score', description: 'Expected a score from 0 to 100.' }]);
+      }
       const countries = resolveCountryFilter(params.country, 'country');
       const etype = argStr(params.entity_type);
       const query = argStr(params.query);
@@ -2241,12 +2256,15 @@ export const CACHE_TOOLS: ToolDef[] = [
         narrowNested(data, 'pressure', 'entries', (e) => ciIncludes(e.entityType, etype));
       }
       if (query) narrowArray(data, 'entities', (e) => ciIncludes(e.name, query));
+      if (typeof params.screen === 'string' && Array.isArray(data.entities)) {
+        data.entities = screenSanctions(data.entities, params.screen.trim(), argNum(params.min_score) ?? 70);
+      }
       capArrays(data, limit);
       capNested(data, 'pressure', 'entries', limit);
       return data;
     },
     _cacheKeys: ['sanctions:entities:v1', 'sanctions:pressure:v1'],
-    _freshnessChecks: [{ key: 'seed-meta:sanctions:entities', maxStaleMin: 1440 }],
+    _freshnessChecks: [{ key: 'seed-meta:sanctions:entities', maxStaleMin: 720 }, { key: 'seed-meta:sanctions:pressure', maxStaleMin: 720 }],
     _apiPaths: [
       "GET /api/sanctions/v1/list-sanctions-pressure",
       "GET /api/sanctions/v1/lookup-sanction-entity",

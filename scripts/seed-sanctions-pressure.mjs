@@ -691,17 +691,20 @@ async function fetchSanctionsPressure() {
   const consolidatedCount = _sourceSnapshots.CONSOLIDATED?.records.length ?? 0;
   console.log(`  Merged: ${totalCount} total (${sdnCount} SDN + ${consolidatedCount} consolidated + ${semaCount} SEMA), ${newEntryCount} new, ${vesselCount} vessels, ${aircraftCount} aircraft`);
 
-  // Build compact entity index for name-based lookup (Phase 1 — issue #2042).
-  // Each record: { id, name, et (compact type), cc (country codes), pr (programs) }
-  // Stored as a flat array in a single Redis key for O(N) in-memory search.
+  // Keep lookup identities separate from the pressure display projection.
   const _entityIndex = entries.map((e) => ({
     id: e.id,
     name: e.name,
     et: ET_CODE[e.entityType] ?? 'entity',
     cc: e.countryCodes.slice(0, 3),
     pr: e.programs.slice(0, 3),
+    al: (e._aliases ?? []).slice(0, 10),
+    ids: e._identifiers ?? [],
+    sl: e.sourceLists,
   }));
-  console.log(`  Entity index: ${_entityIndex.length} records (~${Math.round(JSON.stringify(_entityIndex).length / 1024)}KB)`);
+  const legacyIndexBytes = Buffer.byteLength(JSON.stringify(_entityIndex.map(({ al, ids, sl, ...record }) => record)), 'utf8');
+  const indexBytes = Buffer.byteLength(JSON.stringify(_entityIndex), 'utf8');
+  console.log(`  Entity index: ${_entityIndex.length} records, ${legacyIndexBytes} -> ${indexBytes} bytes with screening identities`);
 
   const knownWindow = hasPrevious && validPressureClock(previousState.observedAt)
     && Number(previousState.observedAt) < now;

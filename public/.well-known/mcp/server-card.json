@@ -156,7 +156,7 @@
     },
     {
       "name": "get_sanctions_data",
-      "description": "OFAC SDN sanctioned entities list and sanctions pressure scores by country. Useful for compliance screening and geopolitical pressure analysis.",
+      "description": "Search OFAC SDN, OFAC Consolidated and Canada SEMA entities and country sanctions pressure. Use screen for fuzzy name, alias or exact IMO screening; query for primary-name substring search; country for pressure analysis. Screening returns score (0-100), matched_on and matched_text. A match is a lead to confirm with the issuing agency, not legal advice. Seeded-cache read, weight 1 on API plans; no request-time provider fetch. Requires a subscription. Refreshed every 6 hours and flagged stale after 12 hours.",
       "_meta": {
         "worldmonitor/access": "subscription",
         "worldmonitor/category": "geopolitical-security"

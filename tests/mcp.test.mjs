@@ -4585,3 +4585,79 @@ describe('api/mcp.ts — U7 Pro-path', () => {
     assert.equal(r, null, 'F11: 16-digit ts must reject');
   });
 });
+
+describe('get_sanctions_data screening contract', () => {
+  const tool = TOOL_REGISTRY.find(t => t.name === 'get_sanctions_data');
+  const index = [
+    { id: 'SDN:1', name: 'Café Maritime LLC', et: 'vessel', cc: ['RU'], pr: ['SDN'], al: ['Northern Star'], ids: ['imo:1234567'], sl: ['SDN'] },
+    { id: 'SEMA:2', name: 'Northern Star Shipping', et: 'entity', cc: ['CA'], pr: ['SEMA'], sl: ['SEMA'] },
+  ];
+  it('advertises screening params and accurate output/freshness without changing weight or tier', () => {
+    assert.equal(tool.inputSchema.properties.screen.maxLength, 200);
+    assert.equal(tool.inputSchema.properties.min_score.default, 70);
+    const entity = tool.outputSchema.properties.data.properties.entities.items.properties;
+    assert.equal(entity.addr, undefined);
+    assert.deepEqual(entity.matched_on.enum, ['name', 'alias', 'identifier']);
+    assert.equal(tool._execute, undefined);
+    assert.equal(tool._subscriptionOnly, true);
+    assert.ok(tool._freshnessChecks.every(check => check.maxStaleMin === 720));
+    assert.equal(tool._freshnessChecks.length, 2);
+  });
+  it('screens aliases before limiting and composes country, type and primary-name filters', () => {
+    const data = { entities: index, pressure: { entries: [], countries: [] } };
+    const result = tool._postFilter(structuredClone(data), { screen: 'Northern Star', min_score: 100, country: 'RU', entity_type: 'vessel', limit: 1 });
+    assert.equal(result.entities.length, 1);
+    assert.equal(result.entities[0].matched_on, 'alias');
+    assert.equal(result.entities[0].matched_text, 'Northern Star');
+    assert.equal(tool._postFilter(structuredClone(data), { screen: 'IMO 1234567' }).entities[0].score, 100);
+    assert.deepEqual(tool._postFilter(structuredClone(data), { query: 'Northern Star', country: 'RU' }).entities, []);
+    assert.deepEqual(tool._postFilter(structuredClone(data), {}).entities, index);
+  });
+  it('serves scored aliases through the subscribed MCP transport using only seeded reads', async t => {
+    const previousEnv = { ...process.env };
+    const previousFetch = globalThis.fetch;
+    t.after(() => {
+      globalThis.fetch = previousFetch;
+      for (const key of Object.keys(process.env)) if (!(key in previousEnv)) delete process.env[key];
+      Object.assign(process.env, previousEnv);
+    });
+    process.env.MCP_INTERNAL_HMAC_SECRET = HMAC_SECRET;
+    process.env.UPSTASH_REDIS_REST_URL = 'https://sanctions.mcp.test';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'test';
+    process.env.MCP_TELEMETRY = 'false';
+    const cache = {
+      'sanctions:entities:v1': index,
+      'sanctions:pressure:v1': { entries: [], countries: [] },
+      'seed-meta:sanctions:entities': { fetchedAt: Date.now(), recordCount: 2 },
+      'seed-meta:sanctions:pressure': { fetchedAt: Date.now(), recordCount: 2 },
+    };
+    const requests = [];
+    globalThis.fetch = async input => {
+      const url = String(input);
+      requests.push(url);
+      assert.ok(url.startsWith('https://sanctions.mcp.test/get/'), url);
+      const key = decodeURIComponent(new URL(url).pathname.slice(5));
+      return new Response(JSON.stringify({ result: key in cache ? JSON.stringify(cache[key]) : null }));
+    };
+    const { mcpHandler } = await import('../api/mcp.ts');
+    const { deps } = makeProDeps();
+    const response = await mcpHandler(proReq('POST', callBody('get_sanctions_data', {
+      screen: 'Northern Star', country: 'RU', min_score: 100, limit: 1,
+    })), deps);
+    const body = await response.json();
+    assert.equal(body.error, undefined, JSON.stringify(body));
+    const envelope = JSON.parse(body.result.content[0].text);
+    assert.equal(envelope.data.entities[0].matched_on, 'alias');
+    assert.equal(envelope.data.entities[0].score, 100);
+    assert.equal(envelope.stale, false);
+    assert.ok(requests.length >= 4);
+    const invalid = await mcpHandler(proReq('POST', callBody('get_sanctions_data', { screen: 'x' }, 101)), deps);
+    assert.equal((await invalid.json()).error.code, -32602);
+  });
+  it('rejects invalid screening arguments and does not turn a missing cache into a valid empty list', () => {
+    for (const args of [{ screen: 'x' }, { screen: 123 }, { screen: 'x'.repeat(201) }, { min_score: -1 }, { min_score: 101 }, { min_score: '70' }]) {
+      assert.throws(() => tool._postFilter({ entities: index }, args), /./);
+    }
+    assert.equal(tool._postFilter({ entities: null }, { screen: 'Northern Star' }).entities, null);
+  });
+});
