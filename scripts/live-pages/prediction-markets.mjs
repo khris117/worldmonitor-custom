@@ -40,7 +40,9 @@ export function predictionMarketsRecord(payload, now = Date.now()) {
       const closesAt = finiteNumber(market.closesAt);
       return {
         title: String(market.title),
-        yesPct: Math.round(yes * 100),
+        // One decimal, as the venues show it; rounding yes * 100 to a whole
+        // number turned 0.145 into 14% (14.4999… in floating point).
+        yesPct: Math.round(yes * 1000) / 10,
         volumeUsd: finiteNumber(market.volume) ?? 0,
         closes: closesAt && closesAt > now ? formatDate(closesAt) : null,
         source,
