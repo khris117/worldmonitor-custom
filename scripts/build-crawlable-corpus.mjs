@@ -29,6 +29,7 @@ import {
   renderContextualComparisons,
 } from './build-comparison-pages.mjs';
 import { RELATED_READING_PATH, loadRelatedReading, renderRelatedReading } from './related-reading.mjs';
+import { chokepointLiveLinks, countryLiveLinks, crisisLiveLinks, renderLiveDataLinks } from './live-pages/related-links.mjs';
 import {
   USE_CASE_PAGES,
   USE_CASES_CONTENT_VERSION,
@@ -3987,6 +3988,7 @@ ${renderCountryDevelopments({ countryCode: country.code, countryName: country.na
 ${analysis.html}
 ${renderCountryRelatedLinks(country, relatedCountries, escapeHtml)}
 ${renderRelatedChokepoints(relatedChokepoints)}
+${renderLiveDataLinks(countryLiveLinks(country.code), escapeHtml)}
 ${renderRelatedReading(relatedReading, escapeHtml)}
 ${analysis.readingGuide ? `      <h2>How to use this evidence</h2>
       <p>${escapeHtml(analysis.readingGuide)} <a href="/docs/methodology/country-resilience-index">Full CRI method</a> · <a href="/docs/corrections">revision log</a> · <a href="/accuracy/">forecast accuracy scorecard</a>.</p>` : `      <h2>How to read this page</h2>
@@ -4290,6 +4292,7 @@ ${oilTransitRows.map(({ row, eia }) => `          <tr><td><a href="/chokepoints/
         </tbody>
       </table></div>
       <p class="source" data-snapshot-source="${escapeHtml(EIA_OIL_TRANSIT_BASELINES_PATH)}">Baseline source: U.S. ${escapeHtml(EIA_OIL_TRANSIT_SOURCE)} (${EIA_OIL_TRANSIT_REFERENCE_YEAR}). The remaining ${chokepointHubRows.length - oilTransitRows.length} tracked waterways have no row in that series; their pages say so rather than estimating one.</p>
+      <p>These are transit volumes. For how much crude the US holds in storage this week, see <a href="/tools/crude-oil-inventories/">US crude oil inventories this week</a>.</p>
       <h2>Why each waterway is tracked</h2>
       <dl data-chokepoint-context>
 ${chokepointHubRows.map((row) => {
@@ -4510,6 +4513,9 @@ function renderChokepointPage({
     relatedItems.push(`<a href="/blog/glossary/${content.glossarySlug}/">${escapeHtml(chokepoint.displayName)} in the glossary</a>`);
   }
   relatedItems.push('<a href="/blog/glossary/maritime-chokepoint/">What is a maritime chokepoint?</a>');
+  for (const link of chokepointLiveLinks({ carriesOil: Boolean(EIA_OIL_TRANSIT_BASELINES.byRegistryId[chokepoint.id]) })) {
+    relatedItems.push(`<a href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`);
+  }
   for (const link of editorialLinks) {
     relatedItems.push(`<a href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`);
   }
@@ -4808,6 +4814,7 @@ ${snapshotSection}
       <h2>Coverage boundary</h2>
       <p>${escapeHtml(crisis.coverage.map((country) => `${country.name} (${country.code})`).join(', '))}. Events outside this list are not included in the live totals on this page.</p>
 ${renderRelatedChokepoints(relatedChokepoints)}
+${renderLiveDataLinks(crisisLiveLinks({ touchesOilChokepoint: relatedChokepoints.some((chokepoint) => EIA_OIL_TRANSIT_BASELINES.byRegistryId[chokepoint.id]) }), escapeHtml)}
 ${renderRelatedReading(relatedReading, escapeHtml)}
       <h2>How to read this tracker</h2>
       <p>Use these monthly country summaries as a bounded pulse, then inspect the dashboard for event-level context, map layers, and other independent signals. The figures are not forecasts and should not be interpreted as a complete casualty or incident ledger. World Monitor's forecasts are graded separately, and that record is published on the <a href="/accuracy/">forecast accuracy scorecard</a>.</p>
