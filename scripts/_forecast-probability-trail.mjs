@@ -2,6 +2,7 @@ const DAY_MS = 86_400_000;
 export const PROBABILITY_TRAIL_KEY = 'forecast:probability-trail:v1';
 export const PROBABILITY_TRAIL_META_KEY = 'seed-meta:forecast:probability-trail';
 export const PROBABILITY_TRAIL_TTL_SECONDS = 45 * 24 * 60 * 60;
+export const PROBABILITY_TRAIL_ACTIVATION_KEY = 'seed-activated:forecast:probability-trail';
 
 export function buildProbabilityTrail(prior, current, history = []) {
   const now = Number(current.generatedAt);

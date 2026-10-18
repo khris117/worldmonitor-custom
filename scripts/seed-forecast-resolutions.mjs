@@ -54,6 +54,7 @@ export const RESOLUTIONS_KEY = 'forecast:resolutions:v1';
 export const SCORECARD_KEY = 'forecast:scorecard:v1';
 export const FORECAST_ARCHIVE_KEY = 'forecast:archive:v1';
 export const FORECAST_ARCHIVE_META_KEY = 'seed-meta:forecast:archive';
+export const FORECAST_ARCHIVE_ACTIVATION_KEY = 'seed-activated:forecast:archive';
 export const RESOLUTIONS_META_KEY = 'seed-meta:forecast:resolutions';
 export const SCORECARD_META_KEY = 'seed-meta:forecast:scorecard';
 export const SCORECARD_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -3198,6 +3199,12 @@ async function markCalibrationMapActivated() {
   }
 }
 
+export async function markForecastArchiveActivated() {
+  const { url, token } = getRedisCredentials();
+  const result = await redisCommand(url, token, ['SET', FORECAST_ARCHIVE_ACTIVATION_KEY, '1']);
+  if (result?.result !== 'OK') throw new Error('Forecast archive activation marker write failed');
+}
+
 async function buildLedgerForRun(runState) {
   const nowMs = Date.now();
   const [existingLedger, history, betsHistory, probabilityTrail] = await Promise.all([
@@ -3448,6 +3455,7 @@ if (DIRECT_RUN && process.argv.includes('--dry-run')) {
       allowMissingOnSkip: true,
     }],
     afterPublish: async (ledger) => {
+      await markForecastArchiveActivated();
       if (runState.map) await markCalibrationMapActivated();
       return buildJudgedLaneAfterPublish(ledger, Date.now(), runState);
     },

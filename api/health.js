@@ -1239,8 +1239,16 @@ const SEED_META = {
   xFeed:            { key: 'seed-meta:intelligence:x-feed:v1', maxStaleMin: 45 }, // Fixed 15min List slots; 45min = 3 missed slots. Freshness advances only after an accepted page is published.
   digestNotifications: { key: 'seed-meta:digest:last-run',          maxStaleMin: 90 }, // Railway digest-notifications cron runs every 30min; 90 = 3x cadence and detects a dead cron before daily digests are missed.
   forecasts:        { key: 'seed-meta:forecast:predictions',       maxStaleMin: 90 },
-  forecastProbabilityTrail: { key: 'seed-meta:forecast:probability-trail', maxStaleMin: 90 },
-  forecastArchive: { key: 'seed-meta:forecast:archive', maxStaleMin: 2160 },
+  forecastProbabilityTrail: {
+    key: 'seed-meta:forecast:probability-trail', maxStaleMin: 90,
+    activationKey: 'seed-activated:forecast:probability-trail',
+    cutover: { mode: 'activation-marker', fromKey: null, issue: 9353, activationKey: 'seed-activated:forecast:probability-trail' },
+  },
+  forecastArchive: {
+    key: 'seed-meta:forecast:archive', maxStaleMin: 2160,
+    activationKey: 'seed-activated:forecast:archive',
+    cutover: { mode: 'activation-marker', fromKey: null, issue: 9353, activationKey: 'seed-activated:forecast:archive' },
+  },
   forecastsBootstrap: { key: 'seed-meta:forecast:predictions-bootstrap', maxStaleMin: 90 }, // Same cron. Monitored separately: the fast tier now hydrates from the dashboard list, and a transform/write failure there must not hide behind a healthy canonical key (#5300).
   forecastResolutions: { key: 'seed-meta:forecast:resolutions',     maxStaleMin: 2160 }, // daily Bet-2 resolver; 36h catches a missed cron without flapping on normal daily jitter
   forecastScorecard:   { key: 'seed-meta:forecast:scorecard',       maxStaleMin: 2160 }, // scorecard extra key written by seed-forecast-resolutions

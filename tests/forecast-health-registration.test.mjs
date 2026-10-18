@@ -11,7 +11,9 @@ describe('forecast resolution health registration', () => {
       ['forecastArchive', 'forecast:archive:v1', 'seed-meta:forecast:archive', 2160],
     ]) {
       assert.equal(__testing__.STANDALONE_KEYS[name], key);
-      assert.deepEqual(__testing__.SEED_META[name], { key: meta, maxStaleMin: minutes });
+      const activationKey = `seed-activated:${key.replace(/:v1$/, '')}`;
+      assert.deepEqual(__testing__.SEED_META[name], { key: meta, maxStaleMin: minutes, activationKey,
+        cutover: { mode: 'activation-marker', fromKey: null, issue: 9353, activationKey } });
     }
   });
   it('classifies the resolution ledger and scorecard as standalone health checks', () => {

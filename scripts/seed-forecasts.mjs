@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { loadEnvFile, runSeed, CHROME_UA, withRetry, parseRetryAfterMs, getResponseHeader, isRetryableHttpStatus, getDeployRevision } from './_seed-utils.mjs';
 import { compactForecastDashboardPayload } from './_forecast-dashboard.mjs';
 import { unwrapEnvelope } from './_seed-envelope-source.mjs';
-import { buildProbabilityTrail, PROBABILITY_TRAIL_KEY, PROBABILITY_TRAIL_META_KEY, PROBABILITY_TRAIL_TTL_SECONDS } from './_forecast-probability-trail.mjs';
+import { buildProbabilityTrail, PROBABILITY_TRAIL_KEY, PROBABILITY_TRAIL_META_KEY, PROBABILITY_TRAIL_TTL_SECONDS, PROBABILITY_TRAIL_ACTIVATION_KEY } from './_forecast-probability-trail.mjs';
 import { allBootstrapMarkets } from './_prediction-classify.mjs';
 import { subjectMatcherForRegion } from './_forecast-subject.mjs';
 import { tagRegions } from './_prediction-scoring.mjs';
@@ -18219,6 +18219,7 @@ export const FORECAST_EXTRA_KEYS = [
     declareRecords: data => Object.keys(data.forecasts).length,
     metaKey: PROBABILITY_TRAIL_META_KEY,
     metaCritical: true,
+    skipWhenEmpty: true,
   },
   {
     key: DASHBOARD_KEY,
@@ -18254,6 +18255,12 @@ export const FORECAST_EXTRA_KEYS = [
   },
 ];
 
+export async function markProbabilityTrailActivated() {
+  const { url, token } = getRedisCredentials();
+  const result = await redisCommand(url, token, ['SET', PROBABILITY_TRAIL_ACTIVATION_KEY, '1']);
+  if (result?.result !== 'OK') throw new Error('Probability trail activation marker write failed');
+}
+
 // Runs after the canonical publish. The calibration record goes first: it
 // describes the probabilities just published, and the later stages share an
 // LLM budget and R2 latency that must not delay or skip it.
@@ -18263,6 +18270,7 @@ async function runForecastAfterPublish(data, meta, triggerContext) {
   } catch (err) {
     console.warn(`  [Calibration] Publication record write failed: ${err.message}`);
   }
+  if (Object.keys(data.probabilityTrail?.forecasts ?? {}).length) await markProbabilityTrailActivated();
 
   if (triggerContext.triggerRequest) {
     await clearForecastRefreshRequestIfUnchanged(triggerContext.triggerRequest);

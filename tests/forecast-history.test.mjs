@@ -79,12 +79,39 @@ describe('probability trail producer integration', () => {
     const extra = FORECAST_EXTRA_KEYS.find(entry => entry.key === 'forecast:probability-trail:v1');
     assert.equal(extra.ttl, 45 * 24 * 60 * 60);
     assert.equal(extra.metaKey, 'seed-meta:forecast:probability-trail');
+    assert.equal(extra.skipWhenEmpty, true);
     assert.equal(extra.declareRecords(extra.transform(data)), 1);
     assert.equal(extra.transform(data).forecasts.a.firstSeenAt, new Date(snapshot.generatedAt).toISOString());
     globalThis.fetch = async () => new Response('unavailable', { status: 503 });
     await assert.rejects(readProbabilityTrailInputs(), /HTTP 503/);
     globalThis.fetch = async () => Response.json({ error: 'ERR unavailable' });
     await assert.rejects(readProbabilityTrailInputs(), /malformed response/);
+  });
+  it('writes durable activation markers and rejects unconfirmed writes', async t => {
+    const originalFetch = globalThis.fetch;
+    const savedUrl = process.env.UPSTASH_REDIS_REST_URL;
+    const savedToken = process.env.UPSTASH_REDIS_REST_TOKEN;
+    t.after(() => {
+      globalThis.fetch = originalFetch;
+      for (const [key, value] of [['UPSTASH_REDIS_REST_URL', savedUrl], ['UPSTASH_REDIS_REST_TOKEN', savedToken]]) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
+    });
+    process.env.UPSTASH_REDIS_REST_URL = 'https://activation.test';
+    process.env.UPSTASH_REDIS_REST_TOKEN = 'fixture';
+    const { markProbabilityTrailActivated } = await import('../scripts/seed-forecasts.mjs');
+    const { markForecastArchiveActivated } = await import('../scripts/seed-forecast-resolutions.mjs');
+    const commands = [];
+    globalThis.fetch = async (_url, options) => { commands.push(JSON.parse(options.body)); return Response.json({ result: 'OK' }); };
+    await markProbabilityTrailActivated();
+    await markForecastArchiveActivated();
+    assert.deepEqual(commands, [
+      ['SET', 'seed-activated:forecast:probability-trail', '1'],
+      ['SET', 'seed-activated:forecast:archive', '1'],
+    ]);
+    globalThis.fetch = async () => Response.json({ error: 'ERR unavailable' });
+    await assert.rejects(markProbabilityTrailActivated(), /activation marker write failed/);
+    await assert.rejects(markForecastArchiveActivated(), /Redis SET rejected|activation marker write failed/);
   });
 });
 
