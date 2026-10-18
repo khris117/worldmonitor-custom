@@ -105,15 +105,27 @@ describe('rootless Mintlify route canonicalization', () => {
     }
   });
 
-  it('does not intercept product routes or non-read methods', () => {
-    for (const path of ['/pricing', '/changelog', '/sandbox', '/sandbox/', '/sandbox/index.json']) {
-      assert.equal(
-        middleware(new Request(`https://www.worldmonitor.app${path}`, {
-          headers: { host: 'www.worldmonitor.app', 'user-agent': 'Googlebot' },
-        })),
-        undefined,
-        `${path} must keep the product sandbox/Vercel contract`
-      );
+  it('does not intercept product routes or non-read methods', async () => {
+    const originalFetch = globalThis.fetch;
+    let fetched = 0;
+    globalThis.fetch = async () => {
+      fetched += 1;
+      return new Response('not html', { status: 200, headers: { 'content-type': 'text/plain' } });
+    };
+    try {
+      for (const path of ['/pricing', '/changelog', '/sandbox', '/sandbox/', '/sandbox/index.json']) {
+        fetched = 0;
+        assert.equal(
+          await middleware(new Request(`https://www.worldmonitor.app${path}`, {
+            headers: { host: 'www.worldmonitor.app', 'user-agent': 'Googlebot' },
+          })),
+          undefined,
+          `${path} must keep the product sandbox/Vercel contract`
+        );
+        assert.equal(fetched, path.endsWith('.json') ? 0 : 1, path);
+      }
+    } finally {
+      globalThis.fetch = originalFetch;
     }
     assert.equal(
       middleware(new Request('https://www.worldmonitor.app/api-brief', {

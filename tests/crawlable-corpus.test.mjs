@@ -1103,7 +1103,7 @@ describe('JSON-LD @context guard', () => {
   it('sees a block whose open tag carries attributes', () => {
     // A bare-literal tag match would return zero blocks here and pass by
     // vacuity if the "at least one block" floor were ever relaxed.
-    const html = '<script type="application/ld+json" nonce="wm-static-bootstrap">'
+    const html = '<script type="application/ld+json" nonce="__WM_CSP_NONCE__">'
       + JSON.stringify({ '@type': 'Dataset' })
       + '</script>';
     assert.throws(() => assertJsonLdContexts(html, route), /must declare a schema\.org @context/);
@@ -4402,7 +4402,7 @@ describe('crawlable corpus generator', () => {
         const html = read(outDir, `${url.pathname.slice(1)}index.html`);
         assert.ok(html.includes(`id="${url.hash.slice(1)}"`), `${entry.url} must resolve`);
       }
-      const filterScript = [...sourcesPage.matchAll(/<script nonce="wm-static-bootstrap">([\s\S]*?)<\/script>/g)].at(-1)?.[1];
+      const filterScript = [...sourcesPage.matchAll(/<script nonce="__WM_CSP_NONCE__">([\s\S]*?)<\/script>/g)].at(-1)?.[1];
       assert.ok(filterScript);
       const window = new Window({ url: 'https://www.worldmonitor.app/sources/' });
       window.document.write(sourcesPage);

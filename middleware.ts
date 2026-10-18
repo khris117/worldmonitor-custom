@@ -19,8 +19,90 @@ import {
 } from './scripts/crawlable-chokepoint-live.mjs';
 import { liveTopicPageForPath, liveTopicReading } from './scripts/live-pages/index.mjs';
 import { replaceLiveSection } from './scripts/live-pages/common.mjs';
+import {
+  CSP_NONCE_PLACEHOLDER,
+  CSP_RAW_REQUEST_HEADER,
+  STAMPED_DOCUMENT_CACHE_CONTROL,
+  STAMPED_DOCUMENT_CDN_CACHE_CONTROL,
+  stampCspDocument,
+} from './shared/csp-nonce.mjs';
+import vercelConfig from './vercel.json';
 
 type LiveTopicPage = NonNullable<ReturnType<typeof liveTopicPageForPath>>;
+
+const DASHBOARD_CSP_SOURCE = '/((?!docs|embed|embed\\.html|wm-widget-sandbox\\.html).*)';
+const DOCUMENT_STAMP_TIMEOUT_MS = 4_000;
+// The inner fetch of a live page uses this query marker so it skips both the
+// live branch and nonce stamping. A client that sends it receives the built
+// page with the placeholder still in place, and the static CSP does not allow
+// that placeholder.
+const BUILT_PAGE_PARAM = 'wm-built';
+
+function usesDashboardContentSecurityPolicy(pathname: string): boolean {
+  const rest = pathname.replace(/^\/+/, '');
+  return !/^(?:docs|embed|embed\.html|wm-widget-sandbox\.html)/.test(rest);
+}
+
+function dashboardContentSecurityPolicy(): string {
+  const headers = vercelConfig.headers as Array<{
+    source: string;
+    headers?: Array<{ key: string; value: string }>;
+  }>;
+  const policy = headers
+    .find((entry) => entry.source === DASHBOARD_CSP_SOURCE)
+    ?.headers?.find((header) => header.key === 'Content-Security-Policy')?.value;
+  if (!policy) throw new Error('dashboard Content-Security-Policy missing from vercel.json');
+  return policy;
+}
+
+function shouldStampDocument(request: Request, url: URL): boolean {
+  if (request.method !== 'GET') return false;
+  if (request.headers.get(CSP_RAW_REQUEST_HEADER) === '1') return false;
+  if (url.searchParams.has(BUILT_PAGE_PARAM)) return false;
+  const path = url.pathname;
+  if (path === '/api' || path.startsWith('/api/')) return false;
+  if (!usesDashboardContentSecurityPolicy(path)) return false;
+  const last = path.split('/').pop() ?? '';
+  if (last.includes('.') && !last.endsWith('.html')) return false;
+  const accept = request.headers.get('accept');
+  return !accept || (acceptQuality(accept, 'text/html', true) ?? 0) > 0;
+}
+
+function deliverHtmlDocument(body: string, headers: Headers, status = 200): Response {
+  const stamped = stampCspDocument(body, dashboardContentSecurityPolicy());
+  if (!stamped) return new Response(body, { status, headers });
+  const next = new Headers(headers);
+  for (const name of ['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'etag', 'last-modified']) {
+    next.delete(name);
+  }
+  next.set('content-security-policy', stamped.policy);
+  next.set('cache-control', STAMPED_DOCUMENT_CACHE_CONTROL);
+  next.set('cdn-cache-control', STAMPED_DOCUMENT_CDN_CACHE_CONTROL);
+  next.set('vercel-cdn-cache-control', STAMPED_DOCUMENT_CDN_CACHE_CONTROL);
+  next.set(
+    'x-middleware-override-headers',
+    'content-security-policy,cache-control,cdn-cache-control,vercel-cdn-cache-control',
+  );
+  return new Response(stamped.html, { status, headers: next });
+}
+
+function stampOriginDocument(request: Request): Promise<Response | undefined> {
+  const headers = new Headers(request.headers);
+  headers.set(CSP_RAW_REQUEST_HEADER, '1');
+  return fetch(request.url, {
+    method: 'GET',
+    headers,
+    redirect: 'manual',
+    signal: AbortSignal.timeout(DOCUMENT_STAMP_TIMEOUT_MS),
+  }).then(async (upstream) => {
+    if (upstream.status !== 200) return undefined;
+    const contentType = upstream.headers.get('content-type') ?? '';
+    if (!contentType.includes('text/html')) return undefined;
+    const html = await upstream.text();
+    if (!html.includes(CSP_NONCE_PLACEHOLDER)) return undefined;
+    return deliverHtmlDocument(html, upstream.headers);
+  }).catch(() => undefined);
+}
 
 const AGENT_UA = new RegExp(`(?:^|[^a-z0-9-])(?:${agentRequestPolicy.userAgents.join('|')})(?:$|[^a-z0-9-])`, 'i');
 
@@ -196,6 +278,10 @@ function uaConditionedRedirectHeaders(location: URL): Record<string, string> {
 }
 
 export default function middleware(request: Request) {
+  // Inner fetches set this so a second pass cannot stamp again or rewrite the
+  // request. A client that sends it gets the unstamped document.
+  if (request.headers.get(CSP_RAW_REQUEST_HEADER) === '1') return;
+
   const url = new URL(request.url);
   const ua = request.headers.get('user-agent') ?? '';
   const path = url.pathname;
@@ -291,8 +377,14 @@ export default function middleware(request: Request) {
 
     // Real HTTP 404 for unknown pages. Agents get markdown (orank
     // `agent-friendly-404`); browsers that send Accept: text/html get HTML.
-    // A rewrite to a static file would 200. Files with extensions skip this
-    // matcher and fall through to public/404.html.
+    // A rewrite to a static file would 200. Non-html extensions skip this
+    // matcher and fall through to public/404.html. .html stays here so the
+    // nonce stamp runs, and an unknown .html file still uses the platform 404.
+    if (path.endsWith('.html') && path !== '/api' && !path.startsWith('/api/')) {
+      if (shouldStampDocument(request, url)) return stampOriginDocument(request);
+      return;
+    }
+
     if (!isKnownPublicPagePath(path)) {
       return originNotFoundResponse(path, request);
     }
@@ -315,6 +407,7 @@ export default function middleware(request: Request) {
   // /api/* only). /favico/* is also removed from the matcher below so the
   // middleware never runs on it.
   if (!path.startsWith('/api/')) {
+    if (shouldStampDocument(request, url)) return stampOriginDocument(request);
     return;
   }
 
@@ -402,11 +495,6 @@ function docsResponseHeaders(upstream: Response, host: string): Headers {
 // section re-rendered from the current public reading; any failure serves the
 // built page unchanged.
 const CHOKEPOINT_PAGE_PATH = /^\/chokepoints\/[a-z0-9-]+\/$/;
-// The inner fetch of the built page uses this query marker so it skips this
-// branch. A URL rather than a header keeps the built and live variants under
-// different cache keys; a shared cache never answers a page request with the
-// built copy. A client that sends it only receives the built page.
-const BUILT_PAGE_PARAM = 'wm-built';
 const LIVE_PAGE_FETCH_TIMEOUT_MS = 4_000;
 // The reading refreshes every few minutes; the built page's hour-long browser
 // cache would hold it for an hour.
@@ -459,7 +547,11 @@ async function liveHtmlPage(url: URL, kind: string, render: (html: string) => Pr
   builtUrl.searchParams.set(BUILT_PAGE_PARAM, '1');
   try {
     page = await fetch(builtUrl, {
-      headers: { accept: 'text/html', 'user-agent': LIVE_PAGE_USER_AGENT },
+      headers: {
+        accept: 'text/html',
+        'user-agent': LIVE_PAGE_USER_AGENT,
+        [CSP_RAW_REQUEST_HEADER]: '1',
+      },
       redirect: 'manual',
       signal: AbortSignal.timeout(LIVE_PAGE_FETCH_TIMEOUT_MS),
     });
@@ -478,7 +570,7 @@ async function liveHtmlPage(url: URL, kind: string, render: (html: string) => Pr
   headers.set('cache-control', LIVE_PAGE_CACHE_CONTROL);
   headers.set('cdn-cache-control', LIVE_PAGE_CDN_CACHE_CONTROL);
   headers.set('vercel-cdn-cache-control', LIVE_PAGE_CDN_CACHE_CONTROL);
-  const builtPage = () => new Response(html, { status: 200, headers });
+  const builtPage = () => deliverHtmlDocument(html, headers);
 
   try {
     const live = await render(html);
@@ -487,7 +579,7 @@ async function liveHtmlPage(url: URL, kind: string, render: (html: string) => Pr
     // The built file's validators describe a different body.
     headers.delete('etag');
     headers.delete('last-modified');
-    return new Response(live, { status: 200, headers });
+    return deliverHtmlDocument(live, headers);
   } catch {
     return builtPage();
   }
@@ -582,6 +674,6 @@ export const config = {
   matcher: [
     '/mcp',
     '/api/:path*',
-    '/((?!api(?:/|$)|mcp(?:/|$)|.*\\.[^/]+$).*)',
+    '/((?!api(?:/|$)|mcp(?:/|$)|.*\\.(?!html$)[^/]+$).*)',
   ],
 };
