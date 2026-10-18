@@ -206,8 +206,11 @@ async function articleBody(res) {
     }
     return Buffer.concat(chunks).toString('utf8').slice(0, ARTICLE_TEXT_BUDGET);
   } finally {
-    await reader.cancel();
-    reader.releaseLock();
+    try {
+      await reader.cancel();
+    } finally {
+      reader.releaseLock();
+    }
   }
 }
 

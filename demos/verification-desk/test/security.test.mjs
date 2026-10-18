@@ -146,6 +146,9 @@ test('article input is capped before parsing, and oversized streams are cancelle
   const html = '<script>' + 'x'.repeat(60_000) + '</script><p>LATE ARTICLE MARKER</p>' + 'filler '.repeat(40);
   const text = await fetchArticleText('https://news.example/article', { lookupImpl: publicDns, fetchImpl: async () => new Response(html) });
   assert.equal(text, null, 'the raw HTML budget applies before tag stripping');
+  const failedBody = new ReadableStream({ start(controller) { controller.error(new Error('publisher disconnected')); } });
+  assert.equal(await fetchArticleText('https://news.example/article', { lookupImpl: publicDns, fetchImpl: async () => ({ ok: true, status: 200, body: failedBody }) }), null);
+  assert.equal(failedBody.locked, false, 'the reader lock is released even when cancellation rejects');
 });
 
 test('article socket lookup uses the validated DNS result', async () => {
