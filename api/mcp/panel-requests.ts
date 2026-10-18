@@ -269,7 +269,7 @@ export async function authorizePanelRead(context: McpAuthContext, pipeline: Pipe
       let parsed: unknown;
       try { parsed = JSON.parse(raw); } catch (error) { if (name !== 'get_natural_disasters' && name !== 'get_news_intelligence' && name !== 'get_chokepoint_status' && name !== 'get_world_brief' && name !== 'get_country_brief' && name !== 'get_country_risk') throw error; }
       if (name === 'get_country_brief' || name === 'get_country_risk') {
-        if (isCountryDirectOriginalReusable(name, parsed, scope.panel, Date.now())) cached = parsed;
+        if (isCountryDirectOriginalReusable(name, parsed, scope.panel, Date.now(), args.history_days as number | undefined)) cached = parsed;
       } else if (name === 'get_world_brief') {
         cached = readWorldBriefCache(parsed, Date.now(), scope.expires);
       } else if (name === 'get_chokepoint_status') {
@@ -336,7 +336,7 @@ export async function authorizePanelRead(context: McpAuthContext, pipeline: Pipe
     },
     save: async (value: unknown) => {
       if (name === 'get_world_brief' || name === 'get_natural_disasters' || name === 'get_news_intelligence' || name === 'get_chokepoint_status') return;
-      if ((name === 'get_country_brief' || name === 'get_country_risk') && !isCountryDirectOriginalReusable(name, value, scope.panel, Date.now())) return;
+      if ((name === 'get_country_brief' || name === 'get_country_risk') && !isCountryDirectOriginalReusable(name, value, scope.panel, Date.now(), args.history_days as number | undefined)) return;
       if (scope.panel === 'conflicts' && !isConflictPanelSnapshotCacheable(value)) return;
       if (scope.panel === 'predictions' && (!value || typeof value !== 'object' || Array.isArray(value))) return;
       if (name === 'get_forecast_theaters') {
