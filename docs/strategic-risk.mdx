@@ -289,7 +289,7 @@ The `GetRiskScores` RPC handler (`get-risk-scores.ts`):
 
 1. Fetches recent protest/riot/battle/explosion/civilian-violence data from ACLED. While ACLED returns no events (WorldMonitor has no ACLED access), Conflict and Unrest instead read GDELT terms (escalation or sustained level) from `gdelt:bulk:country-events:v1`.
 2. Fetches auxiliary sources from Redis, including UCDP conflicts, outages, climate, cyber threats, fires, GPS jamming, Iran events, OREF alerts, advisories, displacement, classified news summaries, aviation alerts, earthquakes, sanctions, and military/AIS CII aggregates.
-3. Computes CII v11 scores for 31 Tier-1 countries using the shared coefficient table documented in [CII Risk Scoring Methodology](/methodology/cii-risk-scores).
+3. Computes CII v12 scores for 31 Tier-1 countries using the shared coefficient table documented in [CII Risk Scoring Methodology](/methodology/cii-risk-scores).
 4. Derives Strategic Risk from the weighted top 5 CII scores.
 5. Caches results in Redis with versioned live and stale keys tied to the current CII formula version.
 
@@ -304,7 +304,7 @@ Each country's score combines a static baseline (40%) with a dynamic event score
 | Sub-component | Weight | Scoring |
 |---------------|--------|---------|
 | Unrest | 25% | ACLED protests/riots, protest fatalities, high-severity unrest, and outage severity; GDELT protest escalation or sustained level while ACLED returns no events |
-| Conflict | 30% | Weighted ACLED battles/explosions/civilian violence, fatalities, Iran strike severity, and OREF alert pressure; GDELT conflict escalation or sustained level while ACLED returns no events |
+| Conflict | 30% | Weighted ACLED battles/explosions/civilian violence, fatalities, and OREF alert pressure; GDELT conflict escalation or sustained level while ACLED returns no events. Strikes count through strike pressure on the composite (v12), not here |
 | Security | 20% | Military flights, military vessels, aviation closures/delays, and GPS/GNSS jamming |
 | Information | 25% | Classified news headlines and country-attributed threat summaries |
 
@@ -362,7 +362,8 @@ The top countries contribute most heavily, with diminishing influence for lower-
 | GPS Jamming | `intelligence:gpsjam:v2` | Security score |
 | Military CII | Relay/seeded military aggregate | Security score and AIS disruption boost |
 | Aviation Alerts | Seeded aviation disruption data | Security score |
-| Iran Events | `conflict:iran-events:v1` | Strike boost with severity weighting |
+| Middle East strikes | `conflict:iran-events:v1` (72h) and `conflict:strike-pressure:v1` (30-day tally) | Strike pressure: severity-weighted strikes per day, decayed, into a floor and a boost |
+| GDELT strikes | `gdelt:bulk:country-events:v1` (strike counter) | Strike pressure worldwide while ACLED returns no events |
 | OREF Alerts | `relay:oref:history:v1` | IL conflict boost and blend boost |
 | News Threats | Classified headline summaries | Information score and news urgency boost |
 | Displacement | Humanitarian displacement aggregate | Displacement boost |
