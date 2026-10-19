@@ -523,12 +523,14 @@ async fn clerk_fapi_request(
     }
     drop(slot);
 
-    let bytes = response
-        .bytes()
+    let mut response = response;
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
         .await
-        .map_err(|error| format!("Failed to read Clerk response: {error}"))?;
-    if bytes.len() > clerk_relay::MAX_RESPONSE_BODY_BYTES {
-        return Err("Clerk response exceeds the relay limit".to_string());
+        .map_err(|error| format!("Failed to read Clerk response: {error}"))?
+    {
+        clerk_relay::append_capped(&mut bytes, &chunk, clerk_relay::MAX_RESPONSE_BODY_BYTES)?;
     }
     Ok(ClerkFapiResponse {
         status,

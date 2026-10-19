@@ -140,6 +140,32 @@ describe('createClerkRelayFetch', () => {
     await assert.rejects(relayFetch(`https://${HOST}/v1/environment`), TypeError);
   });
 
+  it('rejects with AbortError as soon as the caller aborts a request in flight', async () => {
+    let started = false;
+    const relayFetch = createClerkRelayFetch(failingBaseFetch(), HOST, () => {
+      started = true;
+      return new Promise<ClerkRelayResponse>(() => {});
+    });
+    const controller = new AbortController();
+    const pending = relayFetch(`https://${HOST}/v1/client`, { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(started, true);
+    controller.abort();
+    await assert.rejects(pending, { name: 'AbortError' });
+  });
+
+  it('reports an abort, not a relay error, when Rust fails after the abort', async () => {
+    const controller = new AbortController();
+    const relayFetch = createClerkRelayFetch(failingBaseFetch(), HOST, async () => {
+      controller.abort();
+      throw 'Clerk request failed';
+    });
+    await assert.rejects(
+      relayFetch(`https://${HOST}/v1/client`, { signal: controller.signal }),
+      { name: 'AbortError' },
+    );
+  });
+
   it('honours an already-aborted signal without invoking the relay', async () => {
     const { calls, invoke } = recordingInvoke({ status: 200, contentType: null, body: '{}' });
     const relayFetch = createClerkRelayFetch(failingBaseFetch(), HOST, invoke);

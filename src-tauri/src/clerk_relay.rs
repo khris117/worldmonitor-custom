@@ -115,6 +115,9 @@ pub fn validate_request(request: ClerkFapiRequest) -> Result<ValidatedRequest, S
         None => None,
     };
 
+    if request.body.is_some() && content_type.is_none() {
+        return Err("Clerk relay refuses a body without a content type".to_string());
+    }
     if method == reqwest::Method::GET && request.body.is_some() {
         return Err("Clerk relay refuses a GET body".to_string());
     }
@@ -128,6 +131,16 @@ pub fn validate_request(request: ClerkFapiRequest) -> Result<ValidatedRequest, S
         content_type,
         body: request.body,
     })
+}
+
+/// Appends one response chunk, refusing it when the body would cross `max`,
+/// so an oversized response is rejected before it is buffered.
+pub fn append_capped(body: &mut Vec<u8>, chunk: &[u8], max: usize) -> Result<(), String> {
+    if body.len() + chunk.len() > max {
+        return Err("Clerk response exceeds the relay limit".to_string());
+    }
+    body.extend_from_slice(chunk);
+    Ok(())
 }
 
 /// The stored token to attach for `host`, if it was issued by that host.
@@ -252,6 +265,25 @@ mod tests {
         form.content_type = Some("application/x-www-form-urlencoded; charset=UTF-8".to_string());
         form.body = Some("identifier=a%40b.c".to_string());
         assert!(validate_request(form).is_ok());
+    }
+
+    #[test]
+    fn refuses_a_body_without_an_allowed_content_type() {
+        let mut untyped = request("clerk.worldmonitor.app", "POST", "/v1/client/sign_ins");
+        untyped.body = Some("identifier=a%40b.c".to_string());
+        assert!(validate_request(untyped).is_err());
+
+        let bodiless = request("clerk.worldmonitor.app", "POST", "/v1/client/sessions/sess_1/touch");
+        assert!(validate_request(bodiless).is_ok());
+    }
+
+    #[test]
+    fn stops_reading_a_response_once_it_crosses_the_cap() {
+        let mut body = Vec::new();
+        assert!(append_capped(&mut body, &[1; 6], 10).is_ok());
+        assert!(append_capped(&mut body, &[1; 4], 10).is_ok());
+        assert!(append_capped(&mut body, &[1; 1], 10).is_err());
+        assert_eq!(body.len(), 10, "the over-limit chunk is not buffered");
     }
 
     #[test]

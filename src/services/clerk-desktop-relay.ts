@@ -92,6 +92,25 @@ function abortError(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError');
 }
 
+/** Settles as soon as the caller aborts; Rust may still finish the request. */
+function raceWithAbort<T>(promise: Promise<T>, signal: AbortSignal | null | undefined): Promise<T> {
+  if (!signal) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => reject(abortError());
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(error);
+      },
+    );
+  });
+}
+
 export function createClerkRelayFetch(
   baseFetch: typeof fetch,
   fapiHost: string,
@@ -106,11 +125,11 @@ export function createClerkRelayFetch(
 
     let relayed: ClerkRelayResponse;
     try {
-      relayed = await invoke(request);
+      relayed = await raceWithAbort(invoke(request), signal);
     } catch (error) {
+      if (signal?.aborted) throw abortError();
       throw new TypeError(`Clerk desktop relay failed: ${String(error)}`);
     }
-    if (signal?.aborted) throw abortError();
 
     const headers = new Headers();
     if (relayed.contentType) headers.set('content-type', relayed.contentType);
