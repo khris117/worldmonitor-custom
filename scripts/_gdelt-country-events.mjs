@@ -59,8 +59,10 @@ export const COUNTRY_EVENTS_MIN_BASELINE_DAYS = 21;
 // of them complete.
 export const COUNTRY_EVENTS_WEEK_DAYS = 7;
 export const COUNTRY_EVENTS_MIN_WEEK_DAYS = 5;
-// Strike days the CII decays (half-life 3 days, so day 21 weighs under 1%).
-export const COUNTRY_EVENTS_STRIKE_DAYS = 21;
+// Strike days: the 21 the CII decays (half-life 3 days, so day 21 weighs under
+// 1%) and the six before them, which the CII's campaign rule reads to judge the
+// oldest decayed days.
+export const COUNTRY_EVENTS_STRIKE_DAYS = 27;
 // A day is read for strikes once 4 hours of it are in: strikes are scored as a
 // share of the day's coverage, which a partial day still estimates.
 export const COUNTRY_EVENTS_STRIKE_MIN_COHORTS = 16;
@@ -271,7 +273,7 @@ export function summarizeCountryEvents(snapshot, nowMs = Date.now()) {
     (_, i) => utcDate(nowMs - (i + 1) * DAY_MS),
   ).filter((date) => days[date]?.cohorts === COHORTS_PER_DAY);
   const weekReady = weekDates.length >= COUNTRY_EVENTS_MIN_WEEK_DAYS;
-  // Strike days: today and the 20 days before it, each read once every cohort
+  // Strike days: today and the 26 days before it, each read once every cohort
   // it holds carries the strike counter and it holds at least 4 hours. The
   // CII scores a day's strikes as a share of its articles and decays them by
   // age; a day missing here is unknown, not quiet.

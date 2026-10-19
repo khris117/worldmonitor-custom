@@ -688,6 +688,18 @@ describe('strike pressure tally (conflict:strike-pressure:v1)', () => {
     assert.deepEqual(state.days['2026-10-15'], { SA: [0, 2, 0, 0] });
   });
 
+  it('does not move an incident to the next day when its first report, just before midnight, leaves the window', () => {
+    // 23:55 and 00:10 form one incident dated 23:55; at 72h the 23:55 report
+    // leaves and the 00:10 report alone would be re-dated to the next day.
+    const midnight = Date.parse('2026-10-16T00:00:00Z');
+    const cands = [riyadh('a', midnight - 5 * MIN), riyadh('b', midnight + 10 * MIN)];
+    let state = null;
+    for (const now of [midnight + 2 * HOUR, midnight - 5 * MIN + 72 * HOUR + MIN, midnight - 5 * MIN + 72 * HOUR + 11 * MIN]) {
+      state = strikes.mergeStrikePressure(state, strikes.deriveStrikeEvents(cands, now), now);
+    }
+    assert.deepEqual(state.days, { '2026-10-15': { SA: [0, 1, 0, 0] } });
+  });
+
   it('moves an event to its higher severity when later reports raise it, and never lowers it', () => {
     const first = strikes.mergeStrikePressure(null, [ev('tg:SA:SA:riyadh:1', 'SA', 'elevated', HOUR)], NOW);
     const raised = strikes.mergeStrikePressure(first, [ev('tg:SA:SA:riyadh:1', 'SA', 'critical', HOUR)], NOW);

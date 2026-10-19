@@ -116,3 +116,9 @@ test('the tally data outlives its 30-day window and its health budget', () => {
   const ttlDays = Number(/MIDDLE_EAST_STRIKE_PRESSURE_TTL_S = (\d+) \* 24 \* 3600/.exec(relay)?.[1]);
   assert.ok(ttlDays > 30, `TTL ${ttlDays} days`);
 });
+
+test('seed-health keeps the tally pending until its first healthy publish, like /api/health', () => {
+  const src = readFileSync(new URL('../api/seed-health.js', import.meta.url), 'utf8');
+  const entry = /'conflict:strike-pressure':\s*\{([^}]*)\}/.exec(src)?.[1] ?? '';
+  assert.match(entry, new RegExp(`activationKey: '${SEED_META.strikePressure.activationKey}'`));
+});

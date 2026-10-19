@@ -308,6 +308,10 @@ describe('summarizeCountryEvents', () => {
       assert.deepEqual(strikes[dayOf(now)], [9, 150]);
       assert.deepEqual(strikes[dayOf(now - DAY)], [1, 200]);
       assert.deepEqual(strikes[dayOf(now - 20 * DAY)], [20, 200]);
+      // The CII decays 21 days and judges each day's campaign rule on the six
+      // before it, so the summary carries those six as well.
+      assert.equal(COUNTRY_EVENTS_STRIKE_DAYS, 27);
+      assert.deepEqual(strikes[dayOf(now - 26 * DAY)], [26, 200]);
       assert.equal(strikes[dayOf(now - COUNTRY_EVENTS_STRIKE_DAYS * DAY)], undefined, 'older than the window');
       assert.equal(Object.keys(strikes).length, COUNTRY_EVENTS_STRIKE_DAYS);
       assert.equal(summary.strikeDays[dayOf(now)], 72);

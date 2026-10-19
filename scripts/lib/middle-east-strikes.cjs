@@ -735,6 +735,11 @@ function mergeStrikePressure(previous, events, now) {
     if (typeof event?.id !== 'string' || !event.id) continue;
     if (!ISO2_RE.test(iso2 ?? '') || !PRESSURE_SEVERITIES.includes(severity)) continue;
     if (!Number.isFinite(ts) || ts > now + FUTURE_SKEW_MS) continue;
+    // At the window's old edge an incident loses its first report and is
+    // re-dated to its next one, at most one session (30 minutes) later, which
+    // can be the next UTC day. Earlier cycles counted it whole, so the edge is
+    // skipped rather than counted again on another day.
+    if (ts < now - WINDOW_MS + BUCKET_MS) continue;
     const day = utcDay(ts);
     if (day < oldest) continue;
     const tally = ((windowDays[day] ??= {})[iso2] ??= PRESSURE_SEVERITIES.map(() => 0));
