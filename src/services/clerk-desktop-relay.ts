@@ -11,7 +11,7 @@
  * fetch.
  */
 
-import { invokeTauri } from '@/services/tauri-bridge';
+import { hasTauriInvokeBridge, invokeTauri } from '@/services/tauri-bridge';
 
 export interface ClerkRelayRequest {
   host: string;
@@ -121,16 +121,6 @@ export function createClerkRelayFetch(
 
 let installedHost: string | null = null;
 
-// Same globals tauri-bridge resolves `invoke` from. Read here rather than
-// imported so panel test harnesses that stub tauri-bridge with only
-// `invokeTauri` still bundle this module.
-function hasTauriInvoke(): boolean {
-  const tauriWindow = window as unknown as {
-    __TAURI__?: { core?: { invoke?: unknown } };
-    __TAURI_INTERNALS__?: { invoke?: unknown };
-  };
-  return typeof (tauriWindow.__TAURI__?.core?.invoke ?? tauriWindow.__TAURI_INTERNALS__?.invoke) === 'function';
-}
 
 /**
  * Route clerk-js Frontend API calls for `fapiHost` through the Rust relay.
@@ -140,7 +130,7 @@ function hasTauriInvoke(): boolean {
  * API fetch patch in runtime.ts.
  */
 export function installClerkDesktopRelay(fapiHost: string): boolean {
-  if (typeof window === 'undefined' || !fapiHost || !hasTauriInvoke()) return false;
+  if (typeof window === 'undefined' || !fapiHost || !hasTauriInvokeBridge()) return false;
   if (installedHost === fapiHost) return true;
   installedHost = fapiHost;
   window.fetch = createClerkRelayFetch(
