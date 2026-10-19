@@ -898,9 +898,21 @@ describe("internal intel read routes", () => {
     expect(await res.json()).toEqual({ error: "INVALID_CURSOR" });
   });
 
+  test("a cursor the store cannot parse is INVALID_CURSOR", async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.fetch("/api/internal-intel-timeline", post({ country: "UA", cursor: "not-a-cursor" }));
+    expect({ status: res.status, body: await res.json() }).toEqual({
+      status: 400,
+      body: { error: "INVALID_CURSOR" },
+    });
+  });
+
   test.each([
     [new Error("InvalidCursor: cursor does not match this query"), 400],
+    [new Error("Failed to parse cursor"), 400],
+    [new Error("Uncaught Error: Failed to parse cursor"), 400],
     [new ConvexError({ paginationError: "InvalidCursor" }), 400],
+    [new ConvexError({ isConvexSystemError: true, paginationError: "InvalidCursor" }), 400],
     [new Error("database unavailable"), 500],
   ] as const)("distinguishes rejected cursors from store failures: %s", async (error, status) => {
     const route = http.lookup("/api/internal-intel-timeline", "POST")![0];
