@@ -22,6 +22,11 @@ import {
   INTEL_HISTORY_MAX_APPEND_RECORDS,
   INTEL_HISTORY_MAX_RETRACT_IDENTIFIERS,
 } from "./intelHistory";
+import {
+  isInvalidCursorPage,
+  isInvalidPaginationCursorError,
+  paginationCursorShapeAccepted,
+} from "./paginationCursor";
 
 // App-serving hosts only, aligned with api/_cors.js and server/cors.ts.
 const APP_ORIGIN = /^https:\/\/(?:(?:www|app|api|tech|finance|commodity|happy|energy)\.)?worldmonitor\.app$/;
@@ -2642,16 +2647,20 @@ http.route({
     if (cursor !== undefined && (typeof cursor !== "string" || cursor.length > 4096)) {
       return intelJson({ error: "INVALID_CURSOR" }, 400);
     }
+    if (typeof cursor === "string" && cursor.length > 0 && !paginationCursorShapeAccepted(cursor)) {
+      return intelJson({ error: "INVALID_CURSOR" }, 400);
+    }
 
     try {
       const result = await ctx.runQuery(internal.intelHistory.timeline, {
         ...parsed.scope, ...(typeof cursor === "string" && cursor ? { cursor } : {}),
       });
+      if (isInvalidCursorPage(result)) {
+        return intelJson({ error: "INVALID_CURSOR" }, 400);
+      }
       return intelJson(result, 200);
     } catch (err) {
-      const data = parseConvexErrorData(err) as { paginationError?: string } | null;
-      if ((err instanceof Error && err.message.includes("InvalidCursor"))
-        || data?.paginationError === "InvalidCursor") {
+      if (isInvalidPaginationCursorError(err)) {
         return intelJson({ error: "INVALID_CURSOR" }, 400);
       }
       const msg = err instanceof Error ? err.message : "intel history timeline failed";

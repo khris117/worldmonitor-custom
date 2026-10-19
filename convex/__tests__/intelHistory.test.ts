@@ -901,6 +901,16 @@ describe("internal intel read routes", () => {
   test("a cursor the store cannot parse is INVALID_CURSOR", async () => {
     const t = convexTest(schema, modules);
     const res = await t.fetch("/api/internal-intel-timeline", post({ country: "UA", cursor: "not-a-cursor" }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "INVALID_CURSOR" });
+  });
+
+  test("a hex cursor the store cannot decrypt is INVALID_CURSOR", async () => {
+    const t = convexTest(schema, modules);
+    const res = await t.fetch("/api/internal-intel-timeline", post({
+      country: "UA",
+      cursor: `07${"ab".repeat(24)}`,
+    }));
     expect({ status: res.status, body: await res.json() }).toEqual({
       status: 400,
       body: { error: "INVALID_CURSOR" },
@@ -919,7 +929,7 @@ describe("internal intel read routes", () => {
     const response = await (route as unknown as {
       _handler: (ctx: unknown, request: Request) => Promise<Response>;
     })._handler({ runQuery: async () => { throw error; } }, new Request(
-      "https://convex.test/api/internal-intel-timeline", post({ country: "UA", cursor: "rejected" }),
+      "https://convex.test/api/internal-intel-timeline", post({ country: "UA", cursor: "[]" }),
     ));
     expect(response.status).toBe(status);
     expect(await response.json()).toEqual({ error: status === 400 ? "INVALID_CURSOR" : "database unavailable" });
