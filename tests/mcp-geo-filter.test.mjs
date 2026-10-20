@@ -10,6 +10,7 @@ import { RpcValidationError } from '../api/mcp/billing-denial.ts';
 import { CII_RISK_SCORE_CACHE_KEYS } from '../api/_cii-risk-cache-keys.js';
 import { filterNaturalDisastersPanelData } from '../api/mcp/_natural-disasters-reuse.ts';
 import { filterConflictPanelEvents } from '../api/mcp/registry/cache-tools.ts';
+import { filterRows, locationPoint, locator } from '../api/mcp/_geo-filter.ts';
 
 const originalFetch = globalThis.fetch;
 const originalEnv = { ...process.env };
@@ -214,6 +215,26 @@ describe('dedicated panel filters apply the same geo rules', () => {
     assert.deepEqual(ids(data['ucdp-events'].events), ['fiji', 'tonga']);
     assert.equal(data.scores.ciiScores.length, 2);
     assert.deepEqual(data.geo_filter.excluded, { events: { without_location: 1, without_time: 0 } });
+  });
+});
+
+describe('geo filter exclusion counts', () => {
+  const at = (latitude, longitude) => ({ latitude, longitude });
+  const locate = locator(locationPoint, 'occurredAt');
+  const now = Date.UTC(2026, 9, 20);
+
+  it('counts an undated row only when it lies inside the area', () => {
+    const rows = [
+      { id: 'near-undated', location: at(48.0, 37.8) },
+      { id: 'far-undated', location: at(51.5, -0.1) },
+      { id: 'unlocated-undated' },
+      { id: 'near-dated', location: at(48.1, 37.9), occurredAt: now - 86_400_000 },
+    ];
+    const filter = { area: { kind: 'radius', lat: 48.0, lon: 37.8, radiusKm: 50 }, sinceMs: 7 * 86_400_000 };
+    const result = filterRows(rows, locate, filter, now);
+    assert.deepEqual(ids(result.rows), ['near-dated']);
+    assert.equal(result.withoutLocation, 1, 'the unlocated row is reported once, for its location');
+    assert.equal(result.withoutTime, 1, 'only the in-area undated row was dropped for lacking a date');
   });
 });
 

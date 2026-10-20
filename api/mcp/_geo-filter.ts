@@ -138,7 +138,9 @@ export function filterRows<T>(rows: T[], locate: RowLocator, filter: EventFilter
     }
     if (cutoff !== null) {
       const time = record(row) ? locate.time(row) : null;
-      if (time === null) withoutTime++;
+      // Count a missing date only for rows the area kept, so the count never
+      // blames distant or unlocated rows on their dates.
+      if (time === null) { if (keep) withoutTime++; }
       else if (oldest === null || time < oldest) oldest = time;
       keep = keep && time !== null && time >= cutoff;
     }
