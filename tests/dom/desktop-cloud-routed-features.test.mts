@@ -13,7 +13,10 @@ vi.mock('@/services/runtime', async (importOriginal) => ({
 const vaultKeys = vi.hoisted(() => ({ list: [] as string[] }));
 vi.mock('@/services/tauri-bridge', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/services/tauri-bridge')>(),
-  invokeTauri: async (command: string) => (command === 'list_configured_secret_keys' ? vaultKeys.list : null),
+  invokeTauri: async (command: string) => {
+    if (command === 'list_configured_secret_keys') return vaultKeys.list;
+    throw new Error('Tauri invoke bridge unavailable');
+  },
 }));
 
 const hydration = vi.hoisted(() => new Map<string, unknown>());
@@ -77,6 +80,21 @@ describe('desktop features served by the cloud', () => {
     expect(fetch).not.toHaveBeenCalled();
   });
 
+  it('restores a persisted outage snapshot on a fresh launch without bootstrap or cloud access', async () => {
+    hydration.set('outages', {
+      outages: [{ id: 'o1', title: 'Outage', link: '', description: '', country: 'IR', region: '', severity: 'OUTAGE_SEVERITY_MAJOR', categories: [], location: { latitude: 32, longitude: 53 }, detectedAt: Date.now(), cause: '', outageType: '' }],
+    });
+    const first = await import('@/services/infrastructure');
+    expect(await first.fetchInternetOutages()).toHaveLength(1);
+    // Let the breaker's persistent write land, then start over as a new process would.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    vi.resetModules();
+    const relaunched = await import('@/services/infrastructure');
+    expect(await relaunched.fetchInternetOutages()).toHaveLength(1);
+    expect(relaunched.isOutagesConfigured()).toBe(true);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
   it('hides the outage layer when there is neither a snapshot nor cloud access', async () => {
     const { fetchInternetOutages, isOutagesConfigured } = await import('@/services/infrastructure');
     expect(await fetchInternetOutages()).toEqual([]);
@@ -90,6 +108,19 @@ describe('desktop features served by the cloud', () => {
     setFeatureToggle('supplyChain', false);
     const { fetchShippingRates } = await import('@/services/supply-chain');
     expect((await fetchShippingRates()).indices).toEqual([]);
+  });
+
+  it('clears shipping indices from the panel when the user turns supply chain off', async () => {
+    const { SupplyChainPanel } = await import('@/components/SupplyChainPanel');
+    const { setFeatureToggle } = await import('@/services/runtime-config');
+    const panel = new SupplyChainPanel();
+    panel.updateShippingRates({ indices: [{ indexId: 'PCU483111483111', name: 'Deep Sea Freight PPI', currentValue: 1500, previousValue: 1400, changePct: 7, unit: 'pts', history: [], spikeAlert: false }], fetchedAt: '', upstreamUnavailable: false });
+    await vi.waitFor(() => expect(panel.getElement().querySelector('.panel-tab[data-tab="indicators"]')).not.toBeNull());
+    panel.getElement().querySelector<HTMLElement>('.panel-tab[data-tab="indicators"]')!.click();
+    await vi.waitFor(() => expect(panel.getElement().textContent).toContain('Deep Sea Freight PPI'));
+    setFeatureToggle('supplyChain', false);
+    await vi.waitFor(() => expect(panel.getElement().textContent).not.toContain('Deep Sea Freight PPI'), { timeout: 500 });
+    panel.destroy();
   });
 
   it('keeps the bootstrap shipping-rate snapshot without calling the cloud', async () => {

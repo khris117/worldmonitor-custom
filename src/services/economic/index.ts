@@ -422,7 +422,7 @@ export async function fetchCrudeInventoriesRpc(): Promise<GetCrudeInventoriesRes
     crudeBreaker.recordSuccess(hydrated);
     return hydrated;
   }
-  if (!isFeatureAvailable('energyEia')) return crudeBreaker.getCachedOrDefaultStale(emptyCrudeFallback);
+  if (!isFeatureAvailable('energyEia')) return crudeBreaker.loadCachedOrDefaultStale(emptyCrudeFallback);
 
   try {
     return await crudeBreaker.execute(async () => {
@@ -447,7 +447,7 @@ export async function fetchNatGasStorageRpc(): Promise<GetNatGasStorageResponse>
     natGasBreaker.recordSuccess(hydrated);
     return hydrated;
   }
-  if (!isFeatureAvailable('energyEia')) return natGasBreaker.getCachedOrDefaultStale(emptyNatGasFallback);
+  if (!isFeatureAvailable('energyEia')) return natGasBreaker.loadCachedOrDefaultStale(emptyNatGasFallback);
 
   try {
     return await natGasBreaker.execute(async () => {

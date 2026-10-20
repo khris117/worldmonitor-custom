@@ -248,9 +248,10 @@ export class CircuitBreaker<T> {
           const data = this.revivePersistedData ? this.revivePersistedData(entry.data) : entry.data;
           this.cache.set(cacheKey, { data, timestamp: entry.updatedAt });
           this.evictIfNeeded();
-          // lastDataState is intentionally left untouched here. hydrate only
-          // ever runs from inside execute(), which recomputes lastDataState
-          // right after — synchronously on the cooldown/fresh/SWR-stale paths,
+          // lastDataState is intentionally left untouched here. execute()
+          // recomputes lastDataState right after hydrating, and
+          // loadCachedOrDefaultStale() only reads the cache, so neither leaves a
+          // mismatched state — execute() does so synchronously on the cooldown/fresh/SWR-stale paths,
           // and after the live fetch on the path where the hydrated entry is
           // immediately evicted by shouldCache. It previously wrote
           // { mode: withinTtl ? 'cached' : 'unavailable', timestamp:
@@ -334,6 +335,16 @@ export class CircuitBreaker<T> {
   getCachedOrDefault(defaultValue: T, cacheKey?: string): T {
     const resolvedKey = this.resolveCacheKey(cacheKey);
     return this.getCached(resolvedKey) ?? defaultValue;
+  }
+
+  /**
+   * Stale fallback for a caller that must not fetch. Loads the persisted copy
+   * first, as execute() does, so a fresh launch still finds the last data.
+   */
+  async loadCachedOrDefaultStale(defaultValue: T, cacheKey?: string): Promise<T> {
+    const resolvedKey = this.resolveCacheKey(cacheKey);
+    if (this.persistEnabled) await this.hydratePersistentCache(resolvedKey);
+    return this.getCachedOrDefaultStale(defaultValue, resolvedKey);
   }
 
   /** Return a cache entry even after its TTL, for explicit stale fallbacks. */
