@@ -75,7 +75,8 @@ function isExcluded(rules, relPath) {
 function relativeSpecs(file) {
   const src = readStrippedSource(file);
   const specs = new Set();
-  for (const re of [/\bfrom\s*['"]([^'"]+)['"]/g, /(?:^|;)[ \t]*import\s*['"]([^'"]+)['"]/gm, /\bimport\(\s*['"]([^'"]+)['"]/g]) {
+  // `from` only counts at the end of an import/export statement, not inside a string.
+  for (const re of [/(?:^|[;}])[ \t]*(?:import|export)\b[^'";]*?\bfrom\s*['"]([^'"]+)['"]/gm, /(?:^|;)[ \t]*import\s*['"]([^'"]+)['"]/gm, /\bimport\(\s*['"]([^'"]+)['"]/g]) {
     for (const m of src.matchAll(re)) if (m[1].startsWith('.')) specs.add(m[1]);
   }
   return specs;
@@ -95,7 +96,7 @@ function listSources(dir, out = []) {
 function resolveTsRelative(fromFile, spec) {
   const base = resolve(dirname(fromFile), spec);
   const candidates = [base, ...['.ts', '.tsx', '.mts', '.d.ts', '.js', '.mjs', '.json'].map((ext) => base + ext),
-    ...['index.ts', 'index.tsx', 'index.js', 'index.mjs'].map((ix) => join(base, ix))];
+    ...['index.ts', 'index.tsx', 'index.d.ts', 'index.js', 'index.mjs'].map((ix) => join(base, ix))];
   if (/\.m?js$/.test(spec)) candidates.push(base.replace(/\.js$/, '.ts'), base.replace(/\.js$/, '.tsx'), base.replace(/\.mjs$/, '.mts'));
   return candidates.find((p) => existsSync(p) && statSync(p).isFile()) ?? null;
 }
@@ -158,9 +159,12 @@ describe('docker/Dockerfile — tsc inputs stay inside the build context', () =>
       put('tests/fixtures/data.ts', 'export const fixture = 1;\n');
       put('tests/fixtures/widget.tsx', 'export const widget = 1;\n');
       put('tests/fixtures/unused.ts', "import '../../src/app';\n");
-      const offenders = findOffenders(tmp, [join(tmp, 'src/app.ts')], parseDockerignore('tests'));
+      put('src/types.ts', "import type {\n  Shape,\n} from '../tests/typings';\nexport const note = \"from '../tests/fixtures/data'\";\n");
+      put('tests/typings/index.d.ts', 'export interface Shape { a: number }\n');
+      const offenders = findOffenders(tmp, [join(tmp, 'src/app.ts'), join(tmp, 'src/types.ts')], parseDockerignore('tests'));
       assert.deepEqual(offenders.sort(), [
         'shared/helper.ts → tests/fixtures/data.ts',
+        'src/types.ts → tests/typings/index.d.ts',
         'src/view.tsx → tests/fixtures/widget.tsx',
       ]);
     } finally {
