@@ -22,7 +22,7 @@ const root = resolve(__dirname, '..');
 
 // .dockerignore rules in file order; the last matching rule wins, and a
 // pattern that matches a directory excludes everything beneath it.
-export function parseDockerignore(src) {
+function parseDockerignore(src) {
   return src.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((line) => {
     const negate = line.startsWith('!');
     const pattern = (negate ? line.slice(1) : line).replace(/^\/+/, '').replace(/\/+$/, '');
@@ -34,7 +34,7 @@ export function parseDockerignore(src) {
   });
 }
 
-export function isExcluded(rules, relPath) {
+function isExcluded(rules, relPath) {
   const parts = relPath.split('/');
   let excluded = false;
   for (const { negate, re } of rules) {
