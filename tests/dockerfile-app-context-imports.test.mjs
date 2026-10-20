@@ -16,10 +16,18 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readStrippedSource, relativeToRepoRoot } from './_lib/import-graph-walk.mjs';
+import ts from 'typescript';
+import { relativeToRepoRoot } from './_lib/import-graph-walk.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
+
+// The compiler options docker/Dockerfile's `npx tsc` runs with.
+function repoTsOptions() {
+  const { config } = ts.readConfigFile(resolve(root, 'tsconfig.json'), ts.sys.readFile);
+  return ts.parseJsonConfigFileContent(config, ts.sys, root).options;
+}
+const FIXTURE_TS_OPTIONS = { moduleResolution: ts.ModuleResolutionKind.Bundler, module: ts.ModuleKind.ESNext, allowImportingTsExtensions: true, noEmit: true, resolveJsonModule: true };
 
 // One path segment of a Go filepath.Match pattern: `*`, `?`, `[...]` classes
 // (`[!...]` / `[^...]` negate) and `\` escapes.
@@ -70,16 +78,12 @@ function isExcluded(rules, relPath) {
   return excluded;
 }
 
-// Every relative specifier tsc resolves, including `import type` and
-// type-only `export ... from`, which tsx erases but tsc still type-checks.
+// Every relative specifier tsc sees, read by TypeScript's own scanner: static,
+// type-only, side-effect, re-export and literal dynamic imports, never text
+// inside strings or comments.
 function relativeSpecs(file) {
-  const src = readStrippedSource(file);
-  const specs = new Set();
-  // `from` only counts at the end of an import/export statement, not inside a string.
-  for (const re of [/(?:^|[;}])[ \t]*(?:import|export)\b[^'";]*?\bfrom\s*['"]([^'"]+)['"]/gm, /(?:^|;)[ \t]*import\s*['"]([^'"]+)['"]/gm, /\bimport\(\s*['"]([^'"]+)['"]/g]) {
-    for (const m of src.matchAll(re)) if (m[1].startsWith('.')) specs.add(m[1]);
-  }
-  return specs;
+  const { importedFiles } = ts.preProcessFile(readFileSync(file, 'utf-8'), true, true);
+  return new Set(importedFiles.map((f) => f.fileName).filter((spec) => spec.startsWith('.')));
 }
 
 function listSources(dir, out = []) {
@@ -91,26 +95,27 @@ function listSources(dir, out = []) {
   return out;
 }
 
-// TypeScript's bundler resolution for relative specifiers, including .tsx
-// and the `.js` → `.ts` source mapping.
-function resolveTsRelative(fromFile, spec) {
-  const base = resolve(dirname(fromFile), spec);
-  const candidates = [base, ...['.ts', '.tsx', '.mts', '.d.ts', '.js', '.mjs', '.json'].map((ext) => base + ext),
-    ...['index.ts', 'index.tsx', 'index.d.ts', 'index.js', 'index.mjs'].map((ix) => join(base, ix))];
-  if (/\.m?js$/.test(spec)) candidates.push(base.replace(/\.js$/, '.ts'), base.replace(/\.js$/, '.tsx'), base.replace(/\.mjs$/, '.mts'));
-  return candidates.find((p) => existsSync(p) && statSync(p).isFile()) ?? null;
+// Resolve the way tsc does (extensions, .tsx, index files, package.json
+// `types`, `.js` → `.ts` mapping) via TypeScript's resolver. Non-module assets
+// such as `import './x.css'` fall back to the literal path, since vite needs
+// them in the build context too.
+function resolveTsRelative(fromFile, spec, options) {
+  const resolved = ts.resolveModuleName(spec, fromFile, options, ts.sys).resolvedModule?.resolvedFileName;
+  if (resolved) return resolve(resolved);
+  const literal = resolve(dirname(fromFile), spec);
+  return existsSync(literal) && statSync(literal).isFile() ? literal : null;
 }
 
 // Walk the whole relative-import graph tsc follows from the entry files, not
 // just the entries: a src → shared → tests chain breaks the image build too.
-function findOffenders(repoRoot, entries, rules) {
+function findOffenders(repoRoot, entries, rules, options) {
   const offenders = [];
   const seen = new Set(entries);
   const queue = [...entries];
   while (queue.length) {
     const file = queue.shift();
     for (const spec of relativeSpecs(file)) {
-      const target = resolveTsRelative(file, spec);
+      const target = resolveTsRelative(file, spec, options);
       if (!target) continue;
       const rel = relativeToRepoRoot(repoRoot, target);
       if (rel && isExcluded(rules, rel)) offenders.push(`${relativeToRepoRoot(repoRoot, file)} → ${rel}`);
@@ -161,9 +166,14 @@ describe('docker/Dockerfile — tsc inputs stay inside the build context', () =>
       put('tests/fixtures/unused.ts', "import '../../src/app';\n");
       put('src/types.ts', "import type {\n  Shape,\n} from '../tests/typings';\nexport const note = \"from '../tests/fixtures/data'\";\n");
       put('tests/typings/index.d.ts', 'export interface Shape { a: number }\n');
-      const offenders = findOffenders(tmp, [join(tmp, 'src/app.ts'), join(tmp, 'src/types.ts')], parseDockerignore('tests'));
+      put('src/pkg.ts', "import type { Pkg } from '../tests/pkg-types';\n");
+      put('tests/pkg-types/package.json', '{ "types": "./shapes.d.ts" }\n');
+      put('tests/pkg-types/shapes.d.ts', 'export interface Pkg { b: number }\n');
+      const entries = ['src/app.ts', 'src/types.ts', 'src/pkg.ts'].map((f) => join(tmp, f));
+      const offenders = findOffenders(tmp, entries, parseDockerignore('tests'), FIXTURE_TS_OPTIONS);
       assert.deepEqual(offenders.sort(), [
         'shared/helper.ts → tests/fixtures/data.ts',
+        'src/pkg.ts → tests/pkg-types/shapes.d.ts',
         'src/types.ts → tests/typings/index.d.ts',
         'src/view.tsx → tests/fixtures/widget.tsx',
       ]);
@@ -173,6 +183,6 @@ describe('docker/Dockerfile — tsc inputs stay inside the build context', () =>
   });
 
   it('no type-checked file imports a path .dockerignore drops', () => {
-    assert.deepEqual(findOffenders(root, files, rules), [], 'these imports resolve locally but are missing from the Docker build context; move the target under src/ or shared/');
+    assert.deepEqual(findOffenders(root, files, rules, repoTsOptions()), [], 'these imports resolve locally but are missing from the Docker build context; move the target under src/ or shared/');
   });
 });
