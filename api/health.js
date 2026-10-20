@@ -1795,6 +1795,7 @@ const SEED_META = {
   },
   oecdLtRates: {
     key: 'seed-meta:economic:oecd-lt-rates',
+    requireContentFreshness: { countries: ['DE', 'JP', 'GB', 'CA', 'AU', 'CH', 'NO', 'SE', 'IT', 'ES', 'KR', 'MX', 'ZA', 'PL', 'NL', 'BE', 'AT', 'PT', 'IE', 'FI', 'DK', 'GR', 'CZ', 'HU', 'CL', 'FR', 'US'], budgetMinutes: 80 * 24 * 60 },
     maxStaleMin: 60 * 24 * 21, // weekly section; 21d = 3x interval, matches monthly data cadence
     activationKey: 'seed-activated:economic:oecd-lt-rates',
     cutover: {

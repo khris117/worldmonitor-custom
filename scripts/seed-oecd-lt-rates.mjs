@@ -8,10 +8,10 @@
 // staggered per the repo's FRED-pacing convention.
 
 import { CHROME_UA, sleep } from './_seed-utils.mjs';
-import { DAY_MIN, tokensToContentMeta } from './_content-age-helpers.mjs';
+import { DAY_MIN } from './_content-age-helpers.mjs';
 import { getOptionalUpstashCreds, upstashCommand } from './_upstash-rest.mjs';
 import { loadEnvFile, runSeed } from './_seed-utils.mjs';
-import { OECD_LT_MARKETS, parseFredCsv, buildOecdLtPayload, declareOecdRecords } from './lib/yield-curves/oecd-lt.mjs';
+import { OECD_LT_MARKETS, parseFredCsv, buildOecdLtPayload, declareOecdRecords, oecdLatestContentMeta, oecdContentFreshness } from './lib/yield-curves/oecd-lt.mjs';
 
 loadEnvFile(import.meta.url);
 
@@ -55,13 +55,6 @@ function validate(data) {
   return Object.values(countries).every((entry) => entry?.curves?.length > 0);
 }
 
-function contentMeta(data) {
-  const dates = Object.values(data?.countries ?? {})
-    .flatMap((entry) => [entry?.curves?.[0]?.date, entry?.curves?.at(-1)?.date])
-    .filter(Boolean);
-  return tokensToContentMeta(dates.slice(0, 2).concat(dates.at(-1)));
-}
-
 export function latestTransform(data) {
   const latest = {};
   for (const [market, entry] of Object.entries(data?.countries ?? {})) {
@@ -72,14 +65,14 @@ export function latestTransform(data) {
 }
 
 if (process.argv[1]?.endsWith('seed-oecd-lt-rates.mjs')) {
-  const markActivated = async () => {
+  const markActivated = async (data) => {
     try {
       const creds = getOptionalUpstashCreds();
-      if (!creds) return;
-      await upstashCommand(creds, ['SET', OECD_LT_ACTIVATION_KEY, '1']);
+      if (creds) await upstashCommand(creds, ['SET', OECD_LT_ACTIVATION_KEY, '1']);
     } catch (err) {
       console.warn(`  WARN: OECD LT activation marker write failed: ${err?.message || err}`);
     }
+    return { freshnessMetaPatch: { contentFreshness: oecdContentFreshness(data) } };
   };
 
   runSeed('economic', 'oecd-lt-rates', OECD_LT_CANONICAL_KEY, fetchOecdLtRates, {
@@ -92,7 +85,7 @@ if (process.argv[1]?.endsWith('seed-oecd-lt-rates.mjs')) {
     maxStaleMin: MAX_STALE_MIN,
     recordCount: declareOecdRecords,
     declareRecords: declareOecdRecords,
-    contentMeta,
+    contentMeta: oecdLatestContentMeta,
     maxContentAgeMin: MAX_CONTENT_AGE_MIN,
     extraKeys: [
       { key: OECD_LT_LATEST_KEY, transform: latestTransform, declareRecords: declareOecdRecords },
