@@ -12,24 +12,49 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readStrippedSource, relativeToRepoRoot, resolveTsxRelative } from './_lib/import-graph-walk.mjs';
+import { readStrippedSource, relativeToRepoRoot } from './_lib/import-graph-walk.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
-// .dockerignore rules in file order; the last matching rule wins, and a
-// pattern that matches a directory excludes everything beneath it.
+// One path segment of a Go filepath.Match pattern: `*`, `?`, `[...]` classes
+// (`[!...]` / `[^...]` negate) and `\` escapes.
+function segmentToRegex(seg) {
+  let out = '';
+  for (let i = 0; i < seg.length; i++) {
+    const c = seg[i];
+    if (c === '*') out += '[^/]*';
+    else if (c === '?') out += '[^/]';
+    else if (c === '\\' && i + 1 < seg.length) out += seg[++i].replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
+    else if (c === '[') {
+      const end = seg.indexOf(']', i + 2);
+      if (end === -1) { out += '\\['; continue; }
+      let body = seg.slice(i + 1, end);
+      if (body[0] === '!') body = `^${body.slice(1)}`;
+      out += `[${body.replace(/\\(?!.)/g, '\\\\')}]`;
+      i = end;
+    } else out += c.replace(/[.+^${}()|\]\\/]/g, '\\$&');
+  }
+  return out;
+}
+
+// .dockerignore rules in file order; the last matching rule wins, a pattern
+// that matches a directory excludes everything beneath it, and a `**` segment
+// spans any number of directories, including zero.
 function parseDockerignore(src) {
   return src.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).map((line) => {
     const negate = line.startsWith('!');
-    const pattern = (negate ? line.slice(1) : line).replace(/^\/+/, '').replace(/\/+$/, '');
-    const re = pattern.split('/').map((seg) => (seg === '**' ? '.*' : seg
-      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*/g, '[^/]*')
-      .replace(/\?/g, '[^/]'))).join('/');
+    const segs = (negate ? line.slice(1) : line).replace(/^\/+/, '').replace(/\/+$/, '').split('/');
+    let re = '';
+    segs.forEach((seg, i) => {
+      const last = i === segs.length - 1;
+      if (seg === '**') re += last ? '.*' : '(?:.*/)?';
+      else re += segmentToRegex(seg) + (last ? '' : '/');
+    });
     return { negate, re: new RegExp(`^${re}$`) };
   });
 }
@@ -65,6 +90,35 @@ function listSources(dir, out = []) {
   return out;
 }
 
+// TypeScript's bundler resolution for relative specifiers, including .tsx
+// and the `.js` → `.ts` source mapping.
+function resolveTsRelative(fromFile, spec) {
+  const base = resolve(dirname(fromFile), spec);
+  const candidates = [base, ...['.ts', '.tsx', '.mts', '.d.ts', '.js', '.mjs', '.json'].map((ext) => base + ext),
+    ...['index.ts', 'index.tsx', 'index.js', 'index.mjs'].map((ix) => join(base, ix))];
+  if (/\.m?js$/.test(spec)) candidates.push(base.replace(/\.js$/, '.ts'), base.replace(/\.js$/, '.tsx'), base.replace(/\.mjs$/, '.mts'));
+  return candidates.find((p) => existsSync(p) && statSync(p).isFile()) ?? null;
+}
+
+// Walk the whole relative-import graph tsc follows from the entry files, not
+// just the entries: a src → shared → tests chain breaks the image build too.
+function findOffenders(repoRoot, entries, rules) {
+  const offenders = [];
+  const seen = new Set(entries);
+  const queue = [...entries];
+  while (queue.length) {
+    const file = queue.shift();
+    for (const spec of relativeSpecs(file)) {
+      const target = resolveTsRelative(file, spec);
+      if (!target) continue;
+      const rel = relativeToRepoRoot(repoRoot, target);
+      if (rel && isExcluded(rules, rel)) offenders.push(`${relativeToRepoRoot(repoRoot, file)} → ${rel}`);
+      else if (!seen.has(target) && /\.(ts|tsx|mts|js|mjs)$/.test(target)) { seen.add(target); queue.push(target); }
+    }
+  }
+  return offenders;
+}
+
 describe('docker/Dockerfile — tsc inputs stay inside the build context', () => {
   const rules = parseDockerignore(readFileSync(resolve(root, '.dockerignore'), 'utf-8'));
   const tsconfig = JSON.parse(readFileSync(resolve(root, 'tsconfig.json'), 'utf-8'));
@@ -84,16 +138,37 @@ describe('docker/Dockerfile — tsc inputs stay inside the build context', () =>
     assert.equal(isExcluded(rules, '.github/CODEOWNERS'), true);
   });
 
-  it('no type-checked file imports a path .dockerignore drops', () => {
-    const offenders = [];
-    for (const file of files) {
-      for (const spec of relativeSpecs(file)) {
-        const target = resolveTsxRelative(file, spec);
-        if (!target) continue;
-        const rel = relativeToRepoRoot(root, target);
-        if (rel && isExcluded(rules, rel)) offenders.push(`${relativeToRepoRoot(root, file)} → ${rel}`);
-      }
+  it('`**/` matches zero directories and `[...]` is a character class, as in Docker', () => {
+    const r = parseDockerignore('**/fixtures\ntests/**/fixture.ts\nlogs/[ab].txt');
+    assert.equal(isExcluded(r, 'fixtures/a.ts'), true);
+    assert.equal(isExcluded(r, 'src/deep/fixtures/a.ts'), true);
+    assert.equal(isExcluded(r, 'tests/fixture.ts'), true);
+    assert.equal(isExcluded(r, 'tests/a/b/fixture.ts'), true);
+    assert.equal(isExcluded(r, 'logs/a.txt'), true);
+    assert.equal(isExcluded(r, 'logs/c.txt'), false);
+  });
+
+  it('follows imports transitively and resolves .tsx targets', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'docker-ctx-'));
+    try {
+      const put = (rel, body) => { mkdirSync(dirname(join(tmp, rel)), { recursive: true }); writeFileSync(join(tmp, rel), body); };
+      put('src/app.ts', "import { helper } from '../shared/helper';\nimport View from './view';\n");
+      put('src/view.tsx', "import { widget } from '../tests/fixtures/widget';\nexport default widget;\n");
+      put('shared/helper.ts', "export { fixture as helper } from '../tests/fixtures/data';\n");
+      put('tests/fixtures/data.ts', 'export const fixture = 1;\n');
+      put('tests/fixtures/widget.tsx', 'export const widget = 1;\n');
+      put('tests/fixtures/unused.ts', "import '../../src/app';\n");
+      const offenders = findOffenders(tmp, [join(tmp, 'src/app.ts')], parseDockerignore('tests'));
+      assert.deepEqual(offenders.sort(), [
+        'shared/helper.ts → tests/fixtures/data.ts',
+        'src/view.tsx → tests/fixtures/widget.tsx',
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
     }
-    assert.deepEqual(offenders, [], 'these imports resolve locally but are missing from the Docker build context; move the target under src/ or shared/');
+  });
+
+  it('no type-checked file imports a path .dockerignore drops', () => {
+    assert.deepEqual(findOffenders(root, files, rules), [], 'these imports resolve locally but are missing from the Docker build context; move the target under src/ or shared/');
   });
 });
