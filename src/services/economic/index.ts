@@ -12,7 +12,7 @@ import { premiumFetch } from '@/services/premium-fetch';
 import type { GetFredSeriesResponse, GetFredSeriesBatchResponse, ListWorldBankIndicatorsResponse, WorldBankCountryData as ProtoWorldBankCountryData, GetEnergyPricesResponse, EnergyPrice as ProtoEnergyPrice, GetEnergyCapacityResponse, GetBisPolicyRatesResponse, GetBisExchangeRatesResponse, GetBisCreditResponse, GetChinaMacroSnapshotResponse, BisPolicyRate, BisExchangeRate, BisCreditToGdp, GetNationalDebtResponse, NationalDebtEntry, GetBlsSeriesResponse, GetCrudeInventoriesResponse, CrudeInventoryWeek, GetNatGasStorageResponse, NatGasStorageWeek, GetEcbFxRatesResponse, EcbFxRate, GetEuGasStorageResponse, EuGasStorageHistoryEntry, GetEurostatCountryDataResponse, EurostatCountryEntry, GetOilStocksAnalysisResponse, OilStocksAnalysisMember, OilStocksRegionalSummary, OilStocksRegionalSummaryEurope, OilStocksRegionalSummaryAsiaPacific, OilStocksRegionalSummaryNorthAmerica } from '@/generated/client/worldmonitor/economic/v1/service_client';
 import { createCircuitBreaker } from '@/utils/circuit-breaker';
 import { getCSSColor } from '@/utils';
-import { isFeatureAvailable, isFeatureEnabled } from '../runtime-config';
+import { isFeatureAvailable } from '../runtime-config';
 import { dataFreshness } from '../data-freshness';
 import { ensureHydrated, getHydratedData } from '@/services/bootstrap';
 import { mergeCbrPolicyRate } from './cbr-policy-rate';
@@ -415,14 +415,12 @@ export function getTrendColor(trend: OilMetric['trend'], inverse = false): strin
 export type { CrudeInventoryWeek };
 
 export async function fetchCrudeInventoriesRpc(): Promise<GetCrudeInventoriesResponse> {
-  if (!isFeatureEnabled('energyEia')) return emptyCrudeFallback;
-  // The public bootstrap snapshot needs no cloud access; the refresh does (#5829).
+  if (!isFeatureAvailable('energyEia')) return emptyCrudeFallback;
   const hydrated = getHydratedData('crudeInventories') as GetCrudeInventoriesResponse | undefined;
   if (hydrated?.weeks?.length) {
     crudeBreaker.recordSuccess(hydrated);
     return hydrated;
   }
-  if (!isFeatureAvailable('energyEia')) return crudeBreaker.getCachedOrDefaultStale(emptyCrudeFallback);
 
   try {
     return await crudeBreaker.execute(async () => {
@@ -440,14 +438,12 @@ export async function fetchCrudeInventoriesRpc(): Promise<GetCrudeInventoriesRes
 export type { NatGasStorageWeek };
 
 export async function fetchNatGasStorageRpc(): Promise<GetNatGasStorageResponse> {
-  if (!isFeatureEnabled('energyEia')) return emptyNatGasFallback;
-  // The public bootstrap snapshot needs no cloud access; the refresh does (#5829).
+  if (!isFeatureAvailable('energyEia')) return emptyNatGasFallback;
   const hydrated = getHydratedData('natGasStorage') as GetNatGasStorageResponse | undefined;
   if (hydrated?.weeks?.length) {
     natGasBreaker.recordSuccess(hydrated);
     return hydrated;
   }
-  if (!isFeatureAvailable('energyEia')) return natGasBreaker.getCachedOrDefaultStale(emptyNatGasFallback);
 
   try {
     return await natGasBreaker.execute(async () => {
