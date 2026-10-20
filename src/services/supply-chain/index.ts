@@ -4,7 +4,7 @@ import type { CargoType } from '@/config/bypass-corridors';
 import type { GetShippingRatesResponse, GetChokepointStatusResponse, GetChokepointHistoryResponse, GetCriticalMineralsResponse, GetMineralProductionResponse, GetShippingStressResponse, GetCountryChokepointIndexResponse, GetBypassOptionsResponse, GetCountryCostShockResponse, GetCountryProductsResponse, GetMultiSectorCostShockResponse, GetSectorDependencyResponse, GetRouteExplorerLaneResponse, GetRouteImpactResponse, GetCountryVulnerabilitiesResponse, GetChokepointDependenciesResponse, ListVulnerabilityRankingsResponse, ShippingIndex, ChokepointInfo, CriticalMineral, MineralProducer, ShippingRatePoint, ChokepointExposureEntry, BypassOption, TransitDayCount, CountryProduct, ProductExporter, MultiSectorCostShock, CommodityVulnerability, ChokepointDependency, VulnerabilityInput } from '@/generated/client/worldmonitor/supply_chain/v1/service_client';
 import { createCircuitBreaker } from '@/utils/circuit-breaker';
 import { getHydratedData } from '@/services/bootstrap';
-import { isFeatureAvailable, isFeatureEnabled } from '@/services/runtime-config';
+import { isFeatureAvailable } from '@/services/runtime-config';
 import { createHydrationHandoff } from '@/services/hydration-handoff';
 import { hasPremiumAccess } from '@/services/panel-gating';
 import { combineAbortSignals, createTimeoutSignal } from '@/services/timeout-signal';
@@ -135,7 +135,6 @@ export async function fetchChinaCorridorControlTowers(): Promise<ChinaCorridorCo
 }
 
 export async function fetchShippingRates(): Promise<GetShippingRatesResponse> {
-  if (!isFeatureEnabled('supplyChain')) return emptyShipping;
   const hydrated = getHydratedData('shippingRates') as GetShippingRatesResponse | undefined;
   if (hydrated?.indices?.length) {
     shippingBreaker.recordSuccess(hydrated);

@@ -64,9 +64,8 @@ export interface RuntimeFeatureDefinition {
   desktopRequiredSecrets?: RuntimeSecretKey[];
   /**
    * The sidecar always sends this feature's routes to the cloud, where no local
-   * vendor key is read and a keyless desktop gets a 401. A signed-in Pro desktop
-   * reaches them with its cloud session; otherwise only a WorldMonitor API key,
-   * which the sidecar forwards, can (#5829).
+   * key is read and a keyless desktop gets a 401. A signed-in Pro desktop reaches
+   * them with its cloud session, so that session makes the feature available (#5829).
    */
   desktopCloudServed?: boolean;
   fallback: string;
@@ -154,7 +153,6 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'FRED economic indicators',
     description: 'Macro indicators from Federal Reserve Economic Data.',
     requiredSecrets: ['FRED_API_KEY'],
-    desktopRequiredSecrets: ['WORLDMONITOR_API_KEY'],
     desktopCloudServed: true,
     fallback: 'Economic panel remains available with non-FRED metrics.',
   },
@@ -163,7 +161,6 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'EIA oil analytics',
     description: 'US Energy Information Administration oil metrics.',
     requiredSecrets: ['EIA_API_KEY'],
-    desktopRequiredSecrets: ['WORLDMONITOR_API_KEY'],
     desktopCloudServed: true,
     fallback: 'Oil analytics cards show disabled state.',
   },
@@ -172,7 +169,6 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'Cloudflare outage radar',
     description: 'Internet outages from Cloudflare Radar annotations API.',
     requiredSecrets: ['CLOUDFLARE_API_TOKEN'],
-    desktopRequiredSecrets: ['WORLDMONITOR_API_KEY'],
     desktopCloudServed: true,
     fallback: 'Outage layer is disabled and map continues with other feeds.',
   },
@@ -260,7 +256,6 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'WTO trade policy data',
     description: 'Trade restrictions, tariff trends, barriers, and flows from WTO.',
     requiredSecrets: ['WTO_API_KEY'],
-    desktopRequiredSecrets: ['WORLDMONITOR_API_KEY'],
     desktopCloudServed: true,
     fallback: 'Trade policy panel shows disabled state.',
   },
@@ -269,7 +264,6 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'Supply Chain Intelligence',
     description: 'Shipping rates via FRED Baltic Dry Index. Chokepoints and minerals use public data.',
     requiredSecrets: ['FRED_API_KEY'],
-    desktopRequiredSecrets: ['WORLDMONITOR_API_KEY'],
     desktopCloudServed: true,
     fallback: 'Chokepoints and minerals always available; shipping requires FRED key.',
   },
