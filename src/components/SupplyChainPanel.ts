@@ -215,6 +215,8 @@ export class SupplyChainPanel extends Panel {
   }
 
   public updateShippingRates(data: GetShippingRatesResponse): void {
+    // A refresh that started before supply chain was turned off must not restore it.
+    if (!isFeatureEnabled('supplyChain')) return;
     this.shippingData = data;
     this.render();
   }
