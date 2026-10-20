@@ -96,6 +96,7 @@ describe('get_natural_disasters geo and time filters', () => {
       area: { kind: 'radius', lat: ATHENS.lat, lon: ATHENS.lon, radius_km: 100 },
       since_days: null,
       excluded: { fires: { without_location: 1, without_time: 0 } },
+      oldest_held: {},
     });
     assert.ok(outputValidator('get_natural_disasters')(result), 'advertised outputSchema accepts geo_filter');
   });
@@ -125,6 +126,14 @@ describe('get_natural_disasters geo and time filters', () => {
   it('since_days keeps rows dated within the window', async () => {
     const result = await disasters({ dataset: ['wildfires'], since_days: 1 });
     assert.deepEqual(ids(result.data.fires.fireDetections), ['sydney', 'parnitha', 'kalamos-99km', 'lamia-101km', 'unlocated']);
+    assert.deepEqual(result.data.geo_filter.oldest_held, {}, 'a one-day window is covered by the held rows');
+  });
+
+  it('since_days wider than the held rows names the oldest held row instead of implying full coverage', async () => {
+    const result = await disasters({ dataset: ['wildfires'], since_days: 365 });
+    const times = result.data.fires.fireDetections.map(row => row.detectedAt).filter(time => time > 0);
+    assert.deepEqual(result.data.geo_filter.oldest_held, { fires: Math.min(...times) });
+    assert.ok(outputValidator('get_natural_disasters')(result), 'advertised outputSchema accepts oldest_held');
   });
 });
 
@@ -138,6 +147,7 @@ describe('get_conflict_events geo and time filters', () => {
       area: { kind: 'bbox', sw_lat: 47, sw_lon: 36, ne_lat: 49, ne_lon: 39 },
       since_days: null,
       excluded: { events: { without_location: 1, without_time: 0 } },
+      oldest_held: {},
     });
     assert.ok(outputValidator('get_conflict_events')(result), 'advertised outputSchema accepts geo_filter');
   });

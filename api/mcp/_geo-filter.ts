@@ -13,6 +13,7 @@ export type GeoFilterReport = {
   area: Record<string, number | string> | null;
   since_days: number | null;
   excluded: Record<string, Exclusions>;
+  oldest_held: Record<string, number>;
 };
 
 const DAY_MS = 86_400_000;
@@ -125,6 +126,7 @@ export function filterRows<T>(rows: T[], locate: RowLocator, filter: EventFilter
   const cutoff = filter.sinceMs === null ? null : now - filter.sinceMs;
   let withoutLocation = 0;
   let withoutTime = 0;
+  let oldest: number | null = null;
   const kept = rows.filter((row) => {
     let keep = true;
     if (filter.area) {
@@ -135,11 +137,14 @@ export function filterRows<T>(rows: T[], locate: RowLocator, filter: EventFilter
     if (cutoff !== null) {
       const time = record(row) ? locate.time(row) : null;
       if (time === null) withoutTime++;
+      else if (oldest === null || time < oldest) oldest = time;
       keep = keep && time !== null && time >= cutoff;
     }
     return keep;
   });
-  return { rows: kept, withoutLocation, withoutTime };
+  // The list does not reach back to the cutoff, so the window is wider than what is held.
+  const heldFrom = cutoff !== null && oldest !== null && oldest > cutoff ? oldest : null;
+  return { rows: kept, withoutLocation, withoutTime, heldFrom };
 }
 
 function areaReport(area: GeoArea | null): GeoFilterReport['area'] {
@@ -154,6 +159,7 @@ export function filterEventLists(data: Row, lists: readonly EventList[], params:
   const filter = parseEventFilter(params, toolName);
   if (!filter.area && filter.sinceMs === null) return null;
   const excluded: Record<string, Exclusions> = {};
+  const oldestHeld: Record<string, number> = {};
   for (const { label, list, locator: locate } of lists) {
     const bucket = data[label];
     if (!record(bucket) || !Array.isArray(bucket[list])) continue;
@@ -162,20 +168,22 @@ export function filterEventLists(data: Row, lists: readonly EventList[], params:
     if (result.withoutLocation || result.withoutTime) {
       excluded[label] = { without_location: result.withoutLocation, without_time: result.withoutTime };
     }
+    if (result.heldFrom !== null) oldestHeld[label] = result.heldFrom;
   }
-  return { area: areaReport(filter.area), since_days: filter.sinceMs === null ? null : filter.sinceMs / DAY_MS, excluded };
+  return { area: areaReport(filter.area), since_days: filter.sinceMs === null ? null : filter.sinceMs / DAY_MS, excluded, oldest_held: oldestHeld };
 }
 
 // Reports exclusions only for lists the response still carries.
 export function attachGeoFilter(out: Row, report: GeoFilterReport | null): Row {
   if (!report) return out;
-  out.geo_filter = { ...report, excluded: Object.fromEntries(Object.entries(report.excluded).filter(([label]) => label in out)) };
+  const carried = <T>(map: Record<string, T>) => Object.fromEntries(Object.entries(map).filter(([label]) => label in out));
+  out.geo_filter = { ...report, excluded: carried(report.excluded), oldest_held: carried(report.oldest_held) };
   return out;
 }
 
 export const GEO_FILTER_OUTPUT_SCHEMA = {
   type: 'object',
-  description: 'Present only when bbox, lat/lon/radius_km or since_days was passed. excluded counts rows dropped per list for lacking coordinates or a date.',
+  description: 'Present only when bbox, lat/lon/radius_km or since_days was passed. excluded counts rows dropped per list for lacking coordinates or a date. oldest_held names lists whose oldest dated row is newer than the since_days cutoff: the window is wider than the data held.',
   properties: {
     area: { type: ['object', 'null'], properties: {
       kind: { enum: ['bbox', 'radius'] },
@@ -186,5 +194,6 @@ export const GEO_FILTER_OUTPUT_SCHEMA = {
     excluded: { type: 'object', additionalProperties: { type: 'object', properties: {
       without_location: { type: 'integer', minimum: 0 }, without_time: { type: 'integer', minimum: 0 },
     } } },
+    oldest_held: { type: 'object', description: 'Epoch milliseconds of the oldest dated row per list, when that is newer than the cutoff.', additionalProperties: { type: 'integer' } },
   },
 };
