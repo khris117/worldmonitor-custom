@@ -218,6 +218,21 @@ describe('dedicated panel filters apply the same geo rules', () => {
   });
 });
 
+describe('oldest_held describes the stored lists', () => {
+  it('ignores rows dropped by other filters when deciding the window is wider than the data held', async () => {
+    store.get('conflict:ucdp-events:v1').events.find(row => row.id === 'old-horlivka').deathsBest = 0;
+    const result = await conflict({ min_fatalities: 1, since_days: 7 });
+    assert.ok(!ids(result.data['ucdp-events'].events).includes('old-horlivka'));
+    assert.equal('ucdp-events' in result.data.geo_filter.oldest_held, false, 'the stored UCDP list reaches past the 7-day cutoff');
+  });
+
+  it('still names a list whose stored rows are all newer than the cutoff', async () => {
+    const result = await conflict({ min_fatalities: 1, since_days: 30 });
+    const stored = Math.min(...store.get('conflict:ucdp-events:v1').events.map(row => row.dateStart));
+    assert.equal(result.data.geo_filter.oldest_held['ucdp-events'], stored);
+  });
+});
+
 describe('geo filter exclusion counts', () => {
   const at = (latitude, longitude) => ({ latitude, longitude });
   const locate = locator(locationPoint, 'occurredAt');

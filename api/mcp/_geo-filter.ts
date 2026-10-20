@@ -128,7 +128,6 @@ export function filterRows<T>(rows: T[], locate: RowLocator, filter: EventFilter
   const cutoff = filter.sinceMs === null ? null : now - filter.sinceMs;
   let withoutLocation = 0;
   let withoutTime = 0;
-  let oldest: number | null = null;
   const kept = rows.filter((row) => {
     let keep = true;
     if (filter.area) {
@@ -140,15 +139,12 @@ export function filterRows<T>(rows: T[], locate: RowLocator, filter: EventFilter
       const time = record(row) ? locate.time(row) : null;
       // Count a missing date only for rows the area kept, so the count never
       // blames distant or unlocated rows on their dates.
-      if (time === null) { if (keep) withoutTime++; }
-      else if (oldest === null || time < oldest) oldest = time;
+      if (time === null && keep) withoutTime++;
       keep = keep && time !== null && time >= cutoff;
     }
     return keep;
   });
-  // The list does not reach back to the cutoff, so the window is wider than what is held.
-  const heldFrom = cutoff !== null && oldest !== null && oldest > cutoff ? oldest : null;
-  return { rows: kept, withoutLocation, withoutTime, heldFrom };
+  return { rows: kept, withoutLocation, withoutTime };
 }
 
 function areaReport(area: GeoArea | null): GeoFilterReport['area'] {
@@ -158,23 +154,47 @@ function areaReport(area: GeoArea | null): GeoFilterReport['area'] {
     : { kind: 'radius', lat: area.lat, lon: area.lon, radius_km: area.radiusKm };
 }
 
+function listRows(data: Row, { label, list, within }: EventList): unknown[] | null {
+  const parent = data[label];
+  const bucket = within === undefined ? parent : record(parent) ? parent[within] : undefined;
+  return record(bucket) && Array.isArray(bucket[list]) ? bucket[list] as unknown[] : null;
+}
+
+const listKey = ({ label, within }: EventList) => within === undefined ? label : `${label}.${within}`;
+
+// The oldest dated row per list, read before any other filter narrows the
+// lists, so oldest_held describes what is stored rather than what matched.
+export function oldestDatedRows(data: Row, lists: readonly EventList[]): Record<string, number> {
+  const oldest: Record<string, number> = {};
+  for (const entry of lists) {
+    for (const row of listRows(data, entry) ?? []) {
+      const time = record(row) ? entry.locator.time(row) : null;
+      const key = listKey(entry);
+      if (time !== null && (oldest[key] === undefined || time < oldest[key]!)) oldest[key] = time;
+    }
+  }
+  return oldest;
+}
+
 // Narrows each list in place. Returns null when no geo or time argument was passed.
-export function filterEventLists(data: Row, lists: readonly EventList[], params: Row, toolName: string, now = Date.now()): GeoFilterReport | null {
+export function filterEventLists(data: Row, lists: readonly EventList[], params: Row, toolName: string, stored: Record<string, number>, now = Date.now()): GeoFilterReport | null {
   const filter = parseEventFilter(params, toolName);
   if (!filter.area && filter.sinceMs === null) return null;
   const excluded: Record<string, Exclusions> = {};
   const oldestHeld: Record<string, number> = {};
-  for (const { label, list, locator: locate, within } of lists) {
-    const parent = data[label];
-    const bucket = within === undefined ? parent : record(parent) ? parent[within] : undefined;
-    if (!record(bucket) || !Array.isArray(bucket[list])) continue;
-    const key = within === undefined ? label : `${label}.${within}`;
-    const result = filterRows(bucket[list] as unknown[], locate, filter, now);
-    bucket[list] = result.rows;
+  const cutoff = filter.sinceMs === null ? null : now - filter.sinceMs;
+  for (const entry of lists) {
+    const rows = listRows(data, entry);
+    if (rows === null) continue;
+    const key = listKey(entry);
+    const result = filterRows(rows, entry.locator, filter, now);
+    const parent = data[entry.label] as Row;
+    (entry.within === undefined ? parent : parent[entry.within] as Row)[entry.list] = result.rows;
     if (result.withoutLocation || result.withoutTime) {
       excluded[key] = { without_location: result.withoutLocation, without_time: result.withoutTime };
     }
-    if (result.heldFrom !== null) oldestHeld[key] = result.heldFrom;
+    // The stored list does not reach back to the cutoff: the window is wider than what is held.
+    if (cutoff !== null && stored[key] !== undefined && stored[key]! > cutoff) oldestHeld[key] = stored[key]!;
   }
   return { area: areaReport(filter.area), since_days: filter.sinceMs === null ? null : filter.sinceMs / DAY_MS, excluded, oldest_held: oldestHeld };
 }

@@ -8,7 +8,7 @@ import { MARKET_ASSET_CLASSES } from '../../../shared/panel-admission';
 import { normalizeSocialVelocity } from '../../_social-velocity.js';
 import { projectNaturalEventsRetention } from '../../_natural-events-dashboard.js';
 import { NATURAL_DISASTER_EVENT_LISTS, presentNaturalDisastersPanel } from '../_natural-disasters-reuse';
-import { GEO_FILTER_OUTPUT_SCHEMA, GEO_FILTER_PROPERTIES, attachGeoFilter, filterEventLists, locationPoint, locator, parseEventFilter, pointAt, type EventList } from '../_geo-filter';
+import { GEO_FILTER_OUTPUT_SCHEMA, GEO_FILTER_PROPERTIES, attachGeoFilter, filterEventLists, locationPoint, locator, oldestDatedRows, parseEventFilter, pointAt, type EventList } from '../_geo-filter';
 import { CHINA_MACRO_REQUIRED_SERIES } from '../../../shared/china-macro-contract.js';
 import {
   normalizeChinaMacroObservations,
@@ -318,6 +318,7 @@ function filterConflictEvents(data: Record<string, unknown>, params: Record<stri
   const country = argStr(params.country);
   const minFatal = argNum(params.min_fatalities);
   const limit = argNum(params.limit) ?? DEFAULT_LIST_LIMIT;
+  const stored = oldestDatedRows(data, CONFLICT_EVENT_LOCATED_LISTS);
   if (country) {
     narrowNested(data, 'ucdp-events', 'events', (e) => ciIncludes(e.country, country));
     narrowNested(data, 'events', 'events', (e) => ciIncludes(e.country, country));
@@ -327,7 +328,7 @@ function filterConflictEvents(data: Record<string, unknown>, params: Record<stri
     narrowNested(data, 'ucdp-events', 'events', (e) => (argNum(e.deathsBest) ?? 0) >= minFatal);
     narrowNested(data, 'events', 'events', (e) => (argNum(e.fatalities) ?? 0) >= minFatal);
   }
-  const geo = filterEventLists(data, CONFLICT_EVENT_LOCATED_LISTS, params, 'get_conflict_events');
+  const geo = filterEventLists(data, CONFLICT_EVENT_LOCATED_LISTS, params, 'get_conflict_events', stored);
   for (const label of CONFLICT_EVENT_LISTS) capNested(data, label, 'events', limit);
   return attachGeoFilter(data, geo);
 }
@@ -1768,13 +1769,14 @@ export const CACHE_TOOLS: ToolDef[] = [
     _postFilter: (data, params) => {
       const minMag = argNum(params.min_magnitude);
       data.events = projectNaturalEventsRetention(data.events);
+      const stored = oldestDatedRows(data, NATURAL_DISASTER_EVENT_LISTS);
       const limit = (argNum(params.limit) ?? DEFAULT_LIST_LIMIT);
       if (minMag != null) {
         narrowNested(data, 'earthquakes', 'earthquakes', (q) => (argNum(q.magnitude) ?? 0) >= minMag);
         narrowNested(data, 'events', 'events', (e) => (argNum(e.magnitude) ?? 0) >= minMag);
       }
       if (argBool(params.active_only)) narrowNested(data, 'events', 'events', (e) => e.closed === false);
-      const geo = filterEventLists(data, NATURAL_DISASTER_EVENT_LISTS, params, 'get_natural_disasters');
+      const geo = filterEventLists(data, NATURAL_DISASTER_EVENT_LISTS, params, 'get_natural_disasters', stored);
       capNested(data, 'earthquakes', 'earthquakes', limit);
       capNested(data, 'fires', 'fireDetections', limit);
       capNested(data, 'events', 'events', limit);

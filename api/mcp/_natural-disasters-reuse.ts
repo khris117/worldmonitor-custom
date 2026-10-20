@@ -1,7 +1,7 @@
 import { argBool, argNum, argStrList, capNested, selectDatasets } from './filters';
 import { DEFAULT_LIST_LIMIT } from './constants';
 import { compactNaturalEventsDashboardPayload, projectNaturalEventsRetention } from '../_natural-events-dashboard.js';
-import { attachGeoFilter, filterEventLists, locationPoint, locator, pointAt, type EventList } from './_geo-filter';
+import { attachGeoFilter, filterEventLists, locationPoint, locator, oldestDatedRows, pointAt, type EventList } from './_geo-filter';
 
 export type NaturalDisastersPanelRead = { value: unknown; reuseUntil: number | null };
 
@@ -99,6 +99,8 @@ export function filterNaturalDisastersPanelData(data: Record<string, unknown>, a
     const bucket = data[source.label];
     return record(bucket) && validRows(bucket[source.list]);
   });
+  const located = [...usable, ...(usable.includes(SOURCES.other) ? REGIONAL_EVENT_LISTS : [])];
+  const stored = oldestDatedRows(data, located);
   for (const source of usable) {
     const bucket = data[source.label] as Record<string, unknown>;
     let rows = bucket[source.list] as Record<string, unknown>[];
@@ -106,7 +108,7 @@ export function filterNaturalDisastersPanelData(data: Record<string, unknown>, a
     if (source.label === 'events' && argBool(args.active_only)) rows = rows.filter(row => row.closed === false);
     bucket[source.list] = rows;
   }
-  const geo = filterEventLists(data, [...usable, ...(usable.includes(SOURCES.other) ? REGIONAL_EVENT_LISTS : [])], args, 'get_natural_disasters');
+  const geo = filterEventLists(data, located, args, 'get_natural_disasters', stored);
   for (const source of usable) capNested(data, source.label, source.list, limit);
   const labels = argStrList(args.dataset).map(value => SOURCES[value as keyof typeof SOURCES]?.label).filter((value): value is 'earthquakes' | 'fires' | 'events' => value !== undefined);
   return attachGeoFilter(labels.length ? selectDatasets(data, labels) : data, geo);
