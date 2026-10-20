@@ -147,6 +147,8 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'FRED economic indicators',
     description: 'Macro indicators from Federal Reserve Economic Data.',
     requiredSecrets: ['FRED_API_KEY'],
+    // Desktop reads this from the cloud seed cache; no local key is used (#5829).
+    desktopRequiredSecrets: [],
     fallback: 'Economic panel remains available with non-FRED metrics.',
   },
   {

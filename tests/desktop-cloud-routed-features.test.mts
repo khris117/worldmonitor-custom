@@ -24,6 +24,9 @@ const CLOUD_ROUTED: Record<string, string[]> = {
     '/api/economic/v1/get-nat-gas-storage',
     '/api/economic/v1/get-energy-capacity',
   ],
+  economicFred: ['/api/economic/v1/get-fred-series-batch', '/api/economic/v1/get-fred-series'],
+  // get-tariff-trends is left out: it is Pro-gated and goes through
+  // premiumFetch, so a free desktop gets an empty result and no Tariffs tab, as on web.
   wtoTrade: [
     '/api/trade/v1/get-trade-restrictions',
     '/api/trade/v1/get-trade-flows',
