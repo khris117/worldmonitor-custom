@@ -7,7 +7,9 @@ export type EventFilter = { area: GeoArea | null; sinceMs: number | null };
 type Row = Record<string, unknown>;
 type Point = { lat: number; lon: number };
 export type RowLocator = { point(row: Row): Point | null; time(row: Row): number | null };
-export type EventList = { label: string; list: string; locator: RowLocator };
+// `within` names an object inside the bucket that holds the list, for regional
+// sub-lists such as events.westernPacific.events. Reported as `label.within`.
+export type EventList = { label: string; list: string; locator: RowLocator; within?: string };
 type Exclusions = { without_location: number; without_time: number };
 export type GeoFilterReport = {
   area: Record<string, number | string> | null;
@@ -160,15 +162,17 @@ export function filterEventLists(data: Row, lists: readonly EventList[], params:
   if (!filter.area && filter.sinceMs === null) return null;
   const excluded: Record<string, Exclusions> = {};
   const oldestHeld: Record<string, number> = {};
-  for (const { label, list, locator: locate } of lists) {
-    const bucket = data[label];
+  for (const { label, list, locator: locate, within } of lists) {
+    const parent = data[label];
+    const bucket = within === undefined ? parent : record(parent) ? parent[within] : undefined;
     if (!record(bucket) || !Array.isArray(bucket[list])) continue;
+    const key = within === undefined ? label : `${label}.${within}`;
     const result = filterRows(bucket[list] as unknown[], locate, filter, now);
     bucket[list] = result.rows;
     if (result.withoutLocation || result.withoutTime) {
-      excluded[label] = { without_location: result.withoutLocation, without_time: result.withoutTime };
+      excluded[key] = { without_location: result.withoutLocation, without_time: result.withoutTime };
     }
-    if (result.heldFrom !== null) oldestHeld[label] = result.heldFrom;
+    if (result.heldFrom !== null) oldestHeld[key] = result.heldFrom;
   }
   return { area: areaReport(filter.area), since_days: filter.sinceMs === null ? null : filter.sinceMs / DAY_MS, excluded, oldest_held: oldestHeld };
 }
@@ -176,7 +180,7 @@ export function filterEventLists(data: Row, lists: readonly EventList[], params:
 // Reports exclusions only for lists the response still carries.
 export function attachGeoFilter(out: Row, report: GeoFilterReport | null): Row {
   if (!report) return out;
-  const carried = <T>(map: Record<string, T>) => Object.fromEntries(Object.entries(map).filter(([label]) => label in out));
+  const carried = <T>(map: Record<string, T>) => Object.fromEntries(Object.entries(map).filter(([key]) => key.split('.')[0]! in out));
   out.geo_filter = { ...report, excluded: carried(report.excluded), oldest_held: carried(report.oldest_held) };
   return out;
 }

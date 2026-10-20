@@ -57,7 +57,11 @@ function seed() {
     'natural:events:v1': { events: [
       { id: 'storm', title: 'Storm', category: 'severeStorms', lat: 14.0, lon: 120.0, date: ago(1), closed: false },
       { id: 'tonga-volcano', title: 'Volcano', category: 'volcanoes', lat: -20.55, lon: -175.39, date: ago(2), closed: false },
-    ] },
+    ], westernPacific: { dataAvailable: true, events: [
+      { id: 'cyclone:wp', title: 'Typhoon', category: 'severeStorms', lat: 21.0, lon: 120.0, date: ago(1), closed: false },
+    ] }, hkoWarnings: { dataAvailable: true, warnings: [
+      { agency: 'HKO', title: 'Hong Kong Signal 8', observedAt: ago(1), lat: 22.3193, lon: 114.1694 },
+    ] } },
   }));
   for (const key of [...store.keys()]) store.set(`seed-meta:${key.replace(/:v\d+$/, '').replace(/:sebuf:stale$/, '')}`, { fetchedAt: Date.now(), recordCount: 3 });
 }
@@ -134,6 +138,21 @@ describe('get_natural_disasters geo and time filters', () => {
     const times = result.data.fires.fireDetections.map(row => row.detectedAt).filter(time => time > 0);
     assert.deepEqual(result.data.geo_filter.oldest_held, { fires: Math.min(...times) });
     assert.ok(outputValidator('get_natural_disasters')(result), 'advertised outputSchema accepts oldest_held');
+  });
+});
+
+describe('get_natural_disasters regional sub-lists', () => {
+  it('filters the western-Pacific and HKO lists with the main event list', async () => {
+    const athens = (await disasters({ dataset: ['other'], lat: 37.98, lon: 23.73, radius_km: 100 })).data.events;
+    assert.deepEqual([athens.westernPacific.events, athens.hkoWarnings.warnings], [[], []]);
+    const hongKong = (await disasters({ dataset: ['other'], lat: 22.3, lon: 114.2, radius_km: 900 })).data.events;
+    assert.deepEqual(ids(hongKong.westernPacific.events), ['cyclone:wp']);
+    assert.equal(hongKong.hkoWarnings.warnings.length, 1);
+  });
+
+  it('applies the same filter on a dedicated panel read', () => {
+    const data = filterNaturalDisastersPanelData({ events: structuredClone(store.get('natural:events:v1')) }, { dataset: ['other'], lat: 37.98, lon: 23.73, radius_km: 100 });
+    assert.deepEqual([data.events.westernPacific.events, data.events.hkoWarnings.warnings], [[], []]);
   });
 });
 

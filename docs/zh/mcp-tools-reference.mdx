@@ -2214,7 +2214,7 @@ curl -s https://worldmonitor.app/mcp \
 | `since_days` | integer | 仅保留最近 N 天内的事件。 |
 
 - **API 端点：** `GET /api/natural/v1/list-natural-events`, `GET /api/seismology/v1/list-earthquakes`, `GET /api/wildfire/v1/list-fire-detections`
-- **区域与时间筛选：** `bbox` 需提供 `sw_lat`、`sw_lon`、`ne_lat` 和 `ne_lon`（均为必填）。请只传 `bbox`，或同时传 `lat`、`lon` 和 `radius_km` 三者；混用或只传部分半径参数会在扣除任何额度前返回 Invalid params。筛选作用于地震、火点和自然事件，在 `min_magnitude` 与 `active_only` 之后、`limit` 之前执行。缺少有效坐标（或在使用 `since_days` 时缺少日期）的行会被丢弃，`data.geo_filter.excluded` 按数据集统计这些行，避免把空结果误读为附近没有事件。当 `since_days` 早于某列表最早的带日期行时，`data.geo_filter.oldest_held` 给出该行的时间（epoch 毫秒），避免把宽时间窗误读为完整覆盖。不传这些参数时响应不含 `geo_filter`。
+- **区域与时间筛选：** `bbox` 需提供 `sw_lat`、`sw_lon`、`ne_lat` 和 `ne_lon`（均为必填）。请只传 `bbox`，或同时传 `lat`、`lon` 和 `radius_km` 三者；混用或只传部分半径参数会在扣除任何额度前返回 Invalid params。筛选作用于地震、火点和自然事件（包括区域列表 `events.westernPacific.events` 与 `events.hkoWarnings.warnings`），在 `min_magnitude` 与 `active_only` 之后、`limit` 之前执行。缺少有效坐标（或在使用 `since_days` 时缺少日期）的行会被丢弃，`data.geo_filter.excluded` 按数据集统计这些行，避免把空结果误读为附近没有事件。当 `since_days` 早于某列表最早的带日期行时，`data.geo_filter.oldest_held` 给出该行的时间（epoch 毫秒），避免把宽时间窗误读为完整覆盖。不传这些参数时响应不含 `geo_filter`。
 - **类型：** 缓存读取 — 来自 Redis 引导缓存的亚秒级响应。
 - **新鲜度预算：** 标记 `stale: true` 前最多 **30 分钟**（由 seeder cron 的预期间隔设定）。
 
