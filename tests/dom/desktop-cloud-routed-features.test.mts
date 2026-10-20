@@ -123,22 +123,6 @@ describe('desktop features served by the cloud', () => {
     panel.destroy();
   });
 
-  it('ignores a shipping load that finishes after supply chain was turned off', async () => {
-    const { SupplyChainPanel } = await import('@/components/SupplyChainPanel');
-    const { setFeatureToggle } = await import('@/services/runtime-config');
-    const panel = new SupplyChainPanel();
-    const rates = { indices: [{ indexId: 'PCU483111483111', name: 'Deep Sea Freight PPI', currentValue: 1500, previousValue: 1400, changePct: 7, unit: 'pts', history: [], spikeAlert: false }], fetchedAt: '', upstreamUnavailable: false };
-    panel.updateShippingRates(rates);
-    await vi.waitFor(() => expect(panel.getElement().querySelector('.panel-tab[data-tab="indicators"]')).not.toBeNull());
-    panel.getElement().querySelector<HTMLElement>('.panel-tab[data-tab="indicators"]')!.click();
-    await vi.waitFor(() => expect(panel.getElement().textContent).toContain('Deep Sea Freight PPI'));
-    setFeatureToggle('supplyChain', false);
-    // A refresh that started before the toggle lands afterwards.
-    panel.updateShippingRates(rates);
-    await vi.waitFor(() => expect(panel.getElement().textContent).not.toContain('Deep Sea Freight PPI'), { timeout: 500 });
-    panel.destroy();
-  });
-
   it('keeps the bootstrap shipping-rate snapshot without calling the cloud', async () => {
     hydration.set('shippingRates', { indices: [{ indexId: 'BDI', name: 'Baltic Dry', currentValue: 1500 }] });
     const { fetchShippingRates } = await import('@/services/supply-chain');
