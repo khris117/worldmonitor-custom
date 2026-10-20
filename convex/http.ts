@@ -25,7 +25,6 @@ import {
 import {
   isInvalidCursorPage,
   isInvalidPaginationCursorError,
-  paginationCursorShapeAccepted,
 } from "./paginationCursor";
 
 // App-serving hosts only, aligned with api/_cors.js and server/cors.ts.
@@ -2645,9 +2644,6 @@ http.route({
     }
     const cursor = body.cursor;
     if (cursor !== undefined && (typeof cursor !== "string" || cursor.length > 4096)) {
-      return intelJson({ error: "INVALID_CURSOR" }, 400);
-    }
-    if (typeof cursor === "string" && cursor.length > 0 && !paginationCursorShapeAccepted(cursor)) {
       return intelJson({ error: "INVALID_CURSOR" }, 400);
     }
 

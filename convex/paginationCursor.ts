@@ -1,24 +1,10 @@
 /**
- * Convex pagination cursors fail in two observable ways.
- *
- * Production cursors are hex-encoded encrypted blobs. A blob that cannot be
- * decrypted raises ErrorMetadata bad_request("InvalidCursor", "Failed to parse
- * cursor"). The message does not contain the code. convex-test cursors are
- * JSON arrays, and a bad one throws a JSON parse error from paginate().
+ * Convex reports rejected cursors through its message or structured error data.
+ * Cursors are opaque, and a generic JSON parse failure does not identify a
+ * cursor error. Keep convex-test's JSON cursor encoding out of this contract.
  */
 
 const CURSOR_ERROR_TEXT = /Failed to parse cursor|InvalidCursor/;
-const CURSOR_PARSE_TEXT = /not valid JSON|in JSON at position|Unexpected token/;
-
-export function paginationCursorShapeAccepted(cursor: string): boolean {
-  if (cursor.length === 0) return true;
-  if (cursor.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(cursor)) return true;
-  try {
-    return Array.isArray(JSON.parse(cursor));
-  } catch {
-    return false;
-  }
-}
 
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -47,8 +33,7 @@ function dataNamesInvalidCursor(data: unknown): boolean {
 
 export function isInvalidPaginationCursorError(err: unknown): boolean {
   const message = errorMessage(err);
-  if (CURSOR_ERROR_TEXT.test(message) || CURSOR_PARSE_TEXT.test(message)) return true;
-  if (err instanceof SyntaxError) return true;
+  if (CURSOR_ERROR_TEXT.test(message)) return true;
   return dataNamesInvalidCursor(errorData(err));
 }
 

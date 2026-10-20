@@ -1,8 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import {
-  isInvalidPaginationCursorError,
-  paginationCursorShapeAccepted,
-} from "./paginationCursor";
+import { isInvalidPaginationCursorError } from "./paginationCursor";
 import { internal } from "./_generated/api";
 import type { Doc } from "./_generated/dataModel";
 import {
@@ -715,9 +712,6 @@ export const timeline = internalQuery({
     const scoped = needsPostFilter
       ? query.filter((q) => q.eq(q.field("country"), args.country))
       : query;
-    if (args.cursor && !paginationCursorShapeAccepted(args.cursor)) {
-      return { records: [], partial: false, nextCursor: "", error: "INVALID_CURSOR" as const };
-    }
     let result;
     try {
       result = await scoped.paginate({
