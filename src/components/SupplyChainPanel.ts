@@ -13,7 +13,7 @@ import { SCENARIO_TEMPLATES } from '@/config/scenario-templates';
 import { TransitChart } from '@/utils/transit-chart';
 import { t } from '@/services/i18n';
 import { escapeHtml, unsafeRawHtml } from '@/utils/sanitize';
-import { isFeatureAvailable, isFeatureEnabled, subscribeRuntimeConfig } from '@/services/runtime-config';
+import { isFeatureAvailable } from '@/services/runtime-config';
 import { isDesktopRuntime } from '@/services/runtime';
 import { getAuthState, subscribeAuthState } from '@/services/auth-state';
 import { hasPremiumAccess } from '@/services/panel-gating';
@@ -61,7 +61,6 @@ function hasPublishedTransitCount(ts?: { todayTotal?: number; todayCountsAvailab
 
 export class SupplyChainPanel extends Panel {
   private shippingData: GetShippingRatesResponse | null = null;
-  private readonly unsubscribeRuntimeConfig: () => void;
   private chokepointData: GetChokepointStatusResponse | null = null;
   private mineralsData: GetCriticalMineralsResponse | null = null;
   private mineralProductionData: GetMineralProductionResponse | null = null;
@@ -97,12 +96,6 @@ export class SupplyChainPanel extends Panel {
   constructor() {
     super({ id: 'supply-chain', title: t('panels.supplyChain'), defaultRowSpan: 2, infoTooltip: t('components.supplyChain.infoTooltip') });
     bindActivationKeys(this.content, '.trade-restriction-header');
-    // Turning supply chain off drops shipping data now, not at the next refresh.
-    this.unsubscribeRuntimeConfig = subscribeRuntimeConfig(() => {
-      if (!this.shippingData || isFeatureEnabled('supplyChain')) return;
-      this.shippingData = null;
-      this.render();
-    });
     // `input` commits every keystroke; `change` additionally invalidates the run.
     // A number input fires `change` only on blur/Enter, so without the `input` half a
     // typed-but-uncommitted severity is silently reverted by any data-driven re-render
@@ -199,11 +192,6 @@ export class SupplyChainPanel extends Panel {
         return;
       }
     }
-  }
-
-  public override destroy(): void {
-    this.unsubscribeRuntimeConfig();
-    super.destroy();
   }
 
   private clearTransitChart(): void {

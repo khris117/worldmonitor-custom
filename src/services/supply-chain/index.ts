@@ -142,7 +142,7 @@ export async function fetchShippingRates(): Promise<GetShippingRatesResponse> {
     return hydrated;
   }
   // A desktop without cloud access keeps its launch snapshot; the refresh would 401 (#5829).
-  if (!isFeatureAvailable('supplyChain')) return shippingBreaker.loadCachedOrDefaultStale(emptyShipping);
+  if (!isFeatureAvailable('supplyChain')) return shippingBreaker.getCachedOrDefaultStale(emptyShipping);
 
   try {
     return await shippingBreaker.execute(async () => {

@@ -108,7 +108,7 @@ export async function fetchInternetOutages(): Promise<InternetOutage[]> {
     resp = hydrated;
   } else if (!isFeatureAvailable('internetOutages')) {
     // Keep the launch snapshot on screen; this desktop cannot refresh it.
-    resp = await outageBreaker.loadCachedOrDefaultStale(emptyOutageFallback);
+    resp = outageBreaker.getCachedOrDefaultStale(emptyOutageFallback);
     if (!resp.outages.length) {
       outagesConfigured = false;
       return [];
