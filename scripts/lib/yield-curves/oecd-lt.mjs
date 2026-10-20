@@ -18,6 +18,7 @@ export const OECD_LT_MARKETS = {
 };
 
 export const OECD_LT_TENOR = '10y';
+export const OECD_LT_MAX_CONTENT_AGE_MIN = 80 * 24 * 60;
 
 import { periodTokenToMs, tokensToContentMeta } from '../../_content-age-helpers.mjs';
 
@@ -72,7 +73,7 @@ export function oecdContentFreshness(data, now = Date.now()) {
   }));
   const unknown = observations.filter(({ at }) => at === null);
   const stale = observations.filter(({ at }) => at !== null
-    && (at > now || now - at >= 80 * 24 * 60 * 60_000));
+    && (at > now || now - at >= OECD_LT_MAX_CONTENT_AGE_MIN * 60_000));
   const oldest = observations.filter(({ at }) => at !== null)
     .sort((a, b) => a.at - b.at)[0];
   return {

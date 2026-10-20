@@ -129,9 +129,9 @@ function resolveValue(expr, src, depth = 0) {
 // health.js is the source of truth for a key's staleness gate: metaKey -> maxStaleMin.
 // An extraKey's gate is NOT the seeder's own canonical maxStaleMin — it is whatever
 // health registered for that projection's metaKey, which is frequently different.
-function readHealthStalenessGates() {
-  const health = readFileSync(join(SCRIPTS, '..', 'api', 'health.js'), 'utf8');
+function readHealthStalenessGates(health = readFileSync(join(SCRIPTS, '..', 'api', 'health.js'), 'utf8')) {
   const gates = {};
+  let parsed = 0;
   // Read maxStaleMin from the SAME object literal as the key, at that object's own
   // depth, so field order and interposed (even nested-object) properties do not matter.
   for (const m of health.matchAll(/\bkey:\s*'(seed-meta:[^']+)'/g)) {
@@ -142,6 +142,7 @@ function readHealthStalenessGates() {
     if (staleExpr == null) continue;
     const gate = resolveValue(staleExpr, health);
     if (!Number.isFinite(gate)) continue;
+    parsed += 1;
     // A seed-meta key can be registered under more than one health name (7 are today).
     // Take the LARGEST gate: that is the binding constraint for "the data must outlive
     // the gate", so a future divergence cannot silently pick the laxer one.
@@ -150,9 +151,8 @@ function readHealthStalenessGates() {
   // Coverage must not rot silently. A gate whose maxStaleMin cannot be found in its
   // object or resolved to a number is skipped — and a gate we cannot see is a gate we
   // cannot enforce, so the count check below fails loudly instead.
-  // Compare against UNIQUE declared keys, not raw occurrences (those 7 duplicates).
-  const declared = new Set([...health.matchAll(/key:\s*'(seed-meta:[^']+)'/g)].map((m) => m[1])).size;
-  return { gates, parsed: Object.keys(gates).length, declared };
+  const declared = [...health.matchAll(/\bkey:\s*'(seed-meta:[^']+)'/g)].length;
+  return { gates, parsed, declared };
 }
 
 // Return the raw expression of `name:` declared directly on the object literal that
@@ -282,6 +282,26 @@ test('the allowlist does not rot — every frozen entry is still a real violatio
   const actual = new Set(violations.map((v) => v.file));
   const retired = [...KNOWN_VIOLATIONS].filter((f) => !actual.has(f));
   assert.deepEqual(retired, [], 'these seeders now satisfy the invariant — delete them from KNOWN_VIOLATIONS');
+});
+
+test('duplicate health keys cannot hide an unparsed gate declaration', () => {
+  for (const gates of ['10, UNRESOLVED', 'UNRESOLVED, 10']) {
+    const health = gates.split(', ').map((gate, i) => `entry${i}: { key: 'seed-meta:duplicate', maxStaleMin: ${gate} }`).join(',\n');
+    const result = readHealthStalenessGates(`const entries = { ${health} };`);
+    assert.equal(result.declared, 2);
+    assert.equal(result.parsed, 1);
+    assert.notEqual(result.parsed, result.declared);
+  }
+});
+
+test('duplicate health declarations all count and retain the largest gate', () => {
+  const result = readHealthStalenessGates(`const entries = {
+    first: { key: 'seed-meta:duplicate', maxStaleMin: 10 },
+    second: { key: 'seed-meta:duplicate', maxStaleMin: 20 },
+  };`);
+  assert.equal(result.parsed, 2);
+  assert.equal(result.declared, 2);
+  assert.equal(result.gates['seed-meta:duplicate'], 20);
 });
 
 test('every health staleness gate is actually parsed — coverage cannot rot', () => {

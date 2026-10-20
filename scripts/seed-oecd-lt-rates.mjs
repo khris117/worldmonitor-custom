@@ -11,7 +11,7 @@ import { CHROME_UA, sleep } from './_seed-utils.mjs';
 import { DAY_MIN } from './_content-age-helpers.mjs';
 import { getOptionalUpstashCreds, upstashCommand } from './_upstash-rest.mjs';
 import { loadEnvFile, runSeed } from './_seed-utils.mjs';
-import { OECD_LT_MARKETS, parseFredCsv, buildOecdLtPayload, declareOecdRecords, oecdLatestContentMeta, oecdContentFreshness } from './lib/yield-curves/oecd-lt.mjs';
+import { OECD_LT_MARKETS, OECD_LT_MAX_CONTENT_AGE_MIN, parseFredCsv, buildOecdLtPayload, declareOecdRecords, oecdLatestContentMeta, oecdContentFreshness } from './lib/yield-curves/oecd-lt.mjs';
 
 loadEnvFile(import.meta.url);
 
@@ -23,7 +23,6 @@ export const OECD_LT_LATEST_KEY = 'economic:yield-curve:oecd-lt:v1:latest';
 // data makes staleness content-age-driven, not TTL-driven.
 const TTL_SECONDS = 21 * 24 * 60 * 60;
 const MAX_STALE_MIN = 60 * 24 * 14; // monthly source; 14d = 2x monthly interval
-const MAX_CONTENT_AGE_MIN = 60 * 24 * 80; // monthly prints; 80d ≈ 2.5 months of observed lag
 const FRED_CSV_BASE = 'https://fred.stlouisfed.org/graph/fredgraph.csv?id=';
 const STAGGER_MS = 150;
 
@@ -86,7 +85,7 @@ if (process.argv[1]?.endsWith('seed-oecd-lt-rates.mjs')) {
     recordCount: declareOecdRecords,
     declareRecords: declareOecdRecords,
     contentMeta: oecdLatestContentMeta,
-    maxContentAgeMin: MAX_CONTENT_AGE_MIN,
+    maxContentAgeMin: OECD_LT_MAX_CONTENT_AGE_MIN,
     extraKeys: [
       { key: OECD_LT_LATEST_KEY, transform: latestTransform, declareRecords: declareOecdRecords },
     ],

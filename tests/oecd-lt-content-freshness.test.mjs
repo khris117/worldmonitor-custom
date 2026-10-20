@@ -6,11 +6,11 @@ const AUG = Date.parse('2026-08-01T00:00:00Z');
 const SEP = Date.parse('2026-09-01T00:00:00Z');
 const countries = ['DE','JP','GB','CA','AU','CH','NO','SE','IT','ES','KR','MX','ZA','PL','NL','BE','AT','PT','IE','FI','DK','GR','CZ','HU','CL','FR','US'];
 const stale = ['IT','NL','BE','AT','IE','DK','CZ','HU'];
-function classify(contentFreshness) {
+function classify(contentFreshness, now = NOW) {
   const key = 'seed-meta:economic:oecd-lt-rates';
-  const meta = { fetchedAt: NOW, recordCount: 15238, newestItemAt: SEP, oldestItemAt: AUG, maxContentAgeMin: 115200, ...(contentFreshness ? { contentFreshness } : {}) };
+  const meta = { fetchedAt: now, recordCount: 15238, newestItemAt: SEP, oldestItemAt: AUG, maxContentAgeMin: 115200, ...(contentFreshness ? { contentFreshness } : {}) };
   return __testing__.classifyKey('oecdLtRates', key, {}, {
-    now: NOW, keyStrens: new Map([[key, 1000]]), keyErrors: new Map(),
+    now, keyStrens: new Map([[key, 1000]]), keyErrors: new Map(),
     keyMetaValues: new Map([[key, JSON.stringify(meta)]]), keyMetaErrors: new Map(),
     activationStates: new Map([['oecdLtRates', true]]),
   });
@@ -25,7 +25,10 @@ test('legacy metadata cannot prove all-market freshness', () => {
   assert.equal(classify().status, 'COVERAGE_DEGRADED');
 });
 
-const { OECD_LT_MARKETS, oecdContentFreshness, oecdLatestContentMeta } = await import('../scripts/lib/yield-curves/oecd-lt.mjs');
+const { OECD_LT_MARKETS, OECD_LT_MAX_CONTENT_AGE_MIN, oecdContentFreshness, oecdLatestContentMeta } = await import('../scripts/lib/yield-curves/oecd-lt.mjs');
+test('OECD worker and health freshness budgets agree', () => {
+  assert.equal(__testing__.SEED_META.oecdLtRates.requireContentFreshness.budgetMinutes, OECD_LT_MAX_CONTENT_AGE_MIN);
+});
 function payload(staleMarkets = stale) {
   return { countries: Object.fromEntries(countries.map(country => [country, { curves: [
     { date: '1980-01-01', tenors: { '10y': 8 } },
@@ -53,6 +56,20 @@ test('a later health read re-ages an originally fresh mixed-vintage publication'
 });
 test('all current latest observations clear even with decades of historical data', () => {
   assert.equal(classify(oecdContentFreshness(payload([]), NOW)).status, 'OK');
+});
+test('stale markets outrank the newest observation prewarning', () => {
+  const now = Date.parse('2026-11-05T00:00:00Z');
+  for (const publishedAt of [Date.parse('2026-10-18T10:10:03Z'), now]) {
+    const result = classify(oecdContentFreshness(payload(), publishedAt), now);
+    assert.equal(result.status, 'STALE_CONTENT');
+    assert.notEqual(__testing__.healthStatusBucket(result, now), 'ok');
+  }
+});
+test('fresh markets retain the advisory prewarning', () => {
+  const now = Date.parse('2026-11-05T00:00:00Z');
+  const result = classify(oecdContentFreshness(payload([]), now), now);
+  assert.equal(result.status, 'CONTENT_AGE_PREWARNING');
+  assert.equal(__testing__.healthStatusBucket(result, now), 'ok');
 });
 test('missing, invalid and future latest observations cannot disappear from scope', () => {
   for (const date of [null, 'invalid', '2027-01-01']) {
