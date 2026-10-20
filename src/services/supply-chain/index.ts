@@ -4,6 +4,7 @@ import type { CargoType } from '@/config/bypass-corridors';
 import type { GetShippingRatesResponse, GetChokepointStatusResponse, GetChokepointHistoryResponse, GetCriticalMineralsResponse, GetMineralProductionResponse, GetShippingStressResponse, GetCountryChokepointIndexResponse, GetBypassOptionsResponse, GetCountryCostShockResponse, GetCountryProductsResponse, GetMultiSectorCostShockResponse, GetSectorDependencyResponse, GetRouteExplorerLaneResponse, GetRouteImpactResponse, GetCountryVulnerabilitiesResponse, GetChokepointDependenciesResponse, ListVulnerabilityRankingsResponse, ShippingIndex, ChokepointInfo, CriticalMineral, MineralProducer, ShippingRatePoint, ChokepointExposureEntry, BypassOption, TransitDayCount, CountryProduct, ProductExporter, MultiSectorCostShock, CommodityVulnerability, ChokepointDependency, VulnerabilityInput } from '@/generated/client/worldmonitor/supply_chain/v1/service_client';
 import { createCircuitBreaker } from '@/utils/circuit-breaker';
 import { getHydratedData } from '@/services/bootstrap';
+import { isFeatureAvailable } from '@/services/runtime-config';
 import { createHydrationHandoff } from '@/services/hydration-handoff';
 import { hasPremiumAccess } from '@/services/panel-gating';
 import { combineAbortSignals, createTimeoutSignal } from '@/services/timeout-signal';
@@ -139,6 +140,8 @@ export async function fetchShippingRates(): Promise<GetShippingRatesResponse> {
     shippingBreaker.recordSuccess(hydrated);
     return hydrated;
   }
+  // A desktop without cloud access keeps its launch snapshot; the refresh would 401 (#5829).
+  if (!isFeatureAvailable('supplyChain')) return shippingBreaker.getCachedOrDefaultStale(emptyShipping);
 
   try {
     return await shippingBreaker.execute(async () => {

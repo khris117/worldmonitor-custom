@@ -26,7 +26,7 @@ test('empty outage observations never imply missing configuration', async (t) =>
       name: 'feature-fixture',
       setup(buildApi) {
         buildApi.onLoad({ filter: /src\/services\/runtime-config\.ts$/ }, () => ({
-          contents: 'let enabled=true;export function isFeatureAvailable(){return enabled};export function setAvailable(value){enabled=value}',
+          contents: 'let enabled=true;export function isFeatureAvailable(){return enabled};export function isFeatureEnabled(){return true};export function setDesktopCloudSessionProbe(){};export function setAvailable(value){enabled=value}',
           loader: 'ts',
         }));
       },

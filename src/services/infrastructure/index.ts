@@ -10,7 +10,7 @@ import { getRpcBaseUrl } from '@/services/rpc-client';
 import type { ListInternetDdosAttacksResponse, ListInternetOutagesResponse, ListInternetTrafficAnomaliesResponse, ListServiceStatusesResponse, InternetOutage as ProtoOutage, ServiceStatus as ProtoServiceStatus } from '@/generated/client/worldmonitor/infrastructure/v1/service_client';
 import type { InternetOutage } from '@/types';
 import { createCircuitBreaker } from '@/utils/circuit-breaker';
-import { isFeatureAvailable } from '../runtime-config';
+import { isFeatureAvailable, isFeatureEnabled } from '../runtime-config';
 import { getHydratedData } from '@/services/bootstrap';
 import { InfrastructureServiceClient } from '@/services/generated-rpc-clients';
 
@@ -94,16 +94,25 @@ export function isOutagesConfigured(): boolean | null {
 }
 
 export async function fetchInternetOutages(): Promise<InternetOutage[]> {
-  if (!isFeatureAvailable('internetOutages')) {
+  if (!isFeatureEnabled('internetOutages')) {
     outagesConfigured = false;
     return [];
   }
 
+  // The launch snapshot comes from the public bootstrap, which every desktop
+  // can read; only the refresh call needs cloud access (#5829).
   const hydrated = getHydratedData('outages') as ListInternetOutagesResponse | undefined;
   let resp: ListInternetOutagesResponse;
   if (hydrated?.outages?.length) {
     outageBreaker.recordSuccess(hydrated);
     resp = hydrated;
+  } else if (!isFeatureAvailable('internetOutages')) {
+    // Keep the launch snapshot on screen; this desktop cannot refresh it.
+    resp = outageBreaker.getCachedOrDefaultStale(emptyOutageFallback);
+    if (!resp.outages.length) {
+      outagesConfigured = false;
+      return [];
+    }
   } else {
     resp = await outageBreaker.execute(async () => {
       return await client.listInternetOutages({

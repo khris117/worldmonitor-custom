@@ -1,5 +1,6 @@
 import { subscribeAuthState } from './auth-state';
 import { getEntitlementState, isEntitled, onEntitlementChange } from './entitlements';
+import { setDesktopCloudSessionProbe } from './runtime-config';
 import { safeStorageGet, safeStorageRemove, safeStorageSet } from '@/utils/safe-storage';
 
 /**
@@ -26,6 +27,9 @@ function mayUseCloud(): boolean {
   // last verified one.
   return getEntitlementState() === null && safeStorageGet(CLOUD_ACCESS_HINT_KEY) === '1';
 }
+
+// Cloud-served features follow the same Pro check as the credential (#5829).
+setDesktopCloudSessionProbe(mayUseCloud);
 
 async function sessionToken(): Promise<string | null> {
   let timer: ReturnType<typeof setTimeout> | undefined;

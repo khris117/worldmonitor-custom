@@ -62,6 +62,12 @@ export interface RuntimeFeatureDefinition {
   description: string;
   requiredSecrets: RuntimeSecretKey[];
   desktopRequiredSecrets?: RuntimeSecretKey[];
+  /**
+   * The sidecar always sends this feature's routes to the cloud, where no local
+   * key is read and a keyless desktop gets a 401. A signed-in Pro desktop reaches
+   * them with its cloud session, so that session makes the feature available (#5829).
+   */
+  desktopCloudServed?: boolean;
   fallback: string;
 }
 
@@ -147,6 +153,7 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'FRED economic indicators',
     description: 'Macro indicators from Federal Reserve Economic Data.',
     requiredSecrets: ['FRED_API_KEY'],
+    desktopCloudServed: true,
     fallback: 'Economic panel remains available with non-FRED metrics.',
   },
   {
@@ -154,8 +161,7 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'EIA oil analytics',
     description: 'US Energy Information Administration oil metrics.',
     requiredSecrets: ['EIA_API_KEY'],
-    // Desktop reads this from the cloud seed cache; no local key is used (#5829).
-    desktopRequiredSecrets: [],
+    desktopCloudServed: true,
     fallback: 'Oil analytics cards show disabled state.',
   },
   {
@@ -163,8 +169,7 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'Cloudflare outage radar',
     description: 'Internet outages from Cloudflare Radar annotations API.',
     requiredSecrets: ['CLOUDFLARE_API_TOKEN'],
-    // Desktop reads this from the cloud seed cache; no local key is used (#5829).
-    desktopRequiredSecrets: [],
+    desktopCloudServed: true,
     fallback: 'Outage layer is disabled and map continues with other feeds.',
   },
   {
@@ -251,8 +256,7 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'WTO trade policy data',
     description: 'Trade restrictions, tariff trends, barriers, and flows from WTO.',
     requiredSecrets: ['WTO_API_KEY'],
-    // Desktop reads this from the cloud seed cache; no local key is used (#5829).
-    desktopRequiredSecrets: [],
+    desktopCloudServed: true,
     fallback: 'Trade policy panel shows disabled state.',
   },
   {
@@ -260,8 +264,7 @@ export const RUNTIME_FEATURES: RuntimeFeatureDefinition[] = [
     name: 'Supply Chain Intelligence',
     description: 'Shipping rates via FRED Baltic Dry Index. Chokepoints and minerals use public data.',
     requiredSecrets: ['FRED_API_KEY'],
-    // Desktop reads this from the cloud seed cache; no local key is used (#5829).
-    desktopRequiredSecrets: [],
+    desktopCloudServed: true,
     fallback: 'Chokepoints and minerals always available; shipping requires FRED key.',
   },
   {
@@ -427,6 +430,13 @@ export function getSecretState(key: RuntimeSecretKey): { present: boolean; valid
   };
 }
 
+let desktopCloudSession: () => boolean = () => false;
+
+/** Registered by the desktop cloud-auth service, which owns the Pro session check. */
+export function setDesktopCloudSessionProbe(probe: () => boolean): void {
+  desktopCloudSession = probe;
+}
+
 export function isFeatureAvailable(featureId: RuntimeFeatureId): boolean {
   if (!isFeatureEnabled(featureId)) return false;
 
@@ -438,6 +448,7 @@ export function isFeatureAvailable(featureId: RuntimeFeatureId): boolean {
 
   const feature = RUNTIME_FEATURES.find(item => item.id === featureId);
   if (!feature) return false;
+  if (feature.desktopCloudServed && desktopCloudSession()) return true;
   const secrets = feature.desktopRequiredSecrets ?? feature.requiredSecrets;
   return secrets.every(secretKey => getSecretState(secretKey).valid);
 }
