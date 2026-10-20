@@ -83,6 +83,18 @@ const PRODUCTION_FAMILIES: readonly AliasFamily[] = [
     restTarget: 'get_price_and_debt_indicators',
     proTranslate: 'us-mfn-from-limit',
   },
+  {
+    kind: 'merge',
+    name: 'get_energy_storage',
+    target: 'get_energy_intelligence',
+    datasets: ['eu-gas-storage', 'nat-gas-storage', 'crude-inventories'],
+  },
+  {
+    kind: 'merge',
+    name: 'get_internet_activity',
+    target: 'get_infrastructure_status',
+    datasets: ['traffic', 'ddos'],
+  },
 ];
 
 const PRODUCTION_OPT_OUTS: readonly AliasOptOut[] = [];
