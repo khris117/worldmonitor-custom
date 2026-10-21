@@ -30,12 +30,12 @@ textarea{
 .tr tr:nth-child(even) { background-color: #f2f2f2; }
 .tr tr td {	padding: 5px; }
 .date-right{
-	text-align:right; 
+	text-align:right;
 	margin-right:20px;
 	font-weight: bold;
 }
 .caption{
-	text-align:left; 
+	text-align:left;
 	font-weight: bold;
 	color: blue;
 }
@@ -81,13 +81,13 @@ textarea{
 
 <div style="text-align:center; font-weight: bold;">
 	<p style="color: blue;"><u>Coastal Weather Bulletin</u></p>
-		<p >DAILY TWO Bulletin Valid for 12 hrs from 22 UTC of 2026-10-21 
+		<p >DAILY TWO Bulletin Valid for 12 hrs from 22 UTC of 2026-10-21
 		to 10 UTC of 2026-10-22</p>
 
 <!--	<p id='datetime'></p>-->
 </div>
 
-<div class="tr caption">&nbsp;</div>	
+<div class="tr caption">&nbsp;</div>
 <table class="tr">
 	<tr>
 		<td class="td-1">Synoptic Situation</td>
@@ -99,14 +99,14 @@ textarea{
 <div class="tr caption">&nbsp;</div>
 
 
-	
 
-	
+
+
 <!-- Layer -->
 <table class="tr ">
 	<caption class="caption">
 		Karnataka coast	</caption>
-	
+
 	<tr>
 		<td class="td-1">Wind</td>
 		<td >SOUTH WESTERLY/ WEST, 10 - 15 KNOTS</td>
@@ -133,12 +133,12 @@ textarea{
 	</tr>
 </table>
 <br>
-	
+
 <!-- Layer -->
 <table class="tr ">
 	<caption class="caption">
 		North Kerala coast	</caption>
-	
+
 	<tr>
 		<td class="td-1">Wind</td>
 		<td >SOUTH EASTERLY/ SOUTH, 10 - 15 KNOTS GUSTING TO 25 KNOTS</td>
@@ -165,12 +165,12 @@ textarea{
 	</tr>
 </table>
 <br>
-	
+
 <!-- Layer -->
 <table class="tr ">
 	<caption class="caption">
 		South Kerala coast	</caption>
-	
+
 	<tr>
 		<td class="td-1">Wind</td>
 		<td >SOUTH WESTERLY/ SOUTH, 10 - 15 KNOTS GUSTING TO 25 KNOTS</td>
@@ -198,12 +198,12 @@ textarea{
 	</tr>
 </table>
 <br>
-	
+
 <!-- Layer -->
 <table class="tr ">
 	<caption class="caption">
 		Lakshadweep area	</caption>
-	
+
 	<tr>
 		<td class="td-1">Wind</td>
 		<td >SOUTH WESTERLY/ NORTH WESTERLY, 10 - 15 KNOTS GUSTING TO 25 KNOTS</td>
@@ -230,20 +230,20 @@ textarea{
 	</tr>
 </table>
 <br>
-	
+
 
 <table class="tr "><tr><td class="td-1">Time of Issue</td><td>21:52 IST of 2026-10-21</td></tr></table>
-	
+
 </div>
 </body>
 
 <script type="text/javascript">
-	var date = new Date(); 
+	var date = new Date();
 	var tomorrow = date.getDate()+1+'-'+(date.getMonth()+1)+'-'+date.getFullYear();
 	var today = date.getDate()+'-'+(date.getMonth()+1)+'-'+date.getFullYear();
-			
+
 	document.getElementById("datetime").innerHTML = "Daily Bulletin Valid for 12 Hours From "+today+" to "+tomorrow;
-	
+
 	document.getElementById("date-right").innerHTML = today;
 		</script>
 

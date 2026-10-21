@@ -86,6 +86,7 @@ Fixtures `coastalBulletin-kerala-20261021.pdf` and
 `coastalBulletin-kerala-missing-synoptic.html` were captured from the official
 regional PDF and public HTML page on October 21. They reproduce the missing
 coverage and the complete alternative without accepting an incomplete bulletin.
+The HTML fixture trims trailing whitespace. The PDF bytes are unchanged.
 
 ## Related Issues
 
