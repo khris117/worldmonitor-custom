@@ -109,7 +109,7 @@ test('persists receipt rewrite stamps when the retained forecast ledger exceeds 
     const command = opts.body ? JSON.parse(opts.body) : null;
     if (opts.body) requestBytes.push(Buffer.byteLength(opts.body));
     if (String(url).includes('/get/')) return jsonResponse({ result: JSON.stringify(stored.get(key)) });
-    if (command?.[0] === 'SET') stored.set(command[1], JSON.parse(command[2]));
+    if (command?.[0] === 'SET' && !command[1].startsWith('seed-lock:')) stored.set(command[1], JSON.parse(command[2]));
     if (String(url).endsWith('/pipeline')) return jsonResponse(command.map(() => ({ result: 1 })));
     return jsonResponse({ result: 'OK' });
   };
