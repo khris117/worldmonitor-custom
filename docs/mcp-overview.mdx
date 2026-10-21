@@ -328,7 +328,7 @@ For per-tool parameters, freshness budgets, timeouts, and concrete `curl` exampl
 | `get_mineral_production` | Who mines / refines a commodity (USGS MCS shares + HHI; BGS fill). |
 | `get_food_stocks` | USDA PSD cereal stocks-to-use per country (or `WORLD`) by marketing year, optional per-commodity filter. |
 | `get_demographics_capability` | Country age structure, education capacity, and industrial-workforce observations (UN WPP, UNESCO UIS, ILOSTAT). |
-| `get_five_factor_scorecard` | Frozen v1 food, energy, demographics, technology, and defense scorecard for one country, official bloc preset, or validated custom bloc, with input availability and source provenance. With no selector, compact pillar scores, bands, coverage, and insufficient-data reasons for every country. Read `hasScore` before numeric scores; false means zero is an insufficient-data placeholder. |
+| `get_five_factor_scorecard` | Frozen v1 food, energy, demographics, technology, and defense scorecard for one country, official bloc preset, or validated custom bloc, with input availability and source provenance. With no selector, compact pillar scores, bands, coverage, and insufficient-data reasons for every country. Read `hasScore` before a pillar `score` or `subScore`, and in the detailed response read `available` and `hasValue` before an input `value`; when the flag is false, zero is a proto3 placeholder. |
 
 ### Energy
 

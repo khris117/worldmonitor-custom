@@ -289,7 +289,7 @@ npx @modelcontextprotocol/inspector https://worldmonitor.app/mcp
 | `get_company_intelligence` | 经 SEC 身份验证的逐公司情报：丰富化、带时间戳的信号、申报搜索与全市场重大 8-K 事件。 |
 | `get_commodity_geo` | 全球 71 个主要矿场（金、银、铜、锂、钴、稀土、镍、铂、钯、铁矿石、铀）。 |
 | `get_mineral_production` | 各国矿产开采/冶炼份额与 HHI（USGS MCS，BGS 补缺）。 |
-| `get_five_factor_scorecard` | 冻结版 v1 五因素韧性评分卡：食品、能源、人口结构、科技与国防。可查询一个国家、官方集团或已验证的自定义集团，并保留输入可用性与来源信息；不传选择器时，紧凑列出所有国家的支柱评分、档位、覆盖率和数据不足原因。读取数值前必须检查 `hasScore`；若为 false，零值只是数据不足占位符。 |
+| `get_five_factor_scorecard` | 冻结版 v1 五因素韧性评分卡：食品、能源、人口结构、科技与国防。可查询一个国家、官方集团或已验证的自定义集团，并保留输入可用性与来源信息；不传选择器时，紧凑列出所有国家的支柱评分、档位、覆盖率和数据不足原因。读取支柱 `score` 或 `subScore` 前必须检查 `hasScore`；在详细响应中读取输入 `value` 前必须同时检查 `available` 和 `hasValue`。相关标志为 false 时，零值只是 proto3 占位符。 |
 
 ### 能源
 
