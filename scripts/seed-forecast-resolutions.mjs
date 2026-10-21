@@ -16,7 +16,7 @@
 
 import { createHash } from 'node:crypto';
 
-import { CHROME_UA, allSettledWithConcurrency, getRedisCredentials, loadEnvFile, redisCommand, runSeed } from './_seed-utils.mjs';
+import { CHROME_UA, getRedisCredentials, loadEnvFile, redisCommand, runSeed } from './_seed-utils.mjs';
 import { unwrapEnvelope } from './_seed-envelope-source.mjs';
 import { PROBABILITY_TRAIL_KEY, stampResolutionTrajectories } from './_forecast-probability-trail.mjs';
 import { resolveR2StorageConfig, putR2JsonObject, serializeR2JsonBody, sha256Hex } from './_r2-storage.mjs';
@@ -2512,10 +2512,17 @@ function isLateLiveRead(entry) {
   return readTs - Number(entry.deadline) > LATE_READ_MAX_LAG_MS;
 }
 
-const RECEIPT_ARCHIVE_CONCURRENCY = 4;
-// Keep 50 upload waves within the 150 s fetch phase. At the observed 780 ms
-// p90 per write, rewrites take about 40 s alongside feed reads and judging.
-export const RECEIPT_REARCHIVE_PER_RUN = 50 * RECEIPT_ARCHIVE_CONCURRENCY;
+// Rows corrected after their receipt reached R2 (#5233 envelope voids,
+// #8990 duplicate voids, old-selection judged voids, late-read corrections,
+// #9013 unread-feed relabels, rescores, placeholder voids and restored
+// duplicates) are written again so R2 holds the
+// correction. R2 writes are serial at about 450 ms (p90 about 780 ms), and
+// the whole run has a 150 s fetch phase, so each run rewrites at most this
+// many stale receipts, oldest first: 50 x 780 ms is about 40 s, which leaves
+// the run's own 20 to 60 s of feed reads and judge calls well inside the
+// budget. The backlog drains over later runs, and pruning keeps a stale row
+// until its receipt is rewritten.
+export const RECEIPT_REARCHIVE_PER_RUN = 50;
 
 export function collectUnarchivedReceipts(ledger, { rearchiveLimit = RECEIPT_REARCHIVE_PER_RUN } = {}) {
   const entries = Object.entries(normalizeLedger(ledger)).filter(([, entry]) => entry?.status === 'resolved');
@@ -3385,24 +3392,25 @@ export async function appendR2Receipts(receipts, options = {}) {
     console.warn(`  [forecast-resolutions] receipt prefix is inside the trace prefix, which has a retention rule; set CLOUDFLARE_R2_FORECAST_RESOLUTION_PREFIX outside it. Skipped ${receipts.length} receipt append(s)`);
     return [];
   }
-  const results = await allSettledWithConcurrency(receipts, RECEIPT_ARCHIVE_CONCURRENCY, async (receipt) => {
-    const day = new Date(receipt.resolvedAt).toISOString().slice(0, 10);
-    const safeKey = receipt.key.replace(/[^a-zA-Z0-9@._-]+/g, '_');
-    const key = `${config.basePrefix}/forecast-resolutions/${day}/${safeKey}-${receipt.resolvedAt}.json`;
-    const written = await putObject(config, key, receipt, {
-      kind: 'forecast-resolution',
-      outcome: receipt.entry?.outcome || 'unknown',
-    });
-    const receiptHash = typeof written?.sha256 === 'string' ? written.sha256 : sha256Hex(serializeR2JsonBody(receipt));
-    console.log(`  [forecast-resolutions] R2 receipt: ${key}`);
-    return { key: receipt.key, objectKey: key, receiptHash };
-  });
   const archived = [];
-  for (const [index, result] of results.entries()) {
-    if (result.status === 'fulfilled') {
-      archived.push(result.value);
-    } else {
-      console.warn(`  [forecast-resolutions] R2 receipt failed for ${receipts[index].key}: ${result.reason?.message || result.reason}`);
+  for (const receipt of receipts) {
+    try {
+      const day = new Date(receipt.resolvedAt).toISOString().slice(0, 10);
+      const safeKey = receipt.key.replace(/[^a-zA-Z0-9@._-]+/g, '_');
+      const key = `${config.basePrefix}/forecast-resolutions/${day}/${safeKey}-${receipt.resolvedAt}.json`;
+      const written = await putObject(config, key, receipt, {
+        kind: 'forecast-resolution',
+        outcome: receipt.entry?.outcome || 'unknown',
+      });
+      // The hash of the stored bytes is publishable where the object path is
+      // not: it lets a reader check a receipt without learning where it lives.
+      // The writer reports the digest of the body it sent; a writer that does
+      // not is hashed from the same serialization.
+      const receiptHash = typeof written?.sha256 === 'string' ? written.sha256 : sha256Hex(serializeR2JsonBody(receipt));
+      archived.push({ key: receipt.key, objectKey: key, receiptHash });
+      console.log(`  [forecast-resolutions] R2 receipt: ${key}`);
+    } catch (err) {
+      console.warn(`  [forecast-resolutions] R2 receipt failed for ${receipt.key}: ${err?.message || err}`);
     }
   }
   return archived;
