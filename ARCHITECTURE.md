@@ -389,7 +389,7 @@ Runs before every `git push`:
 
 | Workflow | Trigger | Checks |
 |----------|---------|--------|
-| `typecheck.yml` | PR, push to main | `tsc --noEmit` for src and API tsconfigs |
+| `typecheck.yml` | PR, push to main | `tsc --noEmit` (TypeScript 7) for src, API, contract-test, e2e and Convex tsconfigs |
 | `lint-code.yml` | PR, push to main | Biome lint + sebuf API-contract enforcement; markdownlint-cli2 in a `markdown` job that runs on every push to main and, on PRs, only when markdown, its config, or package.json changes; `doc-anchors` exports the authored docs with `mint export --disable-openapi` (preloading `scripts/mint-export-preload.mjs`, which stubs Mint's crash-prone online probe and names pages that fail to render) and checks every anchor against the rendered pages |
 | `test.yml` | PR, push to main | Unit/integration suite, always-on docs-stats and published-link guardrails (including docs-only changes), plus conditional digest-image, resilience-validation and Zapier Mocha gates. Zapier uses a locked npm install on integration, shared event registry, workflow or ownership guard changes |
 | `e2e-visual.yml` | Path-filtered PR, push to main (chrome only), nightly cron, manual | Deterministic map goldens (`test:e2e:visual`) plus named harness chrome captures; evidence only — not a deploy-gate required check |
