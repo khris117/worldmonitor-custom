@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 
 import {
   BASE_RATE_PLACEHOLDER_VOID_REASON,
@@ -539,7 +540,7 @@ describe('bounded receipt re-archive (#8990, #8989)', () => {
     CLOUDFLARE_R2_BUCKET: 'bucket',
     CLOUDFLARE_R2_FORECAST_RESOLUTION_PREFIX: 'receipts',
   };
-  const R2_WRITE_MS = 450;
+  const R2_WRITE_MS = 780;
   const FETCH_PHASE_MS = 150_000;
   const RUN_WORK_MS = 60_000;
   const ARCHIVED_AT = T0 + 8 * DAY_MS;
@@ -569,25 +570,77 @@ describe('bounded receipt re-archive (#8990, #8989)', () => {
     };
   }
 
-  it('rewrites at most the per-run cap inside the fetch budget and drains 600 corrections over later runs', async () => {
+  it('drains 600 corrections within three daily runs inside the fetch budget', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
     let ledger = Object.fromEntries(Array.from({ length: 600 }, (_, index) => envelopeRow(index)).map((entry) => [entry.key, entry]));
     let now = T0 + 20 * DAY_MS;
     const runs = [];
     for (let run = 0; run < 20; run += 1) {
       ledger = processResolutionCycle(ledger, [], {}, now).ledger;
       let elapsedMs = 0;
+      let active = 0;
+      let maxActive = 0;
       const queued = collectUnarchivedReceipts(ledger);
-      const archived = await appendR2Receipts(queued, { env: R2_ENV, putObject: async () => { elapsedMs += R2_WRITE_MS; } });
+      let completed = false;
+      const writing = appendR2Receipts(queued, {
+        env: R2_ENV,
+        putObject: async () => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, R2_WRITE_MS));
+          active -= 1;
+        },
+      }).finally(() => { completed = true; });
+      while (!completed) {
+        t.mock.timers.tick(R2_WRITE_MS);
+        elapsedMs += R2_WRITE_MS;
+        await setImmediate();
+      }
+      const archived = await writing;
       markReceiptsArchived(ledger, archived, now + 1);
-      runs.push({ queued: queued.length, elapsedMs });
+      runs.push({ queued: queued.length, elapsedMs, maxActive });
       if (!Object.values(ledger).some(receiptNeedsRearchive)) break;
       now += DAY_MS;
     }
     assert.ok(runs.every((run) => run.queued <= RECEIPT_REARCHIVE_PER_RUN));
+    assert.ok(runs.every((run) => run.maxActive <= 4), 'at most four R2 uploads are active');
     assert.ok(runs.every((run) => run.elapsedMs + RUN_WORK_MS <= FETCH_PHASE_MS), `slowest run ${Math.max(...runs.map((run) => run.elapsedMs))} ms`);
-    assert.equal(runs.length, Math.ceil(600 / RECEIPT_REARCHIVE_PER_RUN), 'the backlog drains one cap per run');
+    assert.equal(runs.length, 3, '600 corrected receipts must not take twelve daily runs');
     assert.equal(runs.reduce((sum, run) => sum + run.queued, 0), 600);
     assert.ok(Object.values(ledger).every((entry) => entry.evidence.reason === 'resolver_envelope_bug' && entry.receiptArchivedAt > entry.evidence.voidedAt));
+  });
+
+  it('retains failed rewrites for retry when uploads finish out of order', async () => {
+    const now = T0 + 20 * DAY_MS;
+    const rows = Array.from({ length: 6 }, (_, index) => envelopeRow(index));
+    const ledger = ingestHistory(Object.fromEntries(rows.map((row) => [row.key, row])), [], now);
+    const queued = collectUnarchivedReceipts(ledger);
+    const failedKey = queued[1].key;
+    const pending = new Map();
+    let maxActive = 0;
+    let completed = false;
+    const writing = appendR2Receipts(queued, {
+      env: R2_ENV,
+      putObject: async (_config, _key, receipt) => {
+        await new Promise((resolve, reject) => {
+          pending.set(receipt.key, () => receipt.key === failedKey ? reject(new Error('R2 unavailable')) : resolve());
+          maxActive = Math.max(maxActive, pending.size);
+        });
+      },
+    }).finally(() => { completed = true; });
+    while (!completed) {
+      for (const [key, finish] of [...pending].reverse()) {
+        pending.delete(key);
+        finish();
+      }
+      await setImmediate();
+    }
+    const archived = await writing;
+    assert.equal(maxActive, 4, 'uploads use four bounded workers');
+    assert.deepEqual(archived.map((receipt) => receipt.key), queued.map((receipt) => receipt.key).filter((key) => key !== failedKey));
+    markReceiptsArchived(ledger, archived, now + 1);
+    assert.deepEqual(collectUnarchivedReceipts(ledger).map((receipt) => receipt.key), [failedKey]);
+    assert.equal(ledger[failedKey].receiptArchivedAt, ARCHIVED_AT, 'a failed upload keeps its original archive stamp');
   });
 
   it('voids envelope-bug rows before the correction, so none is rescored and then voided', () => {
