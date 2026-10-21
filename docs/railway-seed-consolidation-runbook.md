@@ -1349,10 +1349,10 @@ operator authorization. After that authorization, use this procedure.
 1. Select project `29419572-0b0d-437f-8e71-4fa68daf514f`, production environment
    `91a05726-0b83-4d44-a33e-6aec94e58780`, and service
    `c989eee4-3336-46b7-b7cd-39700cd56a0f` in Railway.
-2. Configure `COMTRADE_API_KEYS` with an approved Comtrade subscription reference
-   for this service. Use the secure variable editor. Do not put keys in logs,
-   commands, evidence files, or pull requests. Coordinate the provider quota
-   with the other Comtrade workers before activation.
+2. Configure `COMTRADE_API_KEYS` with one or more approved Comtrade API-key values
+   for this service. Separate multiple keys with commas. Use the secure variable
+   editor. Do not put keys in logs, commands, evidence files, or pull requests.
+   Coordinate the provider quota with the other Comtrade workers before activation.
 3. Apply the variable change and its deployment only after deployment approval.
    Record the exact deployment ID and source SHA. Confirm that the deployment
    receives the variable by name without printing its value.
