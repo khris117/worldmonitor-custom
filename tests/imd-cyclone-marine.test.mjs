@@ -499,12 +499,19 @@ test('the seeder publishes to its own key with no API credentials or proxy', () 
   assert.deepEqual(service.requiredEnv, ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']);
 });
 
-test('a complete official Kerala PDF recovers an incomplete HTML bulletin without renewing its source clocks', async () => {
+test('a complete official Kerala PDF recovers an incomplete HTML bulletin without renewing its source clocks', async (t) => {
   const kerala = IMD_PRODUCTS.coastalBulletin.pages.find((page) => page.key === 'kerala-karnataka-lakshadweep');
   const fallbackUrl = 'https://mausam.imd.gov.in/thiruvananthapuram/mcdata/coastal%20bulletin.pdf';
   const pdf = readFileSync(join(root, 'tests/fixtures/imd/coastalBulletin-kerala-20261021.pdf'));
   const requests = [];
   const sleeps = [];
+  const timersAtSleep = [];
+  const timeout = AbortSignal.timeout;
+  let timerCount = 0;
+  t.mock.method(AbortSignal, 'timeout', (ms) => {
+    timerCount++;
+    return timeout(ms);
+  });
   const fetchFn = async (url) => {
     requests.push(url);
     if (url === fallbackUrl) return new Response(pdf, { headers: { 'Content-Type': 'application/pdf' } });
@@ -513,11 +520,16 @@ test('a complete official Kerala PDF recovers an incomplete HTML bulletin withou
       ? fixture('coastalBulletin-kerala-missing-synoptic.html')
       : pageFixture(entry.id, entry.page.key));
   };
-  const snapshot = await fetchImdCycloneMarine({ fetchFn, now: Date.parse('2026-10-21T18:30:00Z'), sleep: async (ms) => sleeps.push(ms) });
+  const snapshot = await fetchImdCycloneMarine({ fetchFn, now: Date.parse('2026-10-21T18:30:00Z'), sleep: async (ms) => {
+    timersAtSleep.push(timerCount);
+    sleeps.push(ms);
+  } });
   const rows = snapshot.coastalBulletins.filter((row) => row.page === kerala.key);
   assert.equal(rows.length, 4, 'recover all four complete official PDF areas');
   assert.equal(requests.filter((url) => url === fallbackUrl).length, 1);
   assert.deepEqual(sleeps, Array(requests.length - 1).fill(IMD_PAGE_DELAY_MS));
+  assert.deepEqual(timersAtSleep, Array.from({ length: sleeps.length }, (_, index) => index + 1),
+    'primary and fallback request timers start after their pacing waits');
   assert.equal(snapshot.products.coastalBulletin.requestCount, IMD_PRODUCTS.coastalBulletin.pages.length + 1);
   assert.equal(snapshot.products.coastalBulletin.pages[kerala.key].fallbackUsed, true);
   assert.equal(snapshot.products.coastalBulletin.pages[kerala.key].primaryFailure, 'BULLETIN_SYNOPTIC_MISSING');
