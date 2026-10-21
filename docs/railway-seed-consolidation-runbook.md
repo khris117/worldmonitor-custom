@@ -1356,8 +1356,9 @@ operator authorization. After that authorization, use this procedure.
 3. Apply the variable change and its deployment only after deployment approval.
    Record the exact deployment ID and source SHA. Confirm that the deployment
    receives the variable by name without printing its value.
-4. Run `node scripts/audit-railway-watch-paths.mjs --environment production` from
-   a trusted checkout. Confirm that the energy bundle no longer reports the
+4. Use a trusted checkout whose Railway CLI context is linked to the project
+   above. Run `node scripts/audit-railway-watch-paths.mjs --environment production`.
+   Confirm that the energy bundle no longer reports the
    missing prerequisite. Registry sync reports runtime prerequisites separately
    from configuration drift. Its success alone does not prove source health.
 5. Let the daily 07:30 UTC bundle tick run the weekly Oil-Trade-Series section
