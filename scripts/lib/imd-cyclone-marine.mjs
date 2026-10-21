@@ -675,6 +675,8 @@ export async function fetchImdBulletinPage(productId, page, {
   userAgent = CHROME_UA,
   maxBytes = IMD_MAX_BYTES,
   timeoutMs = IMD_TIMEOUT_MS,
+  delayMs = IMD_PAGE_DELAY_MS,
+  sleep = defaultSleep,
 } = {}) {
   if (!isAllowedImdUrl(page.url)) return { status: 'failed', reason: 'UNTRUSTED_SOURCE_HOST' };
   try {
@@ -691,6 +693,7 @@ export async function fetchImdBulletinPage(productId, page, {
     const registered = IMD_PRODUCTS[productId]?.pages?.find((entry) => entry.key === page.key && entry.url === page.url);
     if (!registered?.fallbackUrl || !isAllowedImdUrl(registered.fallbackUrl)) return primary;
     try {
+      await sleep(delayMs);
       const response = await fetchFn(registered.fallbackUrl, {
         headers: { Accept: 'application/pdf', 'User-Agent': userAgent },
         redirect: 'error',
@@ -718,15 +721,12 @@ export async function fetchImdCycloneMarine({
 } = {}) {
   const pageResults = {};
   let first = true;
-  const pacedFetch = async (...args) => {
-    if (!first) await sleep(delayMs);
-    first = false;
-    return fetchFn(...args);
-  };
   for (const id of IMD_BULLETIN_PRODUCT_IDS) {
     pageResults[id] = {};
     for (const page of IMD_PRODUCTS[id].pages) {
-      pageResults[id][page.key] = await fetchImdBulletinPage(id, page, { fetchFn: pacedFetch, userAgent });
+      if (!first) await sleep(delayMs);
+      first = false;
+      pageResults[id][page.key] = await fetchImdBulletinPage(id, page, { fetchFn, userAgent, delayMs, sleep });
     }
   }
   return assembleImdSnapshot({ pageResults, previous, now });

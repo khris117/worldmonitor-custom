@@ -184,6 +184,7 @@ describe('get_imd_cyclone_marine cache tool', () => {
     const html = readFileSync(new URL('./fixtures/imd/coastalBulletin-kerala-missing-synoptic.html', import.meta.url));
     const pdf = readFileSync(new URL('./fixtures/imd/coastalBulletin-kerala-20261021.pdf', import.meta.url));
     const parsed = await fetchImdBulletinPage('coastalBulletin', page, {
+      delayMs: 0,
       fetchFn: async (url) => url === page.url ? new Response(html)
         : new Response(pdf, { headers: { 'Content-Type': 'application/pdf' } }),
     });

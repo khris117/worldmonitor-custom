@@ -591,6 +591,7 @@ test('Kerala fallback rejects invalid responses and does not replace successful 
   for (const [response, options, fallbackFailure] of cases) {
     const result = await fetchImdBulletinPage('coastalBulletin', page, {
       ...options,
+      delayMs: 0,
       fetchFn: async (url, init) => {
         assert.equal(init.redirect, 'error');
         assert.ok(init.headers['User-Agent']);
