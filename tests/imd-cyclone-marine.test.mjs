@@ -497,3 +497,36 @@ test('the seeder publishes to its own key with no API credentials or proxy', () 
   const service = registry.find((entry) => entry.service === 'seed-imd-cyclone-marine');
   assert.deepEqual(service.requiredEnv, ['UPSTASH_REDIS_REST_URL', 'UPSTASH_REDIS_REST_TOKEN']);
 });
+
+test('a complete official Kerala PDF recovers an incomplete HTML bulletin without renewing its source clocks', async () => {
+  const kerala = IMD_PRODUCTS.coastalBulletin.pages.find((page) => page.key === 'kerala-karnataka-lakshadweep');
+  const fallbackUrl = 'https://mausam.imd.gov.in/thiruvananthapuram/mcdata/coastal%20bulletin.pdf';
+  const pdf = readFileSync(join(root, 'tests/fixtures/imd/coastalBulletin-kerala-20261021.pdf'));
+  const requests = [];
+  const fetchFn = async (url) => {
+    requests.push(url);
+    if (url === fallbackUrl) return new Response(pdf, { headers: { 'Content-Type': 'application/pdf' } });
+    const entry = ALL_PAGES.find(({ page }) => page.url === url);
+    return new Response(entry.page.key === kerala.key
+      ? fixture('coastalBulletin-kerala-missing-synoptic.html')
+      : pageFixture(entry.id, entry.page.key));
+  };
+  const snapshot = await fetchImdCycloneMarine({ fetchFn, now: Date.parse('2026-10-21T18:30:00Z'), delayMs: 0 });
+  const rows = snapshot.coastalBulletins.filter((row) => row.page === kerala.key);
+  assert.equal(rows.length, 4, 'recover all four complete official PDF areas');
+  assert.equal(requests.filter((url) => url === fallbackUrl).length, 1);
+  assert.equal(snapshot.products.coastalBulletin.pages[kerala.key].fallbackUsed, true);
+  assert.equal(snapshot.products.coastalBulletin.pages[kerala.key].primaryFailure, 'BULLETIN_SYNOPTIC_MISSING');
+  assert.equal(snapshot.products.coastalBulletin.pages[kerala.key].sourceUrl, fallbackUrl);
+  for (const row of rows) {
+    assert.equal(row.sourceUrl, fallbackUrl);
+    assert.equal(row.issuedAt, Date.parse('2026-10-21T07:34:00Z'));
+    assert.equal(row.validFrom, Date.parse('2026-10-21T10:00:00Z'));
+    assert.equal(row.expiresAt, Date.parse('2026-10-21T22:00:00Z'));
+    assert.match(row.synopticSituation, /^THE WELL MARKED LOW PRESSURE AREA/);
+  }
+  assert.equal(rows.find((row) => row.area === 'North Kerala coast').portSignal, 'LC III.');
+  const expired = await fetchImdCycloneMarine({ fetchFn, previous: snapshot, now: Date.parse('2026-10-21T22:00:00Z'), delayMs: 0 });
+  assert.equal(expired.coastalBulletins.length, 0);
+  assert.equal(expired.products.coastalBulletin.pages[kerala.key].status, 'expired');
+});
