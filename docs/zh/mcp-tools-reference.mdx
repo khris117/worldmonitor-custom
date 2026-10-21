@@ -2027,7 +2027,7 @@ curl -s https://worldmonitor.app/mcp \
 | `return_date` | string | 否 | 往返行程搜索的返程日期，格式为 YYYY-MM-DD（可选） |
 | `start_date` | string | 日期范围 | 日期范围起始，格式为 YYYY-MM-DD，用于每日最低票价。需要 end_date；省略 departure_date。 |
 | `end_date` | string | 日期范围 | 日期范围结束，格式为 YYYY-MM-DD，最多在 start_date 之后 30 天 |
-| `trip_duration` | number | 否 | 往返日期范围的行程天数，例如 7 表示一周行程（可选） |
+| `trip_duration` | integer | 否 | 往返日期范围的行程整天数，例如 7 表示一周行程（可选） |
 | `cabin_class` | string | 否 | 舱位等级："economy"、"premium_economy"、"business" 或 "first"（可选，默认 economy） |
 | `max_stops` | string | 否 | 仅用于行程搜索。最大经停数："0" 或 "non_stop" 表示直飞，"1" 或 "one_stop" 表示最多一次经停，省略表示不限（可选） |
 | `passengers` | number | 否 | 乘客人数（1-9，默认 1） |

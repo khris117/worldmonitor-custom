@@ -1173,7 +1173,7 @@ curl -s https://worldmonitor.app/mcp \
 
 ### `get_toronto_reported_occurrences`
 
-Retired from `tools/list`, together with `get_toronto_calls_attended`: a city-specific tool does not belong in a global tool list. Both names stay callable with their previous arguments and response, including the Open Government Licence attribution rider, so a client that hard-coded them keeps working. The data remains available over REST at `GET /api/safety/v1/get-toronto-safety`.
+Retired from `tools/list`, together with `get_toronto_calls_attended`: a city-specific tool does not belong in a global tool list. Both names stay callable with their previous arguments and response, including the source attribution rider, so a client that hard-coded them keeps working. The data remains available over REST at `GET /api/safety/v1/get-toronto-safety`.
 
 ### `get_toronto_calls_attended`
 
@@ -2499,7 +2499,7 @@ Each mode rejects the other mode's arguments (`return_date` and `max_stops` appl
 | `return_date` | string | no | Return date in YYYY-MM-DD format for a round-trip itinerary search (optional) |
 | `start_date` | string | date range | Start of a date range in YYYY-MM-DD format, for the cheapest fare per date. Requires end_date; omit departure_date. |
 | `end_date` | string | date range | End of the date range in YYYY-MM-DD format, at most 30 days after start_date |
-| `trip_duration` | number | no | Trip length in days for a round-trip date range, e.g. 7 for a one-week trip (optional) |
+| `trip_duration` | integer | no | Trip length in whole days for a round-trip date range, e.g. 7 for a one-week trip (optional) |
 | `cabin_class` | string | no | Cabin class: "economy", "premium_economy", "business", or "first" (optional, default economy) |
 | `max_stops` | string | no | Itinerary search only. Max stops: "0" or "non_stop" for nonstop, "1" or "one_stop" for max one stop, or omit for any (optional) |
 | `passengers` | number | no | Number of passengers (1-9, default 1) |

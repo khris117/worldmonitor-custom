@@ -1121,6 +1121,9 @@ function flightSearchMode(params: Record<string, unknown>): 'itineraries' | 'ran
   const range = has('start_date') || has('end_date');
   if (range) {
     if (has('departure_date')) violations.push({ field: 'departure_date', description: 'Pass departure_date or start_date with end_date, not both.' });
+    if (has('trip_duration') && !(Number.isInteger(params.trip_duration) && (params.trip_duration as number) >= 1)) {
+      violations.push({ field: 'trip_duration', description: 'trip_duration must be a whole number of days, 1 or more.' });
+    }
     if (!has('start_date') || !has('end_date')) violations.push({ field: has('start_date') ? 'end_date' : 'start_date', description: 'A date range needs both start_date and end_date.' });
     for (const field of ['return_date', 'max_stops']) {
       if (has(field)) violations.push({ field, description: `${field} applies to a departure_date search only.` });
@@ -3065,7 +3068,7 @@ export const RPC_TOOLS: ToolDef[] = [
         return_date: { type: 'string', description: 'Return date in YYYY-MM-DD format for a round-trip itinerary search (optional)' },
         start_date: { type: 'string', description: 'Start of a date range in YYYY-MM-DD format, for the cheapest fare per date. Requires end_date; omit departure_date.' },
         end_date: { type: 'string', description: 'End of the date range in YYYY-MM-DD format, at most 30 days after start_date' },
-        trip_duration: { type: 'number', description: 'Trip length in days for a round-trip date range, e.g. 7 for a one-week trip (optional)' },
+        trip_duration: { type: 'integer', minimum: 1, description: 'Trip length in whole days for a round-trip date range, e.g. 7 for a one-week trip (optional)' },
         cabin_class: { type: 'string', description: 'Cabin class: "economy", "premium_economy", "business", or "first" (optional, default economy)' },
         max_stops: { type: 'string', description: 'Itinerary search only. Max stops: "0" or "non_stop" for nonstop, "1" or "one_stop" for max one stop, or omit for any (optional)' },
         passengers: { type: 'number', description: 'Number of passengers (1-9, default 1)' },
@@ -3107,7 +3110,7 @@ export const RPC_TOOLS: ToolDef[] = [
           start_date: String(params.start_date ?? ''),
           end_date: String(params.end_date ?? ''),
           is_round_trip: String(params.trip_duration !== undefined),
-          ...(params.trip_duration ? { trip_duration: String(params.trip_duration) } : {}),
+          ...(params.trip_duration !== undefined ? { trip_duration: String(params.trip_duration) } : {}),
           cabin_class: String(params.cabin_class ?? 'economy'),
           sort_by_price: String(params.sort_by === 'price'),
           passengers: String(normalizePassengerCount(params.passengers)),

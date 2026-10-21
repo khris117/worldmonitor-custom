@@ -70,6 +70,10 @@ describe('search_flights modes', () => {
       [{ ...ROUTE, start_date: '2026-09-01', end_date: '2026-09-08', max_stops: '0' }, 'max_stops'],
       [{ ...ROUTE, start_date: '2026-09-01', end_date: '2026-09-08', sort_by: 'duration' }, 'sort_by'],
       [{ ...ROUTE, departure_date: '2026-09-01', trip_duration: 7 }, 'trip_duration'],
+      // A duration the route cannot use would otherwise reach it as a round trip with no duration.
+      [{ ...ROUTE, start_date: '2026-09-01', end_date: '2026-09-08', trip_duration: 0 }, 'trip_duration'],
+      [{ ...ROUTE, start_date: '2026-09-01', end_date: '2026-09-08', trip_duration: -3 }, 'trip_duration'],
+      [{ ...ROUTE, start_date: '2026-09-01', end_date: '2026-09-08', trip_duration: 2.5 }, 'trip_duration'],
     ];
     for (const [params, field] of rejected) {
       assert.throws(
