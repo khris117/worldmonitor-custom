@@ -72,7 +72,7 @@ Layers are organized into logical groups for efficient monitoring:
 |-------|-------------|
 | **Ships (AIS)** | Live vessel tracking via AIS with chokepoint monitoring and the strategic-port registry* |
 | **Delays** | FAA airport delay status and ground stops |
-| **Aircraft emergencies** | Aircraft squawking 7500 (unlawful interference), 7600 (radio failure), or 7700 (general emergency) on adsb.lol, polled every 60 seconds. A marker appears only when the last message is at most 120 seconds old and the position at most 90 seconds old; older reports stay in the list. An aircraft that stops reporting becomes "unknown", never "resolved". Receiver coverage is incomplete. Flat map only. Off by default |
+| **Aircraft emergencies** | Aircraft squawking 7500 (unlawful interference), 7600 (radio failure), or 7700 (general emergency) on adsb.lol, polled every 60 seconds. A marker appears only when the last message is at most 120 seconds old and the position at most 90 seconds old; older reports stay in the list for up to 15 minutes after the last observation. An aircraft that stops reporting becomes "unknown", never "resolved". Receiver coverage is incomplete. Flat map only. Off by default |
 | **Live Tanker Positions** | Tankers near six major chokepoints, from AIS. Energy variant only; see [Energy Monitor](/overview#energy-monitor) |
 
 *\*AIS data via [AISStream.io](https://aisstream.io) uses terrestrial receivers with stronger coverage in European/Atlantic waters. Middle East, Asia, and open ocean coverage is limited. Satellite AIS providers (Spire, Kpler) offer global coverage but require commercial licenses.*

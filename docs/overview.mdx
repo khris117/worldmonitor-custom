@@ -105,7 +105,7 @@ The primary variant focuses on geopolitical intelligence, military tracking, and
 | **Strategic Risk Overview** | Composite risk score combining all intelligence modules |
 | **Infrastructure Cascade** | Dependency analysis for cables, pipelines, and chokepoints |
 | **Live Intelligence** | GDELT-powered topic feeds (Military, Cyber, Nuclear, Sanctions) |
-| **Metals & Materials** | Metals and materials quotes from Yahoo Finance, with tabs for physical premiums, EUR FX, and gold priced in other currencies when data is available. Energy prices appear in the Energy Complex panel instead |
+| **Metals & Materials** | Metals and materials quotes from Yahoo Finance, with tabs for physical premiums and EUR FX when that data is available. The gold-in-other-currencies tab appears only in the commodity variant. Energy prices appear in the Energy Complex panel instead |
 | **Toronto Safety** | Toronto Police Service open data: reported major-crime occurrences (approximate, offset locations) and annual calls attended by division and neighbourhood. Not live dispatch. Off by default |
 | **Global Giving** | Published giving benchmarks from platforms and institutions (GoFundMe, GlobalGiving, JustGiving, Candid, OECD), with source periods and verification status. Annualized figures are estimates, not live activity. Off by default here; on in the happy variant |
 
@@ -228,7 +228,7 @@ The commodity variant ([commodity.worldmonitor.app](https://commodity.worldmonit
 
 | Layer | Description |
 |-------|-------------|
-| **Mining Sites** | Major mine sites worldwide, with mineral, country, status (producing, in development, or exploration), and annual output |
+| **Mining Sites** | Major mine sites worldwide, with mineral, country, status (producing, in development, or exploration), and annual output where available |
 | **Processing Plants** | Smelters, refineries, and separation plants |
 | **Commodity Ports** | Mineral export/import ports and terminals |
 | **Commodity Hubs** | Global commodity exchanges |
@@ -289,14 +289,14 @@ The energy variant ([energy.worldmonitor.app](https://energy.worldmonitor.app/da
 | Layer | Description |
 |-------|-------------|
 | **Live Tanker Positions** | Live AIS positions of tankers within about 2° of Hormuz, Suez, Bab el-Mandeb, Malacca, Panama, and the Bosphorus. Amber markers are anchored, cyan are underway, grey have no reported speed. Polled every 60 seconds while the layer is on |
-| **Pipelines** | Oil and gas pipelines from the evidence-backed registry, coloured by status (flowing, reduced, offline, disputed). Selecting one opens the Pipeline Status drawer |
+| **Pipelines** | Oil and gas pipelines from the evidence-backed registry, coloured by status (flowing, reduced, offline, disputed). On the flat map, selecting one opens the Pipeline Status drawer |
 | **Storage Facilities** | Underground gas storage, strategic reserves, LNG terminals, and crude hubs from the Storage Atlas registry |
 | **Fuel Shortages** | Countries with confirmed or watch-level fuel shortages from the Fuel Shortage Registry |
 | **Commodity Ports** | Mineral export and import ports and terminals |
 
 ### Energy Panels
 
-The asset registries behind these panels are curated from operator disclosures, regulator filings, and public datasets. Each status badge is derived from an evidence bundle, and selecting a row or a map marker opens a drawer with that evidence. Methodology: [pipelines](/methodology/pipelines), [storage](/methodology/storage), [fuel shortages](/methodology/shortages), [disruptions](/methodology/disruptions).
+The asset registries behind these panels are curated from operator disclosures, regulator filings, and public datasets. Each status badge is derived from an evidence bundle, and selecting a row, or a marker on the flat map, opens a drawer with that evidence. Methodology: [pipelines](/methodology/pipelines), [storage](/methodology/storage), [fuel shortages](/methodology/shortages), [disruptions](/methodology/disruptions).
 
 | Panel | Description |
 |-------|-------------|

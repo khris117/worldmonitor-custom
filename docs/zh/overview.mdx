@@ -105,7 +105,7 @@ World Monitor 发布了公开且可搜索的[数据源目录（英文）](https:
 | **Strategic Risk Overview** | 综合所有情报模块的综合风险评分 |
 | **Infrastructure Cascade** | 电缆、管道和咽喉要道的依赖分析 |
 | **Live Intelligence** | 基于 GDELT 的主题信息流（军事、网络、核、制裁） |
-| **Metals & Materials** | 来自 Yahoo Finance 的金属与原材料报价；有数据时提供实物溢价、欧元汇率以及以其他货币计价的黄金等标签页。能源价格改在 Energy Complex 面板中显示 |
+| **Metals & Materials** | 来自 Yahoo Finance 的金属与原材料报价；有数据时提供实物溢价和欧元汇率标签页。以其他货币计价的黄金标签页仅在大宗商品变体中显示。能源价格改在 Energy Complex 面板中显示 |
 | **Toronto Safety** | 多伦多警察局开放数据：已报告的重大犯罪事件（位置经过近似偏移）以及按分局和社区统计的年度出警次数。非实时调度数据。默认关闭 |
 | **Global Giving** | 来自平台和机构（GoFundMe、GlobalGiving、JustGiving、Candid、OECD）的已发布捐赠基准，附来源期间和核实状态。年化数字为估算值，非实时活动。此处默认关闭；在 Happy 变体中默认开启 |
 
@@ -228,7 +228,7 @@ World Monitor 发布了公开且可搜索的[数据源目录（英文）](https:
 
 | 图层 | 描述 |
 |-------|-------------|
-| **Mining Sites** | 全球主要矿区，含矿种、国家、状态（生产中、开发中或勘探中）和年产量 |
+| **Mining Sites** | 全球主要矿区，含矿种、国家、状态（生产中、开发中或勘探中）以及年产量（如有） |
 | **Processing Plants** | 冶炼厂、精炼厂和分离厂 |
 | **Commodity Ports** | 矿物进出口港口和码头 |
 | **Commodity Hubs** | 全球大宗商品交易所 |
@@ -289,14 +289,14 @@ Happy 变体（[happy.worldmonitor.app](https://happy.worldmonitor.app/dashboard
 | 图层 | 描述 |
 |-------|-------------|
 | **Live Tanker Positions** | 霍尔木兹、苏伊士、曼德海峡、马六甲、巴拿马和博斯普鲁斯约 2° 范围内油轮的实时 AIS 位置。琥珀色为锚泊，青色为航行中，灰色为无航速报告。图层开启时每 60 秒轮询一次 |
-| **Pipelines** | 来自有证据支撑的注册表的油气管道，按状态着色（flowing、reduced、offline、disputed）。选择一条管道会打开 Pipeline Status 抽屉 |
+| **Pipelines** | 来自有证据支撑的注册表的油气管道，按状态着色（flowing、reduced、offline、disputed）。在平面地图上，选择一条管道会打开 Pipeline Status 抽屉 |
 | **Storage Facilities** | 来自 Storage Atlas 注册表的地下储气库、战略储备、LNG 接收站和原油枢纽 |
 | **Fuel Shortages** | 来自 Fuel Shortage Registry、存在已确认或观察级燃料短缺的国家 |
 | **Commodity Ports** | 矿产进出口港口和码头 |
 
 ### 能源面板
 
-这些面板背后的资产注册表整理自运营商披露、监管机构文件和公开数据集。每个状态徽章都由一组证据推导而来，选择一行或一个地图标记即可打开包含这些证据的抽屉。方法论：[管道](/zh/methodology/pipelines)、[储存](/zh/methodology/storage)、[燃料短缺](/zh/methodology/shortages)、[中断](/zh/methodology/disruptions)。
+这些面板背后的资产注册表整理自运营商披露、监管机构文件和公开数据集。每个状态徽章都由一组证据推导而来，选择一行或平面地图上的一个标记即可打开包含这些证据的抽屉。方法论：[管道](/zh/methodology/pipelines)、[储存](/zh/methodology/storage)、[燃料短缺](/zh/methodology/shortages)、[中断](/zh/methodology/disruptions)。
 
 | 面板 | 描述 |
 |-------|-------------|
