@@ -28,6 +28,17 @@ export const BASELINE_MIN_DAYS = 300;
 // still waiting when the budget runs out keep baseline: null.
 export const BASELINE_BUDGET_MS = 45_000;
 const BASELINE_REQUEST_TIMEOUT_MS = 15_000;
+// Left between the end of the baseline pass and runSeed's fetch deadline.
+const BASELINE_DEADLINE_MARGIN_MS = 10_000;
+
+/**
+ * The baseline budget: BASELINE_BUDGET_MS, cut to what runSeed's fetch
+ * deadline leaves after the history fetch, minus a margin. 0 skips the pass.
+ */
+export function baselineBudgetMs(fetchDeadlineAtMs, nowMs = Date.now()) {
+  if (!Number.isFinite(fetchDeadlineAtMs)) return BASELINE_BUDGET_MS;
+  return Math.max(0, Math.min(BASELINE_BUDGET_MS, fetchDeadlineAtMs - nowMs - BASELINE_DEADLINE_MARGIN_MS));
+}
 
 export const CHOKEPOINTS = [
   { name: 'Suez Canal',          id: 'suez' },
@@ -220,7 +231,7 @@ export async function runFetchPipeline(
   sinceEpoch,
   fetchPagesFn,
   retryDelayMs = 500,
-  { fetchBaselineFn = null, baselineWindow: window = null, baselineBudgetMs = BASELINE_BUDGET_MS } = {},
+  { fetchBaselineFn = null, baselineWindow: window = null, baselineBudgetMs: budgetOverride = null, fetchDeadlineAtMs = null } = {},
 ) {
   const result = {};
   const missing = [];
@@ -270,7 +281,9 @@ export async function runFetchPipeline(
   }
 
   if (fetchBaselineFn && window) {
-    await attachBaselines(result, chokepoints, fetchBaselineFn, window, retryDelayMs, baselineBudgetMs);
+    // Measured after the history passes, so slow history shrinks the budget.
+    const budget = Number.isFinite(budgetOverride) ? budgetOverride : baselineBudgetMs(fetchDeadlineAtMs);
+    await attachBaselines(result, chokepoints, fetchBaselineFn, window, retryDelayMs, budget);
   }
 
   return result;
@@ -332,11 +345,12 @@ async function attachBaselines(result, chokepoints, fetchBaselineFn, window, ret
   }
 }
 
-export async function fetchAll() {
+export async function fetchAll({ fetchDeadlineAtMs = null } = {}) {
   const sinceEpoch = Date.now() - HISTORY_DAYS * DAY_MS;
   const result = await runFetchPipeline(CHOKEPOINTS, sinceEpoch, fetchAllPages, 500, {
     fetchBaselineFn: fetchBaselineStats,
     baselineWindow: baselineWindow(),
+    fetchDeadlineAtMs,
   });
   if (Object.keys(result).length === 0) throw new Error('No chokepoints returned data');
   return result;

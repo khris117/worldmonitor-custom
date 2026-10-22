@@ -530,7 +530,16 @@ describe('seedTransitSummaries (relay)', () => {
     }));
     const fakePortwatch = {
       hormuz_strait: {
-        history: [...makeDays(30, 80, 11), ...hormuzTail],
+        // Fixed dates ending the day before the tail, so the tail stays the
+        // latest week whatever day the suite runs (Date.now() filler overtook
+        // it from 2026-10-30).
+        history: [
+          ...Array.from({ length: 30 }, (_, i) => ({
+            date: new Date(Date.UTC(2026, 9, 11 - i)).toISOString().slice(0, 10),
+            tanker: 0, cargo: 80, other: 0, total: 80,
+          })),
+          ...hormuzTail,
+        ],
         wowChangePct: -10.3,
         baseline: { avgDaily: 87.4, days: 365, from: '2024-10-22', to: '2025-10-21' },
       },

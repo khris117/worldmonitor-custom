@@ -18,7 +18,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BASELINE_BUDGET_MS,
   BASELINE_MIN_DAYS,
+  baselineBudgetMs,
   baselineWindow,
   buildBaseline,
   runFetchPipeline,
@@ -277,6 +279,29 @@ test('baseline: a hung baseline source stops at the budget and keeps every histo
     assert.ok(result[cp.id].history.length, `${cp.id} keeps its history`);
     assert.equal(result[cp.id].baseline, null, `${cp.id} baseline is null`);
   }
+});
+
+// Review on #9550: runSeed's fetch deadline (240s here) is the real bound.
+// When the history passes leave less than the 45s budget, the baseline pass
+// must shrink to what is left, or skip, so the fresh counts still publish.
+test('baseline budget is cut to the time runSeed leaves after history', () => {
+  const now = 1_000_000;
+  assert.equal(baselineBudgetMs(null, now), BASELINE_BUDGET_MS, 'standalone calls keep the fixed budget');
+  assert.equal(baselineBudgetMs(now + 200_000, now), BASELINE_BUDGET_MS);
+  assert.equal(baselineBudgetMs(now + 30_000, now), 20_000, 'a 10s margin stays before the deadline');
+  assert.equal(baselineBudgetMs(now + 5_000, now), 0);
+});
+
+test('baseline: no time left before the fetch deadline skips the pass and keeps every history', async () => {
+  let queried = 0;
+  const result = await runFetchPipeline(CHOKEPOINTS, Date.now(), async () => makeFullHistory(), 0, {
+    fetchBaselineFn: async () => { queried++; return { avg_total: 5, day_count: 365 }; },
+    baselineWindow: WINDOW,
+    fetchDeadlineAtMs: Date.now() + 5_000,
+  });
+  assert.equal(queried, 0, 'no baseline request starts without budget');
+  assert.equal(Object.keys(result).length, CHOKEPOINTS.length);
+  for (const cp of CHOKEPOINTS) assert.equal(result[cp.id].baseline, null);
 });
 
 test('baseline: requests get a timeout no longer than the remaining budget', async () => {
