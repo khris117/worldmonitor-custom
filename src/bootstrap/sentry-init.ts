@@ -85,7 +85,7 @@ function buildSentryInitOptions(): Parameters<SentryNs['init']>[0] {
     enabled: Boolean(sentryDsn) && !location.hostname.startsWith('localhost') && !isDesktopRuntime(),
     allowUrls: SENTRY_ALLOW_URLS,
     maxValueLength: 2048,
-    sendDefaultPii: true,
+    sendDefaultPii: environment === 'production',
     tracesSampleRate: 0.1,
     ignoreErrors: [
       'Invalid WebGL2RenderingContext',

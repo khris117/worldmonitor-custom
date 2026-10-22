@@ -150,6 +150,12 @@ function walkTsFiles(dir) {
 
 // ─── ignoreErrors message matches ────────────────────────────────────────
 
+describe('default PII collection', () => {
+  it('collects IP and default PII only on production hosts', () => {
+    assert.match(mainSrc, /sendDefaultPii: environment === 'production',/);
+  });
+});
+
 describe('ignoreErrors filters', () => {
   it('suppresses Clerk SDK UI chunk load failure', () => {
     assert.ok(
