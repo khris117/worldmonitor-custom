@@ -2017,6 +2017,20 @@ describe('CI workflow coverage', () => {
     }
   });
 
+  it('includes every audited npm manifest and lockfile in the sparse checkout', () => {
+    const checkout = YAML.parse(securityAuditWorkflow).jobs['audit-lockfile'].steps[0];
+    assert.equal(checkout.with['sparse-checkout-cone-mode'], false);
+    assert.equal(checkout.with.filter, undefined, 'an explicit filter overrides the checkout action sparse patterns');
+    const paths = new Set(checkout.with['sparse-checkout'].trim().split('\n'));
+    assert.ok(paths.has('/.github/scripts/audit-production-dependencies.mjs'));
+    for (const step of securityAuditSteps()) {
+      for (const option of ['package-json', 'lockfile']) {
+        const path = step.run.match(new RegExp(`--${option} "([^"]+)"`))?.[1];
+        assert.ok(paths.has(`/${path}`), `sparse checkout must include ${path}`);
+      }
+    }
+  });
+
   it('keeps the aggregate verdict list in step with the audit steps', () => {
     const names = securityAuditSteps().map((step: { env: { AUDIT_STATUS_FILE: string } }) =>
       step.env.AUDIT_STATUS_FILE.match(/audit-status\/([^/]+)\.txt$/)?.[1],
