@@ -2031,6 +2031,17 @@ describe('CI workflow coverage', () => {
     }
   });
 
+  it('preserves npm configuration for each sparse audit workspace', () => {
+    const checkout = YAML.parse(securityAuditWorkflow).jobs['audit-lockfile'].steps[0];
+    const paths = new Set(checkout.with['sparse-checkout'].trim().split('\n'));
+    const configs = execFileSync('git', ['ls-files', '--', '.npmrc', '**/.npmrc'], { cwd: root, encoding: 'utf8' })
+      .trim().split('\n').filter(Boolean);
+    const workspaces = new Set(securityAuditLockfiles().map(dirname));
+    for (const config of configs.filter((path) => workspaces.has(dirname(path)))) {
+      assert.ok(paths.has(`/${config}`), `sparse checkout must retain npm configuration ${config}`);
+    }
+  });
+
   it('keeps the aggregate verdict list in step with the audit steps', () => {
     const names = securityAuditSteps().map((step: { env: { AUDIT_STATUS_FILE: string } }) =>
       step.env.AUDIT_STATUS_FILE.match(/audit-status\/([^/]+)\.txt$/)?.[1],
