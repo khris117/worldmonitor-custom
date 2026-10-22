@@ -2042,6 +2042,28 @@ describe('CI workflow coverage', () => {
     }
   });
 
+  it('includes Rust policy inputs and every local audit helper in the sparse checkout', () => {
+    const checkout = YAML.parse(securityAuditWorkflow).jobs['audit-rust'].steps[0];
+    assert.equal(checkout.with['sparse-checkout-cone-mode'], false);
+    assert.equal(checkout.with.filter, undefined);
+    const paths = new Set(checkout.with['sparse-checkout'].trim().split('\n'));
+    for (const path of ['src-tauri/Cargo.lock', '.github/rust-advisory-decisions.json']) {
+      assert.ok(paths.has(`/${path}`), `sparse checkout must include ${path}`);
+    }
+    const pending = ['.github/scripts/audit-rust-dependencies.mjs'];
+    const visited = new Set<string>();
+    while (pending.length) {
+      const path = pending.pop()!;
+      if (visited.has(path)) continue;
+      visited.add(path);
+      assert.ok(paths.has(`/${path}`), `sparse checkout must include local helper ${path}`);
+      const source = read(resolve(root, path));
+      for (const match of source.matchAll(/(?:import|export)[^;]*?from ['"](\.[^'"]+)['"]/g)) {
+        pending.push(resolve(root, dirname(path), match[1]).slice(root.length + 1));
+      }
+    }
+  });
+
   it('keeps the aggregate verdict list in step with the audit steps', () => {
     const names = securityAuditSteps().map((step: { env: { AUDIT_STATUS_FILE: string } }) =>
       step.env.AUDIT_STATUS_FILE.match(/audit-status\/([^/]+)\.txt$/)?.[1],
