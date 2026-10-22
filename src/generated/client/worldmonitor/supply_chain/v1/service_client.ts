@@ -83,7 +83,7 @@ export interface TransitSummary {
   todayCountsAvailable: boolean;
   officialLatestDate: string;
   officialLatestTotal: number;
-  officialAvg7d: number;
+  officialAvg7d?: number;
   baselineAvgDaily: number;
   baselineFrom: string;
   baselineTo: string;

@@ -58740,7 +58740,7 @@ components:
                     type: string
                     description: |-
                         IMF PortWatch latest published day, YYYY-MM-DD (~4-day lag); empty means
-                         withhold official_latest_total (that day) and official_avg_7d (7-day mean).
+                         withhold official_latest_total and official_avg_7d (absent below 7 days).
                 officialLatestTotal:
                     type: integer
                     format: int32

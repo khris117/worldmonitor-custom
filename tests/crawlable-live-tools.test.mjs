@@ -235,6 +235,29 @@ describe('crawlable live intelligence view models', () => {
     }],
   });
 
+  // Review on #9550: fewer than 7 published days gives a latest day but no
+  // 7-day mean. The wire omits the mean; the page must not print "0 a day" or
+  // "0%" of the baseline, which would read as a traffic halt.
+  it('withholds the 7-day average and baseline share when the wire omits the mean', () => {
+    const transitSummary = { ...HORMUZ_PORTWATCH_PAYLOAD.chokepoints[0].transitSummary };
+    delete transitSummary.officialAvg7d;
+    const payload = { ...HORMUZ_PORTWATCH_PAYLOAD, chokepoints: [{ ...HORMUZ_PORTWATCH_PAYLOAD.chokepoints[0], transitSummary }] };
+    const view = chokepointStatusViewModel(payload, 'hormuz_strait', NOW);
+    assert.equal(view.officialLatestTotal, 4);
+    assert.equal(view.officialAvg7d, null);
+    const html = renderChokepointLiveSection({
+      chokepoint: { id: 'hormuz_strait', displayName: 'Strait of Hormuz' },
+      pulse: chokepointPulseRecord(view),
+      live: true,
+    });
+    const { document } = new Window({ url: 'https://www.worldmonitor.app/chokepoints/strait-of-hormuz/' });
+    document.body.innerHTML = html;
+    const passage = document.querySelector('[data-chokepoint-open-status]').textContent;
+    assert.match(passage, /IMF PortWatch counted 4 transits/);
+    assert.doesNotMatch(passage, /7-day average|% of the/);
+    assert.doesNotMatch(document.body.textContent, /\b0 a day\b|\b0% of\b/);
+  });
+
   it('headlines the IMF PortWatch daily count and never publishes the relay AIS count as transits (Hormuz 2026-10-22)', async () => {
     const view = chokepointStatusViewModel(HORMUZ_PORTWATCH_PAYLOAD, 'hormuz_strait', NOW);
     assert.equal(view.officialLatestDate, '2026-10-18');

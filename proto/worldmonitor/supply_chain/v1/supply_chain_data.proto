@@ -198,10 +198,10 @@ message TransitSummary {
   // unsupplied, not a measured zero.
   bool today_counts_available = 13;
   // IMF PortWatch latest published day, YYYY-MM-DD (~4-day lag); empty means
-  // withhold official_latest_total (that day) and official_avg_7d (7-day mean).
+  // withhold official_latest_total and official_avg_7d (absent below 7 days).
   string official_latest_date = 14;
   int32 official_latest_total = 15;
-  double official_avg_7d = 16;
+  optional double official_avg_7d = 16;
   // Mean daily transits, 12 months ending a year before the seed; 0 means
   // withhold. baseline_from/to: YYYY-MM-DD bounds, inclusive.
   double baseline_avg_daily = 17;

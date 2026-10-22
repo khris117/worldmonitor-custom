@@ -517,7 +517,8 @@ async function fetchChokepointData(): Promise<ChokepointFetchResult> {
         // predates the fields both land on the empty value.
         officialLatestDate: ts.officialLatestDate ?? '',
         officialLatestTotal: ts.officialLatestTotal ?? 0,
-        officialAvg7d: ts.officialAvg7d ?? 0,
+        // Absent, not 0: a short history has a latest day but no 7-day mean.
+        officialAvg7d: ts.officialAvg7d ?? undefined,
         baselineAvgDaily: ts.baselineAvgDaily ?? 0,
         baselineFrom: ts.baselineFrom ?? '',
         baselineTo: ts.baselineTo ?? '',
@@ -533,7 +534,7 @@ async function fetchChokepointData(): Promise<ChokepointFetchResult> {
         // Default true for pre-fix writers (absence = covered). New writers
         // explicitly emit false for canonical zero-state fills.
         dataAvailable: transitMovementAvailable,
-      } : { todayTotal: 0, todayTanker: 0, todayCargo: 0, todayOther: 0, todayCountsAvailable: false, wowChangePct: 0, officialLatestDate: '', officialLatestTotal: 0, officialAvg7d: 0, baselineAvgDaily: 0, baselineFrom: '', baselineTo: '', history: [], riskLevel: '', incidentCount7d: 0, disruptionPct: 0, riskSummary: '', riskReportAction: '', dataAvailable: false },
+      } : { todayTotal: 0, todayTanker: 0, todayCargo: 0, todayOther: 0, todayCountsAvailable: false, wowChangePct: 0, officialLatestDate: '', officialLatestTotal: 0, baselineAvgDaily: 0, baselineFrom: '', baselineTo: '', history: [], riskLevel: '', incidentCount7d: 0, disruptionPct: 0, riskSummary: '', riskReportAction: '', dataAvailable: false },
       flowEstimate: flowsData?.[cp.id] ? {
         currentMbd: flowsData[cp.id]!.currentMbd,
         baselineMbd: flowsData[cp.id]!.baselineMbd,

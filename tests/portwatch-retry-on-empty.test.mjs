@@ -260,6 +260,36 @@ test('baseline: a rejected baseline is retried once and then stored as null with
   assert.equal(Object.keys(result).length, CHOKEPOINTS.length, 'no chokepoint is dropped by the baseline pass');
 });
 
+// Review on #9550: 13 timed-out baseline queries plus retries outran the
+// fetch-phase deadline, so runSeed published nothing and the fresh daily
+// counts were lost for an optional comparison.
+test('baseline: a hung baseline source stops at the budget and keeps every history', async () => {
+  const started = Date.now();
+  const result = await runFetchPipeline(CHOKEPOINTS, Date.now(), async () => makeFullHistory(), 0, {
+    fetchBaselineFn: () => new Promise(() => {}),
+    baselineWindow: WINDOW,
+    baselineBudgetMs: 300,
+  });
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 2_000, `baseline pass ran ${elapsed}ms against a 300ms budget`);
+  assert.equal(Object.keys(result).length, CHOKEPOINTS.length, 'no chokepoint is dropped');
+  for (const cp of CHOKEPOINTS) {
+    assert.ok(result[cp.id].history.length, `${cp.id} keeps its history`);
+    assert.equal(result[cp.id].baseline, null, `${cp.id} baseline is null`);
+  }
+});
+
+test('baseline: requests get a timeout no longer than the remaining budget', async () => {
+  const timeouts = [];
+  await runFetchPipeline(CHOKEPOINTS, Date.now(), async () => makeFullHistory(), 0, {
+    fetchBaselineFn: async (_name, _window, timeoutMs) => { timeouts.push(timeoutMs); return { avg_total: 5, day_count: 365 }; },
+    baselineWindow: WINDOW,
+    baselineBudgetMs: 1_000,
+  });
+  assert.equal(timeouts.length, CHOKEPOINTS.length);
+  assert.ok(timeouts.every((ms) => ms > 0 && ms <= 1_000), `timeouts ${timeouts.join(',')}`);
+});
+
 test('baseline: a thin window stores null rather than a partial-year mean', async () => {
   const result = await runFetchPipeline(CHOKEPOINTS, Date.now(), async () => makeFullHistory(), 0, {
     fetchBaselineFn: async (name) => (name === 'Gibraltar Strait'

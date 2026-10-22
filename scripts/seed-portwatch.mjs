@@ -22,6 +22,12 @@ export const BASELINE_WINDOW_DAYS = 365;
 export const BASELINE_LAG_DAYS = 365;
 // Below this many published days the mean is not a year's normal.
 export const BASELINE_MIN_DAYS = 300;
+// Wall-clock budget for the whole baseline pass. The baseline only qualifies
+// the daily history, so it must never push the fetch phase past its deadline
+// (300s bundle section, ~260s fetch) and cost the fresh counts. Chokepoints
+// still waiting when the budget runs out keep baseline: null.
+export const BASELINE_BUDGET_MS = 45_000;
+const BASELINE_REQUEST_TIMEOUT_MS = 15_000;
 
 export const CHOKEPOINTS = [
   { name: 'Suez Canal',          id: 'suez' },
@@ -115,7 +121,7 @@ export function baselineWindow(nowMs = Date.now()) {
   return { fromEpoch, toEpoch, from: formatDate(fromEpoch), to: formatDate(toEpoch - DAY_MS) };
 }
 
-export async function fetchBaselineStats(portname, { fromEpoch, toEpoch }) {
+export async function fetchBaselineStats(portname, { fromEpoch, toEpoch }, timeoutMs = BASELINE_REQUEST_TIMEOUT_MS) {
   const params = new URLSearchParams({
     where: `portname='${portname.replace(/'/g, "''")}' AND date >= ${epochToTimestamp(fromEpoch)} AND date < ${epochToTimestamp(toEpoch)}`,
     outStatistics: JSON.stringify([
@@ -126,7 +132,7 @@ export async function fetchBaselineStats(portname, { fromEpoch, toEpoch }) {
   });
   const resp = await fetch(`${ARCGIS_BASE}?${params}`, {
     headers: { 'User-Agent': CHROME_UA, Accept: 'application/json' },
-    signal: AbortSignal.timeout(FETCH_TIMEOUT),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   if (!resp.ok) throw new Error(`ArcGIS HTTP ${resp.status} for ${portname} baseline`);
   const body = await resp.json();
@@ -214,7 +220,7 @@ export async function runFetchPipeline(
   sinceEpoch,
   fetchPagesFn,
   retryDelayMs = 500,
-  { fetchBaselineFn = null, baselineWindow: window = null } = {},
+  { fetchBaselineFn = null, baselineWindow: window = null, baselineBudgetMs = BASELINE_BUDGET_MS } = {},
 ) {
   const result = {};
   const missing = [];
@@ -264,13 +270,29 @@ export async function runFetchPipeline(
   }
 
   if (fetchBaselineFn && window) {
-    await attachBaselines(result, chokepoints, fetchBaselineFn, window, retryDelayMs);
+    await attachBaselines(result, chokepoints, fetchBaselineFn, window, retryDelayMs, baselineBudgetMs);
   }
 
   return result;
 }
 
-async function attachBaselines(result, chokepoints, fetchBaselineFn, window, retryDelayMs) {
+// Settles within `ms` even if the request ignores its own timeout, so the
+// baseline budget is a wall-clock bound.
+function withinMs(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`baseline budget exhausted after ${ms}ms`)), ms); }),
+  ]).finally(() => clearTimeout(timer));
+}
+
+async function attachBaselines(result, chokepoints, fetchBaselineFn, window, retryDelayMs, budgetMs) {
+  const deadline = Date.now() + budgetMs;
+  const remaining = () => deadline - Date.now();
+  const request = (cp) => {
+    const ms = Math.min(BASELINE_REQUEST_TIMEOUT_MS, remaining());
+    return withinMs(fetchBaselineFn(cp.name, window, ms), ms);
+  };
   const covered = chokepoints.filter(cp => result[cp.id]);
   const failed = [];
   const store = (cp, stats) => {
@@ -280,10 +302,14 @@ async function attachBaselines(result, chokepoints, fetchBaselineFn, window, ret
       console.warn(`  [PortWatch] ${cp.name}: baseline withheld — ${Number(stats?.day_count) || 0} published days in ${window.from}..${window.to} (need ${BASELINE_MIN_DAYS})`);
     }
   };
+  const skip = (cps) => {
+    if (cps.length) console.warn(`[PortWatch] Baseline budget (${budgetMs}ms) spent; history kept, baseline null for: ${cps.map(cp => cp.id).join(', ')}`);
+  };
 
   for (let i = 0; i < covered.length; i += CONCURRENCY) {
+    if (remaining() <= 0) { skip(covered.slice(i)); return; }
     const batch = covered.slice(i, i + CONCURRENCY);
-    const settled = await Promise.allSettled(batch.map(cp => fetchBaselineFn(cp.name, window)));
+    const settled = await Promise.allSettled(batch.map(request));
     for (let j = 0; j < batch.length; j++) {
       const outcome = settled[j];
       if (outcome.status === 'rejected') {
@@ -295,10 +321,11 @@ async function attachBaselines(result, chokepoints, fetchBaselineFn, window, ret
     }
   }
 
-  for (const cp of failed) {
-    if (retryDelayMs > 0) await new Promise(r => setTimeout(r, retryDelayMs));
+  for (const [k, cp] of failed.entries()) {
+    if (retryDelayMs > 0) await new Promise(r => setTimeout(r, Math.min(retryDelayMs, Math.max(0, remaining()))));
+    if (remaining() <= 0) { skip(failed.slice(k)); return; }
     try {
-      store(cp, await fetchBaselineFn(cp.name, window));
+      store(cp, await request(cp));
     } catch (e) {
       console.warn(`  [PortWatch] ${cp.name}: baseline retry rejected — ${e?.message || e}; history kept, baseline null`);
     }

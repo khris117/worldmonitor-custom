@@ -413,6 +413,12 @@ describe('chokepoint source availability', () => {
       officialLatestDate: '2026-10-18', officialLatestTotal: 35, officialAvg7d: 36.9,
       baselineAvgDaily: null, baselineFrom: null, baselineTo: null,
     });
+    // Review on #9550: a short PortWatch history has a latest day but fewer
+    // than 7 days, so no 7-day mean. It must stay absent, not become 0.
+    Object.assign(summaries.taiwan_strait!, {
+      officialLatestDate: '2026-10-18', officialLatestTotal: 6, officialAvg7d: null,
+      baselineAvgDaily: 30, baselineFrom: '2024-10-22', baselineTo: '2025-10-21',
+    });
     // A relay row written before the fields existed carries none of them.
     // (panama keeps the completeTransitSummaries shape untouched.)
     // A chokepoint PortWatch dropped this cycle: null official figures.
@@ -438,6 +444,8 @@ describe('chokepoint source availability', () => {
       },
       'the relay count and the official figures travel side by side; the page chooses the official one',
     );
+    assert.equal(row('taiwan_strait')?.officialLatestTotal, 6);
+    assert.equal(row('taiwan_strait')?.officialAvg7d, undefined, 'a missing 7-day mean is absent on the wire, not 0');
     assert.equal(row('suez')?.officialLatestTotal, 35);
     assert.equal(row('suez')?.baselineAvgDaily, 0, 'a null baseline is the proto zero');
     assert.equal(row('suez')?.baselineFrom, '', 'with an empty window, which is the withhold signal');
@@ -446,7 +454,7 @@ describe('chokepoint source availability', () => {
       const ts = row(id)!;
       assert.equal(ts.officialLatestDate, '', `${id}: empty date is the withhold signal for the latest count`);
       assert.equal(ts.officialLatestTotal, 0);
-      assert.equal(ts.officialAvg7d, 0);
+      assert.equal(ts.officialAvg7d, undefined);
       assert.equal(ts.baselineAvgDaily, 0);
       assert.equal(ts.baselineFrom, '');
       assert.equal(ts.baselineTo, '');
