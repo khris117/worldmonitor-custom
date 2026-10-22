@@ -120,7 +120,7 @@ if (!skipNodeRuntime) {
     process.exit(1);
   }
   console.log(
-    `[desktop-package] Bundling Node runtime TARGET=${nodeTarget} VERSION=${env.NODE_VERSION ?? '22.14.0'}`
+    `[desktop-package] Bundling Node runtime TARGET=${nodeTarget}`
   );
   const downloadResult = spawnSync('bash', ['scripts/download-node.sh', '--target', nodeTarget], {
     env: {
