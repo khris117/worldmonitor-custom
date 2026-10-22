@@ -15,7 +15,6 @@ import {
 import { isDebugBearRumScriptFrame } from '../src/bootstrap/debugbear-rum.ts';
 import { isIosLikeUserAgent } from '../src/bootstrap/platform-ua.ts';
 import { isolateNonProductionSentryEvent } from '../shared/sentry-build-metadata.ts';
-import { sanitizeSentryTelemetry } from '../shared/sentry-privacy.ts';
 import { buildCheckoutReportTags } from '../src/services/checkout-sentry-policy.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -55,7 +54,7 @@ assert.ok(tpMatch, 'THIRD_PARTY_FETCH_HOST_ALLOWLIST must be defined in src/boot
 // eslint-disable-next-line no-new-func
 const rawBeforeSend = new Function(
   'event', 'isDebugBearRumScriptFrame', 'isIosLikeUserAgent', 'navigator',
-  'isolateNonProductionSentryEvent', 'environment', 'sanitizeSentryTelemetry',
+  'isolateNonProductionSentryEvent', 'environment',
   `${tpMatch[0]}\n${fnBody}`,
 );
 
@@ -82,7 +81,7 @@ const IOS_NAVIGATOR = { userAgent: IOS_GOOGLE_APP_UA, maxTouchPoints: 5 };
 const IPADOS_NAVIGATOR = { userAgent: MAC_DESKTOP_UA, maxTouchPoints: 5 };
 
 function beforeSend(event, navigatorStub = DESKTOP_NAVIGATOR, environment = 'production') {
-  return rawBeforeSend(event, isDebugBearRumScriptFrame, isIosLikeUserAgent, navigatorStub, isolateNonProductionSentryEvent, environment, sanitizeSentryTelemetry);
+  return rawBeforeSend(event, isDebugBearRumScriptFrame, isIosLikeUserAgent, navigatorStub, isolateNonProductionSentryEvent, environment);
 }
 
 // Extract the `ignoreErrors` array literal so tests can assert which messages
@@ -240,7 +239,7 @@ describe('first-party file detection', () => {
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       const filter = ${rawBeforeSend.toString()};
       const run = event => filter(event, () => false, () => false,
-        ${JSON.stringify(DESKTOP_NAVIGATOR)}, event => event, 'production', event => event);
+        ${JSON.stringify(DESKTOP_NAVIGATOR)}, event => event, 'production');
       process.stdout.write(JSON.stringify({
         malformed: run(${JSON.stringify(malformed)}),
         wellFormed: run(${JSON.stringify(wellFormed)}),
@@ -781,7 +780,7 @@ describe('zero-frame async-rejection patterns (timeout / DOMException / OOM / DO
       assert.equal(event.exception.values[0].stacktrace?.frames?.length ?? 0, 0);
       event.tags = { kind: 'panel_call_rejected', panel: 'insights', method: 'updateInsights', dispatch };
       assert.equal(isIgnored('signal timed out'), false);
-      assert.deepEqual(beforeSend(event), event);
+      assert.equal(beforeSend(event), event);
     });
   }
 
@@ -834,7 +833,7 @@ describe('zero-frame async-rejection patterns (timeout / DOMException / OOM / DO
       assert.equal(event.exception.values[0].stacktrace?.frames?.length ?? 0, 0);
       event.tags = { kind };
       assert.equal(isIgnored('signal timed out'), false);
-      assert.deepEqual(beforeSend(event), event);
+      assert.equal(beforeSend(event), event);
     });
   }
 
@@ -867,7 +866,7 @@ describe('zero-frame async-rejection patterns (timeout / DOMException / OOM / DO
       );
       const event = makeEvent(message, name, []);
       event.tags = { ...CHECKOUT_REPORT_TAGS };
-      assert.deepEqual(beforeSend(event), event);
+      assert.equal(beforeSend(event), event);
     });
 
     it(`still suppresses ${label} with no first-party report`, () => {
@@ -2206,7 +2205,7 @@ describe('bare "Failed to fetch" is decided by host, not stack shape (WORLDMONIT
     // Owned: the one verdict that changed.
     const owned = makeEvent('Load failed (api.worldmonitor.app)', 'TypeError', []);
     owned.tags = { ...CHECKOUT_REPORT_TAGS };
-    assert.deepEqual(beforeSend(owned), owned);
+    assert.equal(beforeSend(owned), owned);
   });
 
   // ── The shape that hid a P0 ────────────────────────────────────────────────
