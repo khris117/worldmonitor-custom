@@ -16,6 +16,7 @@ import { isDebugBearRumScriptFrame } from '../src/bootstrap/debugbear-rum.ts';
 import { isIosLikeUserAgent } from '../src/bootstrap/platform-ua.ts';
 import { isolateNonProductionSentryEvent } from '../shared/sentry-build-metadata.ts';
 import { buildCheckoutReportTags } from '../src/services/checkout-sentry-policy.ts';
+import { scrubSentryCredentials } from '../shared/sensitive-url-params.ts';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -54,7 +55,7 @@ assert.ok(tpMatch, 'THIRD_PARTY_FETCH_HOST_ALLOWLIST must be defined in src/boot
 // eslint-disable-next-line no-new-func
 const rawBeforeSend = new Function(
   'event', 'isDebugBearRumScriptFrame', 'isIosLikeUserAgent', 'navigator',
-  'isolateNonProductionSentryEvent', 'environment',
+  'isolateNonProductionSentryEvent', 'environment', 'scrubSentryCredentials',
   `${tpMatch[0]}\n${fnBody}`,
 );
 
@@ -81,7 +82,7 @@ const IOS_NAVIGATOR = { userAgent: IOS_GOOGLE_APP_UA, maxTouchPoints: 5 };
 const IPADOS_NAVIGATOR = { userAgent: MAC_DESKTOP_UA, maxTouchPoints: 5 };
 
 function beforeSend(event, navigatorStub = DESKTOP_NAVIGATOR, environment = 'production') {
-  return rawBeforeSend(event, isDebugBearRumScriptFrame, isIosLikeUserAgent, navigatorStub, isolateNonProductionSentryEvent, environment);
+  return rawBeforeSend(event, isDebugBearRumScriptFrame, isIosLikeUserAgent, navigatorStub, isolateNonProductionSentryEvent, environment, scrubSentryCredentials);
 }
 
 // Extract the `ignoreErrors` array literal so tests can assert which messages
@@ -245,7 +246,7 @@ describe('first-party file detection', () => {
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
       const filter = ${rawBeforeSend.toString()};
       const run = event => filter(event, () => false, () => false,
-        ${JSON.stringify(DESKTOP_NAVIGATOR)}, event => event, 'production');
+        ${JSON.stringify(DESKTOP_NAVIGATOR)}, event => event, 'production', event => event);
       process.stdout.write(JSON.stringify({
         malformed: run(${JSON.stringify(malformed)}),
         wellFormed: run(${JSON.stringify(wellFormed)}),
