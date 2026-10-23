@@ -31,6 +31,7 @@ import {
   parseRssItems,
   validateAdvisoryReport,
 } from '../scripts/seed-security-advisories.mjs';
+import { freshnessMetaDiagnosticsPatch } from '../scripts/_seed-utils.mjs';
 
 const FIXTURE = readFileSync(new URL('./fixtures/smartraveller-advisories-2026-10-23.rss', import.meta.url), 'utf8');
 
@@ -165,7 +166,25 @@ describe('advisory source health', () => {
     });
     assert.equal(report.byCountry.LY, 'do-not-travel');
     const { freshnessMetaPatch } = await advisoryAfterPublish(report);
-    assert.deepEqual(freshnessMetaPatch, { sourceState: 'ok', emptyFeeds: [] });
+    assert.equal(freshnessMetaPatch.sourceState, 'ok');
+    assert.deepEqual(freshnessMetaPatch.emptyFeeds, []);
+  });
+
+  // A validation skip merges the previous seed-meta's diagnostics UNDER the
+  // hook's patch (runSeed's skip path), so a recovered run must clear the old
+  // failure fields explicitly or they sit next to sourceState 'ok'.
+  it('clears a previous failure when the registers recover on a validation skip', async () => {
+    const report = await fetchAll({
+      feeds: [STATE_DEPT, SMARTRAVELLER],
+      doFetch: routedFetch({ [STATE_DEPT.url]: respond(STATE_DEPT_RSS), [SMARTRAVELLER.url]: respond(FIXTURE) }),
+    });
+    const { freshnessMetaPatch } = await advisoryAfterPublish(report);
+    const previous = { fetchedAt: 1, recordCount: 228, sourceState: 'degraded', errorCode: 'ADVISORY_REGISTER_MISSING_AU', failedSources: ['AU'], emptyFeeds: ['x'] };
+    const merged = JSON.parse(JSON.stringify({
+      ...freshnessMetaDiagnosticsPatch(previous),
+      ...freshnessMetaDiagnosticsPatch(freshnessMetaPatch),
+    }));
+    assert.deepEqual(merged, { sourceState: 'ok', emptyFeeds: [] });
   });
 
   // When no register yields a level the report fails validation and runSeed

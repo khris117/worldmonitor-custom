@@ -339,7 +339,11 @@ export function advisoryPublishTransform(data) {
 
 export async function advisoryAfterPublish(data) {
   const { missingRegisters = [], emptyFeeds = [] } = data?.[ADVISORY_SOURCE_HEALTH_FIELD] || {};
-  if (missingRegisters.length === 0) return { freshnessMetaPatch: { sourceState: 'ok', emptyFeeds } };
+  if (missingRegisters.length === 0) {
+    // Explicit undefineds: a validation skip merges the previous seed-meta's
+    // diagnostics under this patch, so a recovery must clear the old failure.
+    return { freshnessMetaPatch: { sourceState: 'ok', errorCode: undefined, failedSources: undefined, emptyFeeds } };
+  }
   return {
     freshnessMetaPatch: {
       sourceState: 'degraded',
