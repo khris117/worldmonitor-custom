@@ -234,11 +234,19 @@ function trimStrikeTally(raw: unknown): unknown {
 export function trimCiiRawInputs(raw: CiiRawInputs): CiiRawInputs {
   const nullable = <T,>(v: unknown, fn: (v: any) => T): T | null => (v == null ? null : fn(v));
   return {
-    ucdp: nullable(raw.ucdp, (v) => ({
-      events: rows(v, 'events')
-        .filter((e) => nameCode(e?.country || e?.location))
-        .map((e) => pick(e, e?.country ? ['country', 'dateStart', 'deathsBest'] : ['location', 'dateStart', 'deathsBest'])),
-    })),
+    // A payload with the writers' window aggregates is scored from them, not from
+    // `events`: keep the Tier-1 countries' day rows and the global day totals the
+    // read-time window check counts (all countries, so the trim cannot change it).
+    ucdp: nullable(raw.ucdp, (v) => (isObj(v) && isObj(v.countryDays)
+      ? {
+        countryDays: Object.fromEntries(Object.entries(v.countryDays).filter(([name]) => nameCode(name))),
+        dailyTotals: Array.isArray(v.dailyTotals) ? v.dailyTotals : [],
+      }
+      : {
+        events: rows(v, 'events')
+          .filter((e) => nameCode(e?.country || e?.location))
+          .map((e) => pick(e, e?.country ? ['country', 'dateStart', 'deathsBest'] : ['location', 'dateStart', 'deathsBest'])),
+      })),
     // `country` is not scored; it shows which records the countryCode reader fails to map.
     outages: nullable(raw.outages, (v) => ({
       outages: rows(v, 'outages').map((o) => pick(o, ['countryCode', 'country_code', 'severity', 'country'])),

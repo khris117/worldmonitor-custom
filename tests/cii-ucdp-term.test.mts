@@ -1,0 +1,180 @@
+// UCDP organised violence in the CII (v15, Stage B6): a continuous, decayed,
+// per-capita term inside Conflict replaces the v8-v14 war/minor class floors,
+// and the cache window is checked at read time (P9).
+// See CII_UCDP_* in server/worldmonitor/intelligence/v1/_risk-config.ts.
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import { assessCiiInputs } from '../api/_cii-input-health.js';
+import { loadCiiFixtures } from '../scripts/lib/cii-fixtures.mts';
+import {
+  CII_HEALTH_INPUT_IDS,
+  assessCiiInputWindows,
+  assessUcdpWindow,
+  buildCiiAuxiliarySources,
+  parseUcdpCache,
+  scoreCiiAuxiliarySources,
+  ucdpViolenceRates,
+  ucdpViolenceScore,
+  withCiiInputQuietClocks,
+  type AuxiliarySources,
+} from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
+import * as riskConfig from '../server/worldmonitor/intelligence/v1/_risk-config.ts';
+import { TIER1_COUNTRIES } from '../server/worldmonitor/intelligence/v1/_shared.ts';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const NOW = Date.UTC(2026, 9, 23, 9, 46);
+const CODES = Object.keys(TIER1_COUNTRIES).sort();
+const FIXTURES = loadCiiFixtures();
+
+const parse = (inputs: object, nowMs: number) => buildCiiAuxiliarySources(inputs, nowMs, { iranEventsEnabled: true });
+const table = (aux: AuxiliarySources, nowMs: number) => Object.fromEntries(scoreCiiAuxiliarySources(aux, { nowMs }).rows.map((r) => [r.region, r]));
+const ucdpRow = (code: string, deathsBest: number, dateStart: number) => ({ country: TIER1_COUNTRIES[code], deathsBest, dateStart });
+
+/** An empty build with live (empty) advisories, so no fallback level applies. */
+function background(nowMs = NOW): AuxiliarySources {
+  const aux = parse({}, nowMs);
+  aux.advisories = { byCountry: {} };
+  return aux;
+}
+
+describe('CII UCDP term: no step functions on event counts', () => {
+  it('one more UCDP event (one death, yesterday) moves no country by more than 3 points on any fixture', () => {
+    const jumps: string[] = [];
+    for (const f of FIXTURES) {
+      const aux = parse(f.inputs, f.nowMs);
+      const before = table(aux, f.nowMs);
+      const after = table({ ...aux, ucdpEvents: [...aux.ucdpEvents, ...CODES.map((code) => ucdpRow(code, 1, f.nowMs - DAY_MS))] }, f.nowMs);
+      for (const code of CODES) {
+        const delta = after[code]!.combinedScore - before[code]!.combinedScore;
+        if (Math.abs(delta) > 3) jumps.push(`${code} ${delta > 0 ? '+' : ''}${delta} (${f.label})`);
+      }
+    }
+    assert.deepEqual(jumps, [], `one UCDP event is a step: ${jumps.join(', ')}`);
+  });
+
+  it('no UCDP floor exists or binds', () => {
+    for (const f of FIXTURES) {
+      for (const row of Object.values(table(parse(f.inputs, f.nowMs), f.nowMs))) {
+        assert.ok(!('ucdp' in row.floors), `${row.region} (${f.label}) still carries a UCDP floor of ${(row.floors as any).ucdp}`);
+      }
+    }
+  });
+
+  it('the same deaths per capita give the same Conflict component in every country (P2, P10)', () => {
+    const aux = background();
+    // Two deaths per million people a week ago, as one event.
+    aux.ucdpEvents = CODES.map((code) => ucdpRow(code, 2 * riskConfig.CII_POPULATION_MILLIONS[code]!, NOW - 7 * DAY_MS));
+    const t = table(aux, NOW);
+    const conflicts = new Set(CODES.map((code) => t[code]!.components.conflict.toFixed(6)));
+    assert.equal(conflicts.size, 1, `Conflict differs across countries for the same per-capita evidence: ${CODES.map((c) => `${c} ${t[c]!.components.conflict}`).join(', ')}`);
+    assert.ok(Number([...conflicts][0]) > 0, 'per-capita evidence must reach Conflict');
+  });
+});
+
+describe('CII UCDP term: shape', () => {
+  const { CII_UCDP_CONFLICT_CAP: CAP, CII_UCDP_HALF_LIFE_DAYS: H, CII_UCDP_WINDOW_DAYS: W, CII_POPULATION_MILLIONS: POP } = riskConfig;
+
+  it('has a population for every Tier-1 country', () => {
+    assert.deepEqual(CODES.filter((code) => !(POP[code]! > 0)), []);
+  });
+
+  it('reads deaths per million people per year for a steady rate, whatever the half-life', () => {
+    // 1 death a day for the whole window in a country of 1M people is 365 a year.
+    const rows = Array.from({ length: W }, (_, i) => ({ country: 'Qatar', deathsBest: POP.QA!, dateStart: NOW - i * DAY_MS }));
+    const rate = ucdpViolenceRates(rows, NOW).QA!;
+    assert.ok(Math.abs(rate - 365) / 365 < 0.01, `steady 1/M/day should read ~365/M/yr, got ${rate}`);
+  });
+
+  it('places the World Bank conflict-intensity thresholds at half the cap and at the cap', () => {
+    assert.ok(Math.abs(ucdpViolenceScore(10) - CAP / 2) < 1e-9, `10/M/yr (medium intensity) -> ${ucdpViolenceScore(10)}`);
+    assert.equal(ucdpViolenceScore(100), CAP);
+    assert.equal(ucdpViolenceScore(10_000), CAP);
+    assert.equal(ucdpViolenceScore(0), 0);
+  });
+
+  it('halves an event\'s weight every half-life', () => {
+    const at = (ageDays: number) => ucdpViolenceRates([{ country: 'Mexico', deathsBest: 100, dateStart: NOW - ageDays * DAY_MS }], NOW).MX!;
+    assert.ok(Math.abs(at(H) / at(0) - 0.5) < 1e-9);
+    assert.ok(Math.abs(at(2 * H) / at(0) - 0.25) < 1e-9);
+    assert.equal(ucdpViolenceRates([{ country: 'Mexico', deathsBest: 100, dateStart: NOW - (W + 1) * DAY_MS }], NOW).MX, undefined);
+  });
+
+  it('counts a row with no best estimate as one death per event', () => {
+    const one = ucdpViolenceRates([{ country: 'Brazil', deathsBest: 0, dateStart: NOW }], NOW).BR!;
+    const day = ucdpViolenceRates([{ country: 'Brazil', deathsBest: 0, events: 3, dateStart: NOW }], NOW).BR!;
+    assert.ok(one > 0);
+    assert.ok(Math.abs(day / one - 3) < 1e-9);
+  });
+
+  it('is continuous: one more death never moves the term by more than a fraction of a point in a mid-size country', () => {
+    let prev = 0;
+    let worstStep = 0;
+    for (let deaths = 1; deaths <= 2000; deaths++) {
+      const term = ucdpViolenceScore(ucdpViolenceRates([{ country: 'Mexico', deathsBest: deaths, dateStart: NOW }], NOW).MX!);
+      worstStep = Math.max(worstStep, term - prev);
+      prev = term;
+    }
+    assert.ok(worstStep < 1, `largest Conflict step per death in Mexico ${worstStep}`);
+  });
+
+  it('scores the writers\' day aggregates exactly as the events they summarise', () => {
+    const day = Math.floor((NOW - 10 * DAY_MS) / DAY_MS);
+    const fromEvents = parseUcdpCache({ events: [
+      { country: 'Mexico', deathsBest: 4, dateStart: day * DAY_MS },
+      { country: 'Mexico', deathsBest: 0, dateStart: day * DAY_MS },
+    ] });
+    const fromDays = parseUcdpCache({ events: [], countryDays: { Mexico: [[day, 2, 5]] }, dailyTotals: [[day, 2]] });
+    assert.equal(ucdpViolenceRates(fromEvents.rows, NOW).MX, ucdpViolenceRates(fromDays.rows, NOW).MX);
+    assert.deepEqual(fromDays.dailyTotals, { [String(day)]: 2 });
+    assert.equal(fromEvents.dailyTotals, null);
+  });
+});
+
+describe('CII UCDP read-time window check (P9)', () => {
+  /** n events a day across every country for `days` days ending `lagDays` before NOW. */
+  function totals(days: number, lagDays: number, skip: (dayIndex: number) => boolean = () => false): Record<string, number> {
+    const out: Record<string, number> = {};
+    const last = Math.floor(NOW / DAY_MS) - lagDays;
+    for (let d = last - days + 1; d <= last; d++) if (!skip(d)) out[String(d)] = 60;
+    return out;
+  }
+
+  it('accepts a full year at UCDP\'s usual one-month lag', () => {
+    const w = assessUcdpWindow([], totals(340, 23), NOW);
+    assert.equal(w.honest, true, JSON.stringify(w));
+    assert.deepEqual(w.gapMonths, []);
+  });
+
+  it('rejects the 2026-10 cache on every fixture: Jan-Aug 2026 missing', () => {
+    for (const f of FIXTURES) {
+      const aux = parse(f.inputs, f.nowMs);
+      const w = assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, f.nowMs);
+      assert.equal(w.honest, false);
+      assert.deepEqual(w.gapMonths, ['2026-01', '2026-02', '2026-03', '2026-04', '2026-05', '2026-06', '2026-07', '2026-08'], f.label);
+    }
+  });
+
+  it('rejects a missing month, a short span and a stale frontier', () => {
+    const missingApril = totals(340, 23, (d) => new Date(d * DAY_MS).toISOString().startsWith('2026-04'));
+    assert.deepEqual(assessUcdpWindow([], missingApril, NOW).gapMonths, ['2026-04']);
+    assert.equal(assessUcdpWindow([], totals(200, 23), NOW).honest, false, 'reaches back 223 of 365 days');
+    assert.equal(assessUcdpWindow([], totals(270, 95), NOW).honest, false, 'newest row 95 days old');
+    assert.equal(assessUcdpWindow([], null, NOW).honest, false, 'no rows at all');
+  });
+
+  it('is reported in input health and graded short_window by the reader', () => {
+    const f = FIXTURES.at(-1)!;
+    const aux = parse(f.inputs, f.nowMs);
+    const windows = assessCiiInputWindows(aux, f.nowMs);
+    assert.equal(windows.ucdp?.honest, false);
+    const states = Object.fromEntries(CII_HEALTH_INPUT_IDS.map((id) => [id, 'live'])) as any;
+    const reports = withCiiInputQuietClocks(states, null, f.nowMs, windows);
+    assert.deepEqual(reports.ucdp.window, windows.ucdp);
+    const verdict = assessCiiInputs({ inputs: reports }, f.nowMs);
+    assert.equal(verdict.states.ucdp, 'short_window');
+    assert.ok(verdict.dead.some((d: any) => d.id === 'ucdp' && d.state === 'short_window' && d.window.gapMonths.length === 8));
+    const honest = withCiiInputQuietClocks(states, null, f.nowMs, { ucdp: { ...windows.ucdp!, honest: true, gapMonths: [] } });
+    assert.equal(assessCiiInputs({ inputs: honest }, f.nowMs).states.ucdp, 'live');
+  });
+});

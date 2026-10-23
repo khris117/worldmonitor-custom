@@ -1,0 +1,237 @@
+{
+  "b6-ucdp": {
+    "rule": "UCDP organised violence enters Conflict as a continuous, decayed, per-capita term (CII_UCDP_* in _risk-config.ts) instead of the v8-v14 war (70) and minor (50) class floors, which were step functions on event counts (P3, forbidden move \"no step functions on event counts\"). The read-time window check (P9) reports the cache window in input health.",
+    "fixtureCaveat": "The fixtures hold the truncated 2026-10 cache (about five weeks: December 2025 tail, September 2026, January-August missing). Their UCDP terms are lower bounds. With the full 365-day window the fixed writers fetch (dry run against the live UCDP API, 2026-10-23), the 2026-10-23T0946Z fixture would read: UA 94, YE 85, SY 83, IR 78, MM 69, AF 68, LB 64, IL 59 (Israel plus Palestine population), PK 50 (advisory floor), MX 47, IN 38, BR 23.",
+    "floorBinding": {
+      "2026-10-21T0628Z": {
+        "v14": "13 countries (ucdp 5: BR IL IN MX PK)",
+        "v15": "8 (advisory 7, strike 1)"
+      },
+      "2026-10-23T0756Z": {
+        "v14": "12 countries (ucdp 5)",
+        "v15": "7 (advisory 6, strike 1)"
+      },
+      "2026-10-23T0946Z": {
+        "v14": "11 countries (ucdp 5)",
+        "v15": "7 (advisory 6, strike 1)"
+      }
+    },
+    "invariants": {
+      "promoted": [
+        "P12a (±10% noise: p99 6 against a limit of 6; was a v14 gap)"
+      ],
+      "releaseBlockers": [
+        "P15d (chronic civil war >= 70): 60-71, 26/31 outside the band; passed in v14 only through the UCDP war floor. In the v14 linear blend Conflict carries at most 18 points, so no Conflict term can meet it; Stage C owns it."
+      ],
+      "stillGaps": [
+        "P9: the fixtures' cache reaches 302 of 365 days with January-August 2026 near-empty; passes on a fixture captured after the writers deploy"
+      ]
+    },
+    "sensitivity": {
+      "method": "Each constant moved alone; tests/cii-invariants.test.mts rerun on the three fixtures; the passing-property set compared with the default (P5b, P11b, P12a, P15a, P15c).",
+      "CII_UCDP_HALF_LIFE_DAYS": {
+        "value": 91.25,
+        "samePassingSet": "60-180",
+        "breaksAt": "45 and 30 (P12a p99 7)",
+        "upperBoundFromWindow": "a quarter of the 365-day window keeps the truncated tail at 1/16 (6.3%; 12.1% at 120 days, 24.5% at 180)"
+      },
+      "CII_UCDP_RATE_KNEE": {
+        "value": 1.25,
+        "samePassingSet": "1.25-5",
+        "breaksAt": "0.5 (P12a)",
+        "source": "World Bank FCS UCDP thresholds: 10 per million a year at half the cap"
+      },
+      "CII_UCDP_RATE_SATURATION": {
+        "value": 100,
+        "samePassingSet": "100-1000",
+        "breaksAt": "50 (P12a)",
+        "source": "World Bank FCS high-intensity threshold, 10 per 100,000 a year"
+      },
+      "CII_UCDP_CONFLICT_CAP": {
+        "value": 70,
+        "samePassingSet": "50-70",
+        "breaksAt": "100 (P12a)",
+        "source": "the cap of the other Conflict sources"
+      },
+      "termProperties": "Default constants on the live window: one more death in Qatar (smallest population) moves a score by at most 1.6 points; a monthly UCDP release moves a steady 10-per-million country by 0.6."
+    },
+    "fixtureMovers": [
+      {
+        "country": "AF",
+        "reason": "On or at its advisory floor (60) in v14. 7.5 UCDP deaths per million a year add 31 to Conflict, about 5.6 points.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            60,
+            63
+          ],
+          "2026-10-23T0756Z": [
+            60,
+            65
+          ],
+          "2026-10-23T0946Z": [
+            60,
+            65
+          ]
+        }
+      },
+      {
+        "country": "BR",
+        "reason": "v14 UCDP \"minor\" floor (50, from 35 gang events) removed; 0.47 UCDP deaths per million a year add 5 to Conflict, about 1 point of score.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            50,
+            23
+          ],
+          "2026-10-23T0756Z": [
+            50,
+            26
+          ],
+          "2026-10-23T0946Z": [
+            50,
+            22
+          ]
+        }
+      },
+      {
+        "country": "IL",
+        "reason": "v14 UCDP \"minor\" floor and the reconsider advisory floor (both 50) removed as binding; 19.5-19.8 UCDP deaths per million a year (Gaza and the West Bank, which UCDP codes as Israel, over the row's Israel plus Palestine population) add 45 to Conflict, so the blend rises from 45-47 to 53-55 and sets the score.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            50,
+            53
+          ],
+          "2026-10-23T0946Z": [
+            50,
+            55
+          ]
+        }
+      },
+      {
+        "country": "IN",
+        "reason": "v14 UCDP \"minor\" floor (50, from 19 events) removed; 0.04 UCDP deaths per million a year (1.48 billion people) add 0.6 to Conflict.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            50,
+            38
+          ],
+          "2026-10-23T0756Z": [
+            50,
+            37
+          ],
+          "2026-10-23T0946Z": [
+            50,
+            37
+          ]
+        }
+      },
+      {
+        "country": "MM",
+        "reason": "Sat on its advisory floor (60) with a blend of 60.2 in v14. 7.6 UCDP deaths per million a year add 31 to Conflict, about 5.6 points.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            60,
+            66
+          ],
+          "2026-10-23T0756Z": [
+            60,
+            66
+          ],
+          "2026-10-23T0946Z": [
+            60,
+            66
+          ]
+        }
+      },
+      {
+        "country": "MX",
+        "reason": "v14 UCDP \"war\" floor (70, from 280 cartel events in about five weeks of cache) removed; 5.5 UCDP deaths per million a year now add 27 to Conflict, so the score is its evidence-backed blend.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            70,
+            45
+          ],
+          "2026-10-23T0756Z": [
+            70,
+            43
+          ],
+          "2026-10-23T0946Z": [
+            70,
+            44
+          ]
+        }
+      },
+      {
+        "country": "PK",
+        "reason": "v14 UCDP \"war\" floor (70) removed; the UCDP term (6.1-6.2 deaths per million a year, +28 to Conflict) lifts the blend 5 points, and the advisory floor (50, reconsider) now binds. Stage C removes that floor.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            70,
+            50
+          ],
+          "2026-10-23T0756Z": [
+            70,
+            50
+          ],
+          "2026-10-23T0946Z": [
+            70,
+            50
+          ]
+        }
+      },
+      {
+        "country": "SY",
+        "reason": "Above every floor in v14. 3.5 UCDP deaths per million a year add 21 to Conflict, about 4 points.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            73,
+            77
+          ],
+          "2026-10-23T0756Z": [
+            74,
+            78
+          ],
+          "2026-10-23T0946Z": [
+            74,
+            78
+          ]
+        }
+      },
+      {
+        "country": "UA",
+        "reason": "Above every floor in v14. The UCDP term saturates (319-324 deaths per million a year, above the World Bank high-intensity threshold of 100) and adds 70 to Conflict, about 12.6 points of score.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            73,
+            86
+          ],
+          "2026-10-23T0756Z": [
+            81,
+            93
+          ],
+          "2026-10-23T0946Z": [
+            82,
+            94
+          ]
+        }
+      },
+      {
+        "country": "YE",
+        "reason": "Above every floor in v14. The UCDP term saturates (179-182 deaths per million a year) and adds 70 to Conflict; Conflict already held 40 from GDELT, so the score rises 5-6.",
+        "moves": {
+          "2026-10-21T0628Z": [
+            80,
+            86
+          ],
+          "2026-10-23T0756Z": [
+            79,
+            85
+          ],
+          "2026-10-23T0946Z": [
+            79,
+            85
+          ]
+        }
+      }
+    ]
+  }
+}

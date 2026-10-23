@@ -16,6 +16,7 @@ import iso3ToIso2 from '../shared/iso3-to-iso2.json' with { type: 'json' };
 import { ciiScoredVersion, loadCiiFixtures, pairsOrderedAgainstBlend, readCiiVersionClaim, type CiiFixture } from '../scripts/lib/cii-fixtures.mts';
 import {
   assessCiiInputAvailability,
+  assessUcdpWindow,
   buildCiiAuxiliarySources,
   scoreCiiAuxiliarySources,
   type AuxiliarySources,
@@ -38,11 +39,33 @@ const KNOWN_GAPS: Record<string, ReadonlySet<string>> = {
     'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P7b', 'P8', 'P9', 'P10',
     'P11a', 'P12a', 'P12b', 'P14', 'P15b', 'P15e',
   ]),
+  // B6 (UCDP continuous term) closed P12a: one UCDP event no longer crosses a class cut.
   v15: new Set([
     'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P7b', 'P8', 'P9', 'P10',
-    'P11a', 'P12a', 'P12b', 'P14', 'P15b', 'P15e',
+    'P11a', 'P12b', 'P14', 'P15b', 'P15e',
   ]),
 };
+
+/**
+ * v15 release blockers: properties that passed as real assertions in v14 and
+ * fail after a Stage B change because of the floors that remain. Stage C
+ * removes the floors and must make each pass. While a property is listed it
+ * runs as a todo with its measured value; the ratchet below fails once one
+ * passes, names an unmeasured property, or is also a known gap, and the
+ * release gate fails while the list is non-empty and cii-next.json no longer
+ * marks v15 in progress, so cii-v15 cannot ship to main with a blocker.
+ */
+const V15_RELEASE_BLOCKERS: Array<{ id: string; measured: string; reason: string; owner: 'stage-c' }> = [
+  {
+    id: 'P15d',
+    measured: '60–71 (AE–SY), 26/31 outside 70–100',
+    reason: 'B6 removed the UCDP war floor (70) that met this anchor. In the v14 linear blend Conflict carries at most '
+      + '0.30 × 0.6 = 18 points: with Conflict forced to 100 the scenario blends to 54 (US, DE, GB, JP) to 72 (SY, UA, YE), '
+      + 'and the advisory floor of 60 lifts some of them to 60. No Conflict term can reach 70 for a low-prior country; '
+      + 'Stage C\'s aggregation must, without a floor.',
+    owner: 'stage-c',
+  },
+];
 const CLAIM = readCiiVersionClaim();
 const SCORED = ciiScoredVersion(CLAIM);
 
@@ -360,17 +383,18 @@ function measureP8(): Measurement {
 }
 
 function measureP9(): Measurement {
-  const WINDOW_DAYS = 730;
+  // The read-time check the producer reports in input health (assessUcdpWindow):
+  // the rows reach back to within a month of the term's window start, no month
+  // between their oldest and newest rows is near-empty, and the newest is fresh.
   const cases = FIXTURES.map((f) => {
-    const dates = parse(f).ucdpEvents.map((e: any) => Number(e.dateStart)).filter((d) => Number.isFinite(d) && d <= f.nowMs && f.nowMs - d < WINDOW_DAYS * DAY_MS);
-    const spanDays = dates.length ? (f.nowMs - Math.min(...dates)) / DAY_MS : 0;
-    const recent = dates.filter((d) => f.nowMs - d < 60 * DAY_MS).length / Math.max(1, dates.length);
-    return { label: f.label, spanDays, recent, newestDays: dates.length ? (f.nowMs - Math.max(...dates)) / DAY_MS : NaN };
+    const aux = parse(f);
+    return { label: f.label, ...assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, f.nowMs) };
   });
-  const c = worst(cases, (x) => -x.spanDays, 1)[0]!;
+  const c = cases.find((x) => !x.honest) ?? cases[0]!;
   return {
-    pass: cases.every((x) => x.spanDays >= 0.9 * WINDOW_DAYS),
-    value: `UCDP cache spans ${Math.round(c.spanDays)} of the ${WINDOW_DAYS} days its thresholds assume, ${Math.round(c.recent * 100)}% of rows in the last 60 days, newest ${Math.round(c.newestDays)} days old`,
+    pass: cases.every((x) => x.honest),
+    value: `UCDP cache reaches ${c.oldestAgeDays} of the ${c.assumedDays} days the term assumes (${c.label}), newest ${c.newestAgeDays} days old, `
+      + `${c.gapMonths.length} near-empty months between (${c.gapMonths.join(', ') || 'none'})`,
   };
 }
 
@@ -610,7 +634,9 @@ const NOT_COMPUTABLE: Array<{ id: string; title: string; reason: string }> = [
 ];
 
 const gaps = KNOWN_GAPS[SCORED] ?? new Set<string>();
-const results = PROPERTIES.map((p) => ({ ...p, ...p.measure(), known: gaps.has(p.id) }));
+const blockers = SCORED === 'v15' ? V15_RELEASE_BLOCKERS : [];
+const blockerIds = new Set(blockers.map((b) => b.id));
+const results = PROPERTIES.map((p) => ({ ...p, ...p.measure(), known: gaps.has(p.id), blocker: blockerIds.has(p.id) }));
 
 describe(`CII invariants (${SCORED}, ${FIXTURES.length} fixtures)`, () => {
   it('runs on at least three committed fixture dates', () => {
@@ -622,6 +648,7 @@ describe(`CII invariants (${SCORED}, ${FIXTURES.length} fixtures)`, () => {
     // A known gap was measured above and its value is in the name; the ratchet
     // below fails once it passes, so its body has nothing left to assert.
     if (r.known) it(name, { todo: `known ${SCORED} gap` }, () => {});
+    else if (r.blocker) it(name, { todo: `${SCORED} release blocker (owner stage-c)` }, () => {});
     else it(name, () => assert.ok(r.pass, r.value));
   }
   for (const p of NOT_COMPUTABLE) it(`${p.id} ${p.title}`, { todo: `not computable in CI: ${p.reason}` });
@@ -631,6 +658,15 @@ describe(`CII invariants (${SCORED}, ${FIXTURES.length} fixtures)`, () => {
     assert.deepEqual(fixed, [], `now passing, promote to a real assertion: ${fixed.join(', ')}`);
     const unknown = [...gaps].filter((id) => !results.some((r) => r.id === id));
     assert.deepEqual(unknown, [], `KNOWN_GAPS names unmeasured properties: ${unknown.join(', ')}`);
+  });
+
+  it('every v15 release blocker still fails, is measured, and is not also a known gap', () => {
+    const fixed = results.filter((r) => r.blocker && r.pass).map((r) => r.id);
+    assert.deepEqual(fixed, [], `release blocker now passes, remove it from V15_RELEASE_BLOCKERS: ${fixed.join(', ')}`);
+    const unknown = blockers.map((b) => b.id).filter((id) => !results.some((r) => r.id === id));
+    assert.deepEqual(unknown, [], `V15_RELEASE_BLOCKERS names unmeasured properties: ${unknown.join(', ')}`);
+    const both = blockers.map((b) => b.id).filter((id) => gaps.has(id));
+    assert.deepEqual(both, [], `a release blocker is also listed in KNOWN_GAPS: ${both.join(', ')}`);
   });
 });
 
@@ -668,6 +704,13 @@ describe('CII release gate', () => {
     assert.ok(KNOWN_GAPS[CII_FORMULA_VERSION], `KNOWN_GAPS has no ${CII_FORMULA_VERSION} entry; a released version lists its gaps, or an empty set`);
   });
 
+  it('no v15 release blocker remains once v15 is no longer in progress', {
+    skip: CLAIM.inProgress === true ? `${CLAIM.next} is in progress on ${CLAIM.branch}; checked once it is cleared` : false,
+  }, () => {
+    assert.deepEqual(V15_RELEASE_BLOCKERS.map((b) => `${b.id} (${b.measured})`), [],
+      'cii-v15 cannot ship while a v15 release blocker is listed: Stage C must make each pass without a floor');
+  });
+
   it('recognises the CI runs that target main', () => {
     assert.equal(ciiTargetsMain({ GITHUB_BASE_REF: 'main', GITHUB_REF: 'refs/pull/1/merge' }), true);
     assert.equal(ciiTargetsMain({ GITHUB_BASE_REF: 'cii-v15', GITHUB_REF: 'refs/pull/1/merge' }), false);
@@ -681,9 +724,9 @@ describe('CII release gate', () => {
 after(() => {
   const lines = [
     `CII invariants, ${SCORED}, fixtures ${FIXTURES.map((f) => f.label).join(', ')}`,
-    ...results.map((r) => `${r.id.padEnd(5)} ${(r.pass ? 'pass' : r.known ? 'todo' : 'FAIL').padEnd(5)} ${r.value}`),
+    ...results.map((r) => `${r.id.padEnd(5)} ${(r.pass ? 'pass' : r.known ? 'todo' : r.blocker ? 'block' : 'FAIL').padEnd(5)} ${r.value}`),
     ...NOT_COMPUTABLE.map((p) => `${p.id.padEnd(5)} todo  not computable: ${p.reason}`),
-    `pass ${results.filter((r) => r.pass).length}, todo ${results.filter((r) => !r.pass && r.known).length + NOT_COMPUTABLE.length}, fail ${results.filter((r) => !r.pass && !r.known).length}`,
+    `pass ${results.filter((r) => r.pass).length}, todo ${results.filter((r) => !r.pass && r.known).length + NOT_COMPUTABLE.length}, release blockers ${results.filter((r) => !r.pass && r.blocker).length}, fail ${results.filter((r) => !r.pass && !r.known && !r.blocker).length}`,
   ];
   console.log(lines.join('\n'));
 });
