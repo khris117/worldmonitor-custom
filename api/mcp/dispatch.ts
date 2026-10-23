@@ -808,7 +808,9 @@ export async function dispatchToolsCall(
     }
     if (error.code === 'quota') return mcpDenialResponse({ reason: 'quota-exceeded', limit: error.limit ?? 0, sharedWithRestApi: false, upgradeFrom }, -32029, 429, id, corsHeaders, { retryAfter: String(secondsUntilUtcMidnight()) });
     if (error.code === 'backend') return quotaBackendUnavailableResponse(id, corsHeaders);
-    return rpcError(id, error.code === 'reads' ? -32029 : -32602, error.message, { ...corsHeaders, ...(error.retryAfter ? { 'Retry-After': String(error.retryAfter) } : {}) }, undefined, error.code === 'reads' ? 429 : 200);
+    // Only `reads` carries retryAfter; `invalid` is a panel argument rejection.
+    if (error.code === 'invalid') return invalidArguments(error.message);
+    return rpcError(id, -32029, error.message, { ...corsHeaders, ...(error.retryAfter ? { 'Retry-After': String(error.retryAfter) } : {}) }, undefined, 429);
   }
   reportPanelAllocation();
 

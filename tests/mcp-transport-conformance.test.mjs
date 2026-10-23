@@ -323,6 +323,25 @@ describe('api/mcp.ts — transport conformance over real HTTP', () => {
       }
     }
 
+    // Panel arguments the strict panel view rejects after registry validation
+    // (an undeclared property here) are argument errors too (review: coderabbit).
+    for (const version of ['2025-11-25', '2025-06-18']) {
+      const res = await fetch(server.url, {
+        method: 'POST',
+        headers: mcpHeaders({ Accept: 'application/json', 'MCP-Protocol-Version': version }),
+        body: JSON.stringify(rpcBody(11, 'tools/call', { name: 'get_market_data', arguments: { unexpected: 'x' } })),
+      });
+      assert.equal(res.status, 200, version);
+      const body = await res.json();
+      if (version === '2025-11-25') {
+        assert.equal(body.error, undefined, `panel ${version}: ${JSON.stringify(body)}`);
+        assert.equal(body.result.isError, true);
+        assert.equal(typeof JSON.parse(body.result.content[0].text).error, 'string');
+      } else {
+        assert.equal(body.error.code, -32602, `panel ${version}: ${JSON.stringify(body)}`);
+      }
+    }
+
     // An unknown tool is still a protocol error on every revision.
     const unknown = await fetch(server.url, {
       method: 'POST',
