@@ -143,14 +143,232 @@ function candidateContentMeta(cappedNewestFirst) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The trailing window (CII v15, Stage B6)
+//
+// Each GED Candidate release holds ONE month: 26.0.9 is September 2026 (plus a
+// few late revisions of earlier months), 26.0.8 is August, and so on. Until
+// 2026-10 both writers merged only the newest release on top of the newest six
+// pages of the annual release, whose pages are not in date order. The cache
+// therefore held the newest month and a scatter of annual rows: on 2026-10-23,
+// 79% of its rows were from September 2026 and January-August 2026 were missing,
+// while the CII read it as a trailing year. The writers now fetch the window:
+//  - the annual release by date (the API's StartDate/EndDate filters) from
+//    ANNUAL_LOOKBACK_MS before now to the end of the year it covers, every page;
+//  - every monthly candidate release after that year, up to the newest.
+// Rows are deduplicated by event id, later releases winning.
+// ---------------------------------------------------------------------------
+
+const DAY_MS = 86_400_000;
+// The window is anchored at the newest event, which lags now by up to the
+// content-age budget (90 days); the lookback covers a year plus that lag.
+const ANNUAL_LOOKBACK_MS = (365 + 120) * DAY_MS;
+// About 26,000 annual events a year (2025: 25,770): a 16-month slice is under 40 pages.
+const ANNUAL_WINDOW_MAX_PAGES = 50;
+const WINDOW_FETCH_CONCURRENCY = 4;
+// A first month with less than this much of itself inside the window can be
+// legitimately empty; any other empty month followed by data is a gap.
+const WINDOW_MIN_MONTH_OVERLAP_DAYS = 7;
+// UCDP GED records about 1,800 events a month worldwide; a month at under a
+// quarter of the median month is a missing release, not a quiet month. The
+// CII's read-time check uses the same share (CII_UCDP_MIN_MONTH_SHARE).
+const WINDOW_MIN_MONTH_SHARE = 0.25;
+
+/** Last instant of the year an annual release ('26.1' covers 1989-2025) covers; NaN when unparseable. */
+function annualReleaseEndMs(version) {
+  const major = Number(String(version).split('.')[0]);
+  return Number.isInteger(major) && major > 0 ? Date.UTC(2000 + major, 0, 1) - 1 : NaN;
+}
+
+/** { year, month } of a monthly candidate release ('26.0.9' -> 2026, 9), else null. */
+function parseCandidateVersion(version) {
+  const m = /^(\d{2})\.0\.(\d{1,2})$/.exec(String(version));
+  if (!m) return null;
+  const month = Number(m[2]);
+  return month >= 1 && month <= 12 ? { year: 2000 + Number(m[1]), month } : null;
+}
+
+/** Monthly candidate versions from the month containing fromMs through newestVersion, oldest first. */
+function candidateVersionsSince(fromMs, newestVersion) {
+  const newest = parseCandidateVersion(newestVersion);
+  if (!newest || !Number.isFinite(fromMs)) return newest ? [newestVersion] : [];
+  const from = new Date(fromMs);
+  const out = [];
+  let year = from.getUTCFullYear();
+  let month = from.getUTCMonth() + 1;
+  while (year < newest.year || (year === newest.year && month <= newest.month)) {
+    out.push(`${year - 2000}.0.${month}`);
+    month += 1;
+    if (month > 12) { month = 1; year += 1; }
+  }
+  return out.length ? out : [newestVersion];
+}
+
+function isoDate(ms) {
+  return new Date(ms).toISOString().slice(0, 10);
+}
+
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      results[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
+
+/**
+ * The annual release's part of the window, by date. `fetchPage(version, page,
+ * timeoutMs, query)` passes `query` as URL parameters. A first page that fails
+ * counts as every page failed, so the caller's preserve-last-good guard sees it.
+ */
+async function fetchAnnualWindow(fetchPage, version, { nowMs = Date.now() } = {}) {
+  const endMs = annualReleaseEndMs(version);
+  const startMs = nowMs - ANNUAL_LOOKBACK_MS;
+  if (!Number.isFinite(endMs) || startMs > endMs) {
+    return { events: [], failedPages: 0, totalPages: 0, truncated: false, startDate: isoDate(startMs), endDate: null };
+  }
+  const query = { StartDate: isoDate(startMs), EndDate: isoDate(endMs) };
+  let first;
+  try {
+    first = await fetchPage(version, 0, undefined, query);
+  } catch {
+    return { events: [], failedPages: 1, totalPages: 1, truncated: false, startDate: query.StartDate, endDate: query.EndDate };
+  }
+  const totalPages = Math.max(1, Number(first?.TotalPages) || 1);
+  const wanted = Math.min(totalPages, ANNUAL_WINDOW_MAX_PAGES);
+  const FAILED = Symbol('failed');
+  const rest = await mapWithConcurrency(
+    Array.from({ length: wanted - 1 }, (_unused, i) => i + 1),
+    WINDOW_FETCH_CONCURRENCY,
+    (page) => fetchPage(version, page, undefined, query).catch(() => FAILED),
+  );
+  const events = Array.isArray(first?.Result) ? [...first.Result] : [];
+  let failedPages = 0;
+  for (const page of rest) {
+    if (page === FAILED) { failedPages++; continue; }
+    if (Array.isArray(page?.Result)) events.push(...page.Result);
+  }
+  return { events, failedPages, totalPages, truncated: totalPages > ANNUAL_WINDOW_MAX_PAGES, startDate: query.StartDate, endDate: query.EndDate };
+}
+
+/**
+ * Every monthly candidate release from the month containing fromMs through the
+ * newest one (already discovered, its first page in hand), oldest first. A
+ * release that is unpublished or fails is reported, never silently skipped.
+ */
+async function fetchCandidateWindow(fetchPage, newest, { fromMs }) {
+  const versions = candidateVersionsSince(fromMs, newest.version).filter((v) => v !== newest.version);
+  const older = await mapWithConcurrency(versions, WINDOW_FETCH_CONCURRENCY, async (version) => {
+    try {
+      const first = await fetchPage(version, 0, CANDIDATE_DISCOVER_TIMEOUT_MS);
+      if (!hasResults(first)) return { version, missing: true, events: [], complete: false, truncated: false, failedPages: 0 };
+      return { version, missing: false, ...(await fetchCandidatePages(fetchPage, { version, first })) };
+    } catch {
+      return { version, missing: true, events: [], complete: false, truncated: false, failedPages: 0 };
+    }
+  });
+  const newestRelease = { version: newest.version, missing: false, ...(await fetchCandidatePages(fetchPage, newest)) };
+  const releases = [...older, newestRelease];
+  return {
+    releases,
+    complete: releases.every((r) => !r.missing && r.complete && !r.truncated),
+    missingReleases: releases.filter((r) => r.missing).map((r) => r.version),
+  };
+}
+
+function utcMonth(ms) {
+  return new Date(ms).toISOString().slice(0, 7);
+}
+
+/**
+ * What the CII reads (server/worldmonitor/intelligence/v1/get-risk-scores.ts,
+ * parseUcdpCache), from every mapped event of the window rather than the
+ * capped `events` slice:
+ *  - countryDays: per UCDP country name, [UTC day index, events, deaths] rows,
+ *    each event counting at least one death (UCDP records an event only when it
+ *    killed someone);
+ *  - dailyTotals: [UTC day index, events] across every country;
+ *  - months and gapMonths: events per calendar month of the window, and the
+ *    months that are empty or nearly so (WINDOW_MIN_MONTH_SHARE) while a later
+ *    month has rows: a missing release. A first month with under
+ *    WINDOW_MIN_MONTH_OVERLAP_DAYS inside the window is not checked.
+ */
+function summarizeUcdpWindow(mappedEvents, { startMs, endMs }) {
+  const byCountry = new Map();
+  const daily = new Map();
+  const months = {};
+  if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+    for (let ms = Date.UTC(new Date(startMs).getUTCFullYear(), new Date(startMs).getUTCMonth(), 1); ms <= endMs;) {
+      const d = new Date(ms);
+      months[utcMonth(ms)] = 0;
+      ms = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+    }
+  }
+  for (const event of mappedEvents) {
+    const ms = Number(event?.dateStart);
+    if (!Number.isFinite(ms) || ms <= 0 || ms < startMs || ms > endMs) continue;
+    const day = Math.floor(ms / DAY_MS);
+    const name = String(event.country || '');
+    const deaths = Math.max(1, Number(event.deathsBest) || 0);
+    daily.set(day, (daily.get(day) ?? 0) + 1);
+    const month = utcMonth(ms);
+    if (month in months) months[month] += 1;
+    if (!name) continue;
+    if (!byCountry.has(name)) byCountry.set(name, new Map());
+    const days = byCountry.get(name);
+    const row = days.get(day) ?? [day, 0, 0];
+    row[1] += 1;
+    row[2] += deaths;
+    days.set(day, row);
+  }
+  // Events per day of each month's overlap with the window; a month under
+  // WINDOW_MIN_MONTH_SHARE of the median non-empty month is a gap when a later
+  // month has rows. Zero alone is not the test: the next release carries a few
+  // late revisions into the month a missing release should have filled.
+  const monthKeys = Object.keys(months).sort();
+  const overlapDays = (month) => {
+    const from = Math.max(startMs, Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 1));
+    const to = Math.min(endMs, Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 1) - 1);
+    return Math.max(1, Math.ceil((to - from) / DAY_MS));
+  };
+  const rates = Object.fromEntries(monthKeys.map((month) => [month, months[month] / overlapDays(month)]));
+  const nonEmpty = monthKeys.map((month) => rates[month]).filter((rate) => rate > 0).sort((a, b) => a - b);
+  const median = nonEmpty.length ? nonEmpty[Math.floor(nonEmpty.length / 2)] : 0;
+  const gapMonths = monthKeys.filter((month, i) => rates[month] < WINDOW_MIN_MONTH_SHARE * median
+    && monthKeys.slice(i + 1).some((later) => months[later] > 0)
+    && !(i === 0 && overlapDays(month) < WINDOW_MIN_MONTH_OVERLAP_DAYS));
+  const countryDays = {};
+  for (const [name, days] of [...byCountry.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    countryDays[name] = [...days.values()].sort((a, b) => a[0] - b[0]);
+  }
+  return {
+    countryDays,
+    dailyTotals: [...daily.entries()].sort((a, b) => a[0] - b[0]),
+    months,
+    gapMonths,
+  };
+}
+
 module.exports = {
   CANDIDATE_MAX_PAGES,
   CANDIDATE_DISCOVER_TIMEOUT_MS,
   CANDIDATE_ANNUAL_FLOOR,
   UCDP_MAX_CONTENT_AGE_MIN,
+  ANNUAL_LOOKBACK_MS,
+  ANNUAL_WINDOW_MAX_PAGES,
   buildCandidateVersions,
   discoverCandidateVersion,
   fetchCandidatePages,
   capWithAnnualFloor,
   candidateContentMeta,
+  annualReleaseEndMs,
+  candidateVersionsSince,
+  fetchAnnualWindow,
+  fetchCandidateWindow,
+  summarizeUcdpWindow,
 };
