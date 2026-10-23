@@ -13,7 +13,7 @@ import iso3ToIso2Json from '../../../../shared/iso3-to-iso2.json';
 import { getCachedJson, readCachedJson, readCachedEnvelopeJson, setCachedJson, cachedFetchJsonWithMeta, runRedisPipeline } from '../../../_shared/redis';
 import { CII_RISK_SCORE_CACHE_KEYS } from '../../../_shared/cache-keys';
 import { CII_DAY_MS, parseCiiDailyPoints } from '../../../../shared/cii-daily-history';
-import { ciiCountryAt, ciiCountryForIso2, ciiIsLand } from '../../../../scripts/shared/cii-country-borders.mjs';
+import { ciiCountryAt, ciiCountryForIso2 } from '../../../../scripts/shared/cii-country-borders.mjs';
 import { missingAdvisoryRegisters } from '../../../../scripts/shared/advisory-registers.mjs';
 import { TIER1_COUNTRIES } from './_shared';
 import { fetchAcledCached } from '../../../_shared/acled';
@@ -248,42 +248,9 @@ export function normalizeCountryName(text: string): string | null {
 }
 
 // Real borders (scripts/shared/cii-country-borders.mjs, generated from the
-// Natural Earth 1:50m map), shared with scripts/seed-military-cii.mjs so the
-// military seeder places flights and vessels exactly as the scorer does.
-// Points on non-Tier-1 land, or more than 12 nautical miles offshore, are null.
+// Natural Earth 1:50m map). Points on non-Tier-1 land, or more than 12 nautical
+// miles offshore, are null.
 export const geoToCountry: (lat: number, lon: number) => string | null = ciiCountryAt;
-
-// An earthquake scores where its epicentre is. Offshore beyond coastal waters,
-// where bounding boxes used to reach, it takes the country USGS names after the
-// last comma ("151 km E of Namie, Japan") when that text is exactly a country
-// name: never an ocean or region ("Southern Indian Ocean" is not India), and
-// never for an epicentre on non-Tier-1 land, which counts for no Tier-1 country
-// even when USGS describes it from a town across the border.
-function earthquakeCountry(eq: any): string | null {
-  const lat = safeNum(eq?.location?.latitude);
-  const lon = safeNum(eq?.location?.longitude);
-  const code = geoToCountry(lat, lon);
-  if (code || ciiIsLand(lat, lon)) return code;
-  const place = String(eq?.place || '');
-  const comma = place.lastIndexOf(',');
-  return comma < 0 ? null : countryNamedExactly(place.slice(comma + 1));
-}
-
-// Country names only, not news keywords: USGS writes US states after the comma
-// ("Washington") and COUNTRY_KEYWORDS carries cities and leaders.
-const COUNTRY_NAME_ALIASES: Record<string, string> = {
-  'united states of america': 'US', usa: 'US', 'russian federation': 'RU',
-  turkiye: 'TR', burma: 'MM', uae: 'AE', uk: 'GB', 'great britain': 'GB',
-  'republic of korea': 'KR', 'democratic people s republic of korea': 'KP',
-};
-const COUNTRY_NAME_TO_CODE: Map<string, string> = new Map([
-  ...Object.entries(TIER1_COUNTRIES).map(([code, name]) => [normalizeForCountryMatch(name), code] as [string, string]),
-  ...Object.entries(COUNTRY_NAME_ALIASES).map(([name, code]) => [normalizeForCountryMatch(name), code] as [string, string]),
-]);
-
-function countryNamedExactly(text: string): string | null {
-  return COUNTRY_NAME_TO_CODE.get(normalizeForCountryMatch(text)) ?? null;
-}
 
 // A strike event that carries its country (the Middle East strike feed sets
 // countryCode from its gazetteer) scores there, including at sea where no
@@ -483,15 +450,8 @@ interface CountrySignals {
   // one that killed someone OR is a riot, matching seed-unrest-events.mjs classifySeverity.
   highSeverityUnrest: number;
   // Phase 1 (CII unification, docs/archive/plans/unify-cii-single-source.md).
-  earthquakeSignificantCount: number;
-  earthquakeMajorCount: number;
-  earthquakeSevereCount: number;
   temporalAnomalyCount: number;
   temporalAnomalyCriticalCount: number;
-  // AIS disruptions from intelligence:military-cii:v1 (the aisBoost below).
-  aisDisruptionHighCount: number;
-  aisDisruptionElevatedCount: number;
-  aisDisruptionLowCount: number;
 }
 
 function emptySignals(): CountrySignals {
@@ -510,9 +470,7 @@ function emptySignals(): CountrySignals {
     newsScore: 0,
     threatSummaryScore: 0,
     highSeverityUnrest: 0,
-    earthquakeSignificantCount: 0, earthquakeMajorCount: 0, earthquakeSevereCount: 0,
     temporalAnomalyCount: 0, temporalAnomalyCriticalCount: 0,
-    aisDisruptionHighCount: 0, aisDisruptionElevatedCount: 0, aisDisruptionLowCount: 0,
   };
 }
 
@@ -876,12 +834,7 @@ export interface AuxiliarySources {
   // Per-country classified headline counts from relay seedClassify() — written to news:threat:summary:v1
   threatSummaryByCountry: Record<string, { critical: number; high: number; medium: number; low: number; info: number }> | null;
   // Phase 1 (CII unification) — additive signal sources, all backed by an existing Redis key.
-  earthquakes: any[];
   temporalAnomalies: any[];
-  // Per-country aggregate from intelligence:military-cii:v1 (scripts/seed-military-cii.mjs),
-  // keyed by ISO2. Only its AIS-disruption counts are scored; its military flight and
-  // vessel counts are not (docs/methodology/cii-input-register.md).
-  militaryCii: Record<string, any> | null;
   // Per-country GDELT conflict and protest volume against each country's own baseline;
   // scored only while ACLED is dark.
   gdeltCountryEvents: GdeltCountryEvents | null;
@@ -926,9 +879,7 @@ function emptyAuxiliarySources(): AuxiliarySources {
     displacedByIso3: {},
     newsTopStories: [],
     threatSummaryByCountry: null,
-    earthquakes: [],
     temporalAnomalies: [],
-    militaryCii: null,
     gdeltCountryEvents: null,
     confirmedStrikes: null,
   };
@@ -995,7 +946,7 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
   // Sanctions, climate anomalies, fires, GPS jamming and aviation delays are not
   // read: they do not measure instability inside the country
   // (docs/methodology/cii-input-register.md).
-  const [ucdpRaw, outagesRaw, iranRaw, orefRaw, advisoriesRaw, displacementCurrentRaw, insightsRaw, threatSummaryRaw, earthquakesRaw, temporalRaw, militaryCiiRaw, countryEventsRaw, strikePressureRaw] = await readRiskInputs([
+  const [ucdpRaw, outagesRaw, iranRaw, orefRaw, advisoriesRaw, displacementCurrentRaw, insightsRaw, threatSummaryRaw, temporalRaw, countryEventsRaw, strikePressureRaw] = await readRiskInputs([
     { key: 'conflict:ucdp-events:v1', raw: true },
     { key: 'infra:outages:v1', raw: true },
     IRAN_EVENTS_ENABLED ? { key: 'conflict:iran-events:v1', raw: true } : null,
@@ -1004,14 +955,12 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     { key: `displacement:summary:v1:${currentYear}`, raw: true },
     { key: 'news:insights:v1', raw: true },
     { key: 'news:threat:summary:v1', raw: true },
-    { key: 'seismology:earthquakes:v1', raw: true },
     // App-owned snapshot (#7674): the temporal-anomalies route stamps
     // temporal:anomalies:v1 through the prefix-aware helpers, so unlike the
     // seeder-owned sources around it this read must ride the deployment
     // prefix — otherwise a preview deployment's risk scores consume the
     // production snapshot instead of the one this deployment rebuilt.
     { key: 'temporal:anomalies:v1', raw: false },
-    { key: 'intelligence:military-cii:v1', raw: true },
     // Per-country GDELT conflict/protest counts and baselines (seed-gdelt-bulk-materializer.mjs).
     { key: 'gdelt:bulk:country-events:v1', raw: true },
     // 30-day per-country strike tally built by the relay from the strike feed (v12).
@@ -1037,9 +986,7 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     displacement: displacementRaw,
     newsInsights: insightsRaw,
     threatSummary: threatSummaryRaw,
-    earthquakes: earthquakesRaw,
     temporalAnomalies: temporalRaw,
-    militaryCii: militaryCiiRaw,
     gdeltCountryEvents: countryEventsRaw,
     strikePressure: strikePressureRaw,
     crossBorder: Object.fromEntries(CROSS_BORDER_SOURCES.map((source, i) => [source.id, borderSnapshots[i]])),
@@ -1066,15 +1013,14 @@ export interface CiiRawInputs {
   displacement?: unknown;
   newsInsights?: unknown;
   threatSummary?: unknown;
-  earthquakes?: unknown;
   temporalAnomalies?: unknown;
-  militaryCii?: unknown;
   gdeltCountryEvents?: unknown;
   strikePressure?: unknown;
   crossBorder?: Record<string, unknown>;
   // Read by v14 and earlier, never by this scorer: the input register removes
-  // them (docs/methodology/cii-input-register.md). Fixtures and the capture
-  // keep them so an older version's scorer can still replay a fixture.
+  // them or shows them as context only (docs/methodology/cii-input-register.md).
+  // Fixtures and the capture keep them so an older version's scorer can still
+  // replay a fixture.
   climate?: unknown;
   /** The wildfire summary, or the canonical payload summarized when the summary was missing. */
   fires?: unknown;
@@ -1082,6 +1028,8 @@ export interface CiiRawInputs {
   aviation?: unknown;
   sanctionsPressure?: unknown;
   sanctionsCounts?: unknown;
+  earthquakes?: unknown;
+  militaryCii?: unknown;
 }
 
 export interface CiiAuxiliaryOptions {
@@ -1111,9 +1059,7 @@ export function buildCiiAuxiliarySources(
   const displacementRaw = raw.displacement ?? null;
   const insightsRaw = raw.newsInsights ?? null;
   const threatSummaryRaw = raw.threatSummary ?? null;
-  const earthquakesRaw = raw.earthquakes ?? null;
   const temporalRaw = raw.temporalAnomalies ?? null;
-  const militaryCiiRaw = raw.militaryCii ?? null;
   const countryEventsRaw = raw.gdeltCountryEvents ?? null;
   const strikePressureRaw = iranEventsEnabled ? raw.strikePressure ?? null : null;
   const borderSnapshots = CROSS_BORDER_SOURCES.map((source) => raw.crossBorder?.[source.id] ?? null);
@@ -1128,8 +1074,6 @@ export function buildCiiAuxiliarySources(
     crossBorder: borderSnapshots.some(snapshot => snapshot != null) ? 'present' : 'missing',
     newsInsights: read(insightsRaw),
     threatSummary: read(threatSummaryRaw),
-    earthquakes: read(earthquakesRaw),
-    militaryCii: read(militaryCiiRaw),
     gdeltCountryEvents: read(countryEventsRaw),
     strikePressure: iranEventsEnabled ? read(strikePressureRaw) : 'not_configured',
   };
@@ -1193,11 +1137,7 @@ export function buildCiiAuxiliarySources(
       .flatMap(m => [m.countryCode, m.originCode]).filter(Boolean),
     newsTopStories,
     threatSummaryByCountry,
-    earthquakes: arr(earthquakesRaw, 'earthquakes'),
     temporalAnomalies: arr(temporalRaw, 'anomalies'),
-    militaryCii: militaryCiiRaw && typeof militaryCiiRaw === 'object' && (militaryCiiRaw as any).byCountry
-      ? (militaryCiiRaw as any).byCountry
-      : null,
     gdeltCountryEvents: gdeltCountryEventsFromSeed(countryEventsRaw, nowMs),
     confirmedStrikes: confirmedStrikeDaysFromSeed(strikePressureRaw, nowMs),
     inputReads,
@@ -1218,8 +1158,7 @@ export function buildCiiAuxiliarySources(
 export const CII_HEALTH_INPUT_IDS = [
   'acled', 'ucdp', 'gdeltCountryEvents', 'iranEvents', 'strikePressure', 'oref',
   'outages', 'advisories', 'displacement',
-  'crossBorder', 'newsInsights', 'threatSummary', 'earthquakes',
-  'militaryCii',
+  'crossBorder', 'newsInsights', 'threatSummary',
 ] as const;
 export type CiiInputId = typeof CII_HEALTH_INPUT_IDS[number];
 type CiiInputRead = 'present' | 'missing' | 'not_configured';
@@ -1251,14 +1190,12 @@ const CII_INPUT_AUX_FIELD: Record<Exclude<CiiInputId, 'acled'>, keyof AuxiliaryS
   crossBorder: 'crossBorderSurgeCountries',
   newsInsights: 'newsTopStories',
   threatSummary: 'threatSummaryByCountry',
-  earthquakes: 'earthquakes',
-  militaryCii: 'militaryCii',
 };
 
 // Parsers that return null when they reject a present payload: past their own
 // age gate (GDELT 6h, strike tally 72h) or without the field they score.
 const CII_INPUT_REJECTED_AS_NULL = new Set<CiiInputId>([
-  'gdeltCountryEvents', 'strikePressure', 'oref', 'advisories', 'threatSummary', 'militaryCii',
+  'gdeltCountryEvents', 'strikePressure', 'oref', 'advisories', 'threatSummary',
 ]);
 
 /**
@@ -1368,7 +1305,7 @@ export interface CiiCountryTerms {
   eventScore: number;
   boosts: {
     advisory: number; orefBlend: number; displacement: number; crossBorder: number;
-    newsUrgency: number; earthquake: number; ais: number; strikePressure: number;
+    newsUrgency: number; strikePressure: number;
   };
   /** baseline and eventScore weighted, plus every boost: the score before floors, rounding and the cap. */
   blended: number;
@@ -1488,19 +1425,9 @@ export function computeCIIScores(
   //   (the US reports 30, most countries 1).
   // - Sanctions entry counts, since v15: they score the country where a designated
   //   entity is registered.
-
-  // --- Earthquakes (Phase 1) — magnitude >= 5.5, within 7-day lookback ---
-  const eqCutoff = computedAt - 7 * 24 * 60 * 60 * 1000;
-  for (const eq of aux.earthquakes ?? []) {
-    const mag = safeNonNegativeNum(eq.magnitude);
-    if (mag < 5.5) continue;
-    if (safeNum(eq.occurredAt) < eqCutoff) continue;
-    const code = earthquakeCountry(eq);
-    if (!code || !data[code]) continue;
-    if (mag >= 7.5) data[code].earthquakeSevereCount++;
-    else if (mag >= 6.5) data[code].earthquakeMajorCount++;
-    else data[code].earthquakeSignificantCount++;
-  }
+  // - Earthquakes, since v15: a natural hazard; the register shows them as context.
+  // - intelligence:military-cii:v1, since v15: its flight and vessel counts are not
+  //   instability, and its AIS disruptions measure station density (context).
 
   // --- Temporal anomalies (Phase 1) — region is ISO2 or country name; skip 'global' ---
   for (const an of aux.temporalAnomalies ?? []) {
@@ -1510,16 +1437,6 @@ export function computeCIIScores(
     if (!code || !data[code]) continue;
     data[code].temporalAnomalyCount++;
     if (String(an.severity || '').toLowerCase() === 'critical') data[code].temporalAnomalyCriticalCount++;
-  }
-
-  // --- AIS disruptions from intelligence:military-cii:v1 ---
-  // Its military flight and vessel counts are not read (see the Security score below).
-  for (const [code, m] of Object.entries(aux.militaryCii ?? {})) {
-    const d = data[code];
-    if (!d || !m || typeof m !== 'object') continue;
-    d.aisDisruptionHighCount = safeNonNegativeNum((m as any).aisDisruptionHigh);
-    d.aisDisruptionElevatedCount = safeNonNegativeNum((m as any).aisDisruptionElevated);
-    d.aisDisruptionLowCount = safeNonNegativeNum((m as any).aisDisruptionLow);
   }
 
   // --- Strike pressure (v12): confirmed feed and GDELT, per day the larger, decayed ---
@@ -1611,7 +1528,8 @@ export function computeCIIScores(
     // and GPS jamming) left the score under rule I1. They measured NATO transports at
     // cruise altitude, AIS types 35 and 50-59 (pilot boats, SAR, tugs), airport counts and
     // jamming effects far from the jammer (docs/methodology/cii-input-register.md).
-    // The component stays on the wire as militaryActivity, always 0.
+    // AIS disruptions, the last term read from the same feed, left with earthquakes (both
+    // context only). The component stays on the wire as militaryActivity, always 0.
     const security = 0;
 
     // information cap raised 20 → 100 to match unrest/conflict/security ranges.
@@ -1646,21 +1564,13 @@ export function computeCIIScores(
     // --- Phase 3b blend reconciliation (decisions D2/D4/D5/D6) ---
     // newsUrgencyBoost (D2): pure function of the information component.
     const newsUrgencyBoost = information >= 70 ? 5 : information >= 50 ? 3 : 0;
-    // earthquakeBoost (D5): ported verbatim from the frontend getEarthquakeBoost.
-    const earthquakeBoost = Math.min(
-      25,
-      d.earthquakeSevereCount * 10 + d.earthquakeMajorCount * 5 + d.earthquakeSignificantCount * 2,
-    );
     // supplementalSignalBoost (D4): the frontend's helper summed AIS + fire + cyber +
-    // temporal. AIS is its own blend term below; cyber was removed in v14 and fire in v15. The temporal sub-boost is NOT wired — the temporal:anomalies:v1
-    // producer (list-temporal-anomalies.ts) emits every anomaly with region:'global', so
-    // they cannot be country-attributed. `temporalAnomaly*Count` stay gathered-not-scored
-    // (Phase 1 intent); re-wire a temporalBoost only if the producer emits country-scoped
-    // anomalies. The frontend's temporal sub-boost has the same dormancy for the same reason.
-    const aisBoost = Math.min(
-      10,
-      d.aisDisruptionHighCount * 2.5 + d.aisDisruptionElevatedCount * 1.5 + d.aisDisruptionLowCount * 0.5,
-    );
+    // temporal. Cyber was removed in v14, fire and AIS in v15. The temporal sub-boost is
+    // NOT wired — the temporal:anomalies:v1 producer (list-temporal-anomalies.ts) emits
+    // every anomaly with region:'global', so they cannot be country-attributed.
+    // `temporalAnomaly*Count` stay gathered-not-scored (Phase 1 intent); re-wire a
+    // temporalBoost only if the producer emits country-scoped anomalies. The frontend's
+    // temporal sub-boost has the same dormancy for the same reason.
 
     // Assigned inside the sum so termsSink reports it without restating its constant.
     let crossBorderBoost: number;
@@ -1671,8 +1581,6 @@ export function computeCIIScores(
       + displacementBoost
       + (crossBorderBoost = aux.crossBorderSurgeCountries?.includes(code) ? 5 : 0)
       + newsUrgencyBoost
-      + earthquakeBoost
-      + aisBoost
       // Strike pressure (v12), capped; replaces the 72h strikeBoost inside Conflict.
       + strikePressureBoost(d.strikePressure);
 
@@ -1699,7 +1607,6 @@ export function computeCIIScores(
         boosts: {
           advisory: advisoryBoost, orefBlend: orefBlendBoost,
           displacement: displacementBoost, crossBorder: crossBorderBoost, newsUrgency: newsUrgencyBoost,
-          earthquake: earthquakeBoost, ais: aisBoost,
           strikePressure: strikePressureBoost(d.strikePressure),
         },
         blended,

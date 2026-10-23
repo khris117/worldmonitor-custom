@@ -1,7 +1,9 @@
 /**
  * The CII build stops reading inputs that docs/methodology/cii-input-register.md
- * removes: sanctions entry counts, climate anomalies, FIRMS fires (summary and
- * canonical), GPS jamming and aviation delays. Each read was a way to fail: an
+ * removes or shows as context only: sanctions entry counts, climate anomalies,
+ * FIRMS fires (summary and canonical), GPS jamming, aviation delays,
+ * earthquakes, and the military-cii feed (foreign military presence and AIS
+ * disruptions). Each read was a way to fail: an
  * errored read of any of them rejected the whole build. Their health entries
  * go with them. The keys stay seeded for their other readers.
  */
@@ -28,8 +30,9 @@ const { CII_INPUT_POLICY } = await import('../api/_cii-input-health.js');
 const REMOVED_KEYS = [
   'sanctions:pressure:v1', 'sanctions:country-counts:v1', 'climate:anomalies:v2',
   'wildfire:fires-summary:v1', 'wildfire:fires:v1', 'intelligence:gpsjam:v2', 'aviation:delays-bootstrap:v2',
+  'seismology:earthquakes:v1', 'intelligence:military-cii:v1',
 ];
-const REMOVED_INPUT_IDS = ['sanctionsPressure', 'sanctionsCounts', 'climate', 'fires', 'gpsjam', 'aviation'];
+const REMOVED_INPUT_IDS = ['sanctionsPressure', 'sanctionsCounts', 'climate', 'fires', 'gpsjam', 'aviation', 'earthquakes', 'militaryCii'];
 const SEED_META_KEY = 'seed-meta:intelligence:risk-scores';
 
 let writes: Array<{ key: string; value: string }> = [];

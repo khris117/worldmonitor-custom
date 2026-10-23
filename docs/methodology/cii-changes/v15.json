@@ -11,8 +11,11 @@
         "foreign military flights",
         "foreign military vessels",
         "GPS jamming",
-        "aviation delay alerts"
+        "aviation delay alerts",
+        "earthquakes (context)",
+        "AIS disruptions (context)"
       ],
+      "base": "fix/cii-b2-advisory-fallback (#9590), whose fixture scores equal origin/cii-v15",
       "note": "Contributions are each input's term in the base blend (Security parts at 0.20 x 0.6, before the component cap). Where a floor now binds, the final score falls by less than the blend.",
       "fixtures": {
         "2026-10-21T0628Z": {
@@ -68,13 +71,13 @@
           },
           "GB": {
             "from": 20,
-            "to": 10,
-            "delta": -10,
+            "to": 7,
+            "delta": -13,
             "blend": {
               "from": 20.4,
-              "to": 9.5
+              "to": 7
             },
-            "cause": "Removed inputs (rule I1): sanctions −5, foreignMilitaryVessels −3.6, gpsJamming −1, foreignMilitaryFlights −0.7, aviationDelays −0.6."
+            "cause": "Removed inputs (rule I1): sanctions −5, foreignMilitaryVessels −3.6, aisDisruptions −2.5, gpsJamming −1, foreignMilitaryFlights −0.7, aviationDelays −0.6."
           },
           "IR": {
             "from": 65,
@@ -122,9 +125,9 @@
             "delta": -8,
             "blend": {
               "from": 68.1,
-              "to": 43.9
+              "to": 38.9
             },
-            "cause": "Removed inputs (rule I1): sanctions −12, fires −8, gpsJamming −4.2. Advisory floor 60 now sets the score (blend 43.9)."
+            "cause": "Removed inputs (rule I1): sanctions −12, fires −8, earthquakes −5, gpsJamming −4.2. Advisory floor 60 now sets the score (blend 38.9)."
           },
           "SY": {
             "from": 73,
@@ -168,13 +171,13 @@
           },
           "US": {
             "from": 21,
-            "to": 6,
-            "delta": -15,
+            "to": 4,
+            "delta": -17,
             "blend": {
               "from": 21.3,
-              "to": 6.3
+              "to": 4.3
             },
-            "cause": "Removed inputs (rule I1): aviationDelays −4.8, gpsJamming −4.2, foreignMilitaryVessels −3.6, sanctions −3."
+            "cause": "Removed inputs (rule I1): aviationDelays −4.8, gpsJamming −4.2, foreignMilitaryVessels −3.6, sanctions −3, earthquakes −2."
           },
           "YE": {
             "from": 80,
@@ -190,13 +193,13 @@
         "2026-10-23T0756Z": {
           "CN": {
             "from": 55,
-            "to": 29,
-            "delta": -26,
+            "to": 24,
+            "delta": -31,
             "blend": {
               "from": 55.1,
-              "to": 29.3
+              "to": 24.3
             },
-            "cause": "Removed inputs (rule I1): climate −8, sanctions −8, fires −5, aviationDelays −4.8."
+            "cause": "Removed inputs (rule I1): climate −8, sanctions −8, fires −5, earthquakes −5, aviationDelays −4.8."
           },
           "CU": {
             "from": 36,
@@ -240,13 +243,13 @@
           },
           "GB": {
             "from": 21,
-            "to": 10,
-            "delta": -11,
+            "to": 7,
+            "delta": -14,
             "blend": {
               "from": 21.3,
-              "to": 9.7
+              "to": 7.2
             },
-            "cause": "Removed inputs (rule I1): sanctions −5, foreignMilitaryVessels −3.6, foreignMilitaryFlights −2.2, aviationDelays −0.6, gpsJamming −0.2."
+            "cause": "Removed inputs (rule I1): sanctions −5, foreignMilitaryVessels −3.6, aisDisruptions −2.5, foreignMilitaryFlights −2.2, aviationDelays −0.6, gpsJamming −0.2."
           },
           "IR": {
             "from": 66,
@@ -362,13 +365,13 @@
         "2026-10-23T0946Z": {
           "CN": {
             "from": 54,
-            "to": 28,
-            "delta": -26,
+            "to": 23,
+            "delta": -31,
             "blend": {
               "from": 53.6,
-              "to": 27.5
+              "to": 22.5
             },
-            "cause": "Removed inputs (rule I1): climate −8, sanctions −8, fires −5, aviationDelays −4.8, gpsJamming −0.2."
+            "cause": "Removed inputs (rule I1): climate −8, sanctions −8, fires −5, earthquakes −5, aviationDelays −4.8, gpsJamming −0.2."
           },
           "CU": {
             "from": 36,
@@ -412,13 +415,13 @@
           },
           "GB": {
             "from": 20,
-            "to": 10,
-            "delta": -10,
+            "to": 7,
+            "delta": -13,
             "blend": {
               "from": 20,
-              "to": 9.8
+              "to": 7.3
             },
-            "cause": "Removed inputs (rule I1): sanctions −5, foreignMilitaryVessels −2.4, aviationDelays −1.8, foreignMilitaryFlights −0.7, gpsJamming −0.2."
+            "cause": "Removed inputs (rule I1): sanctions −5, aisDisruptions −2.5, foreignMilitaryVessels −2.4, aviationDelays −1.8, foreignMilitaryFlights −0.7, gpsJamming −0.2."
           },
           "IR": {
             "from": 66,

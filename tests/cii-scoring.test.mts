@@ -128,7 +128,7 @@ const CII_PROTOCOL_SNAPSHOT_HASH_BY_VERSION: Record<string, string> = {
   // Each Stage B PR regenerates this entry, and only this one, with the command in
   // docs/methodology/cii-change-brief.md section 3, and says so in its PR body. It
   // is frozen as released when v15 ships.
-  v15: '__REGENERATE__',
+  v15: 'c5eb5957d887cea65213a985ebf469c0b0845206ca20e623f061e96686483819',
 };
 
 // The released entries above are a record. This digest of every entry except
@@ -589,9 +589,7 @@ function emptyAux() {
     crossBorderSurgeCountries: [] as string[],
     newsTopStories: [] as Array<{ countryCode: string | null; countryCodes?: string[]; threatLevel: string; primaryTitle: string }>,
     threatSummaryByCountry: null as Record<string, { critical: number; high: number; medium: number; low: number; info: number }> | null,
-    earthquakes: [] as any[],
     temporalAnomalies: [] as any[],
-    militaryCii: null as Record<string, any> | null,
   };
 }
 
@@ -789,132 +787,6 @@ describe('CII signal wiring', () => {
       'older window must end before the recent inclusive start date');
   });
 
-  it('earthquake seed fetches the same 7-day window that CII scoring claims', () => {
-    const seedPath = resolve(
-      fileURLToPath(new URL('.', import.meta.url)),
-      '..',
-      'scripts',
-      'seed-earthquakes.mjs',
-    );
-    const seed = readFileSync(seedPath, 'utf8');
-    assert.match(seed, /summary\/4\.5_week\.geojson/,
-      'seed-earthquakes must use the USGS 7-day feed because CII scores a 7-day earthquake lookback');
-    assert.doesNotMatch(seed, /summary\/4\.5_day\.geojson/,
-      'seed-earthquakes must not publish only a 1-day feed under the 7-day CII scoring contract');
-  });
-
-  it('Phase 3b D5: earthquake signals raise the score', () => {
-    // Temporal anomalies are deliberately NOT scored — the temporal:anomalies:v1
-    // producer emits region:'global' so they cannot be country-attributed. The
-    // score rise asserted below comes entirely from earthquakeBoost.
-    const acled = [acledEvent('US', 'protest', 0)];
-    const base = scoreFor(computeCIIScores(acled, emptyAux()), 'US');
-    const aux = emptyAux();
-    aux.earthquakes = [{ magnitude: 7.0, occurredAt: Date.now(), location: { latitude: 39, longitude: -98 } }];
-    const withAux = scoreFor(computeCIIScores(acled, aux), 'US');
-    assert.ok(withAux, 'computeCIIScores handles the aux sources without throwing');
-    assert.ok(withAux!.combinedScore > base!.combinedScore, 'an earthquake feeds earthquakeBoost in the blend');
-  });
-
-  it('an offshore earthquake scores to the country USGS names in its place', () => {
-    // 150 km off Honshu: beyond the 12-nautical-mile coastal waters, so no
-    // border reaches it, but USGS names the country after the last comma.
-    const nowMs = Date.UTC(2026, 9, 19);
-    const base = scoreFor(computeCIIScores([], emptyAux(), { nowMs }), 'JP')!;
-    const offshore = emptyAux();
-    offshore.earthquakes = [{
-      magnitude: 7.1, occurredAt: nowMs - 3_600_000, place: '151 km E of Namie, Japan',
-      location: { latitude: 37.5, longitude: 142.9 },
-    }];
-    assert.ok(scoreFor(computeCIIScores([], offshore, { nowMs }), 'JP')!.combinedScore > base.combinedScore);
-    // A region with no country, and a country named only mid-string, score nowhere.
-    const remote = emptyAux();
-    remote.earthquakes = [
-      { magnitude: 7.1, occurredAt: nowMs - 3_600_000, place: 'South Sandwich Islands region', location: { latitude: -58, longitude: -26 } },
-      { magnitude: 7.1, occurredAt: nowMs - 3_600_000, place: 'off the coast of Japan trench, Pacific Ocean', location: { latitude: 30, longitude: 160 } },
-    ];
-    const remoteScores = computeCIIScores([], remote, { nowMs });
-    const baseScores = computeCIIScores([], emptyAux(), { nowMs });
-    for (const s of remoteScores) assert.equal(s.combinedScore, scoreFor(baseScores, s.region)!.combinedScore, s.region);
-  });
-
-  it('never reads an ocean or region name, or a quake on non-Tier-1 land, as a Tier-1 country', () => {
-    // Review on #9421: 'Southern Indian Ocean' matched India's 'indian'; a comma-free
-    // 'Off coast of Central America' matched 'america'; and a Tajik epicentre that
-    // USGS describes from the nearest Afghan town is on non-Tier-1 land, which
-    // counts for no Tier-1 country.
-    const nowMs = Date.UTC(2026, 9, 19);
-    const quake = (place: string, latitude: number, longitude: number) => ({
-      magnitude: 7.5, occurredAt: nowMs - 3_600_000, place, location: { latitude, longitude },
-    });
-    const baseScores = computeCIIScores([], emptyAux(), { nowMs });
-    for (const eq of [
-      quake('Southern Indian Ocean', -40, 70),
-      quake('Off coast of Central America', 10, -95),
-      quake('412 km S of Port Blair, Indian Ocean', 8, 92.5),
-      quake('61 km NE of Jurm, Afghanistan', 37.49, 71.55),
-      // Review on #9421: a news keyword is not a country name. USGS writes US
-      // states after the comma, and 'washington' is a US news keyword.
-      quake('180 km W of Neah Bay, Washington', 48.2, -127.2),
-      quake('300 km E of Hachijo-jima, Tokyo', 33.0, 143.0),
-    ]) {
-      const aux = emptyAux();
-      aux.earthquakes = [eq];
-      const scores = computeCIIScores([], aux, { nowMs });
-      for (const s of scores) {
-        assert.equal(s.combinedScore, scoreFor(baseScores, s.region)!.combinedScore, `${eq.place}: ${s.region}`);
-      }
-    }
-  });
-
-  it('earthquake lookback honors injected CII scorer clock', () => {
-    const nowMs = Date.UTC(2020, 0, 10);
-    const base = scoreFor(computeCIIScores([], emptyAux(), { nowMs }), 'US')!;
-
-    const recentAux = emptyAux();
-    recentAux.earthquakes = [
-      { magnitude: 7.0, occurredAt: nowMs - 24 * 60 * 60 * 1000, location: { latitude: 39, longitude: -98 } },
-    ];
-    const recent = scoreFor(computeCIIScores([], recentAux, { nowMs }), 'US')!;
-    assert.ok(
-      recent.combinedScore > base.combinedScore,
-      'a one-day-old magnitude 7 earthquake must boost scores relative to injected nowMs',
-    );
-
-    const staleAux = emptyAux();
-    staleAux.earthquakes = [
-      { magnitude: 7.0, occurredAt: nowMs - 8 * 24 * 60 * 60 * 1000, location: { latitude: 39, longitude: -98 } },
-    ];
-    const stale = scoreFor(computeCIIScores([], staleAux, { nowMs }), 'US')!;
-    assert.equal(
-      stale.combinedScore,
-      base.combinedScore,
-      'an eight-day-old earthquake must be ignored relative to injected nowMs',
-    );
-  });
-
-  it('v15: Security has no inputs; foreign military flights and vessels move no score', () => {
-    // Foreign flights were NATO transports at cruise altitude and 88% of "military"
-    // vessels were AIS types 35 and 50-59 (docs/methodology/cii-input-register.md).
-    const aux = emptyAux();
-    aux.militaryCii = {
-      IL: { ownFlights: 40, foreignFlights: 6, ownVessels: 12, foreignVessels: 2, aisDisruptionHigh: 0, aisDisruptionElevated: 0, aisDisruptionLow: 0 },
-      PL: { ownFlights: 0, foreignFlights: 10, ownVessels: 0, foreignVessels: 0, aisDisruptionHigh: 0, aisDisruptionElevated: 0, aisDisruptionLow: 0 },
-    };
-    const scores = computeCIIScores([], aux);
-    const base = computeCIIScores([], emptyAux());
-    for (const code of ['IL', 'PL']) {
-      assert.equal(scoreFor(scores, code)!.components!.militaryActivity, 0, `${code} Security`);
-      assert.equal(scoreFor(scores, code)!.combinedScore, scoreFor(base, code)!.combinedScore, code);
-    }
-  });
-
-  it('v15: AIS disruptions in the same military-cii row still feed aisBoost', () => {
-    const aux = emptyAux();
-    aux.militaryCii = { GB: { ownFlights: 0, foreignFlights: 0, ownVessels: 0, foreignVessels: 0, aisDisruptionHigh: 2, aisDisruptionElevated: 0, aisDisruptionLow: 0 } };
-    assert.ok(scoreFor(computeCIIScores([], aux), 'GB')!.combinedScore > scoreFor(computeCIIScores([], emptyAux()), 'GB')!.combinedScore);
-  });
-
   it('Phase 3b C1: a riot adds severityBoost vs a plain protest', () => {
     // Same unrest count (1 event), 0 fatalities, 0 outages in both — the only difference
     // is the riot classifies as high-severity → severityBoost. Isolates C1.
@@ -926,32 +798,7 @@ describe('CII signal wiring', () => {
 
 });
 
-describe('CII v14: own military activity and hosting-location cyber feeds', () => {
-  // Live 2026-10-20T09:41Z intelligence:military-cii:v1 rows. GB's ownFlights went
-  // 9 → 31 overnight on RAF training sorties; its 53 "own vessels" are constant.
-  const GB_LIVE = { ownFlights: 31, foreignFlights: 2, ownVessels: 53, foreignVessels: 1, aisDisruptionHigh: 0, aisDisruptionElevated: 0, aisDisruptionLow: 0 };
-
-  it('a country\'s own air force and navy do not raise its Security component', () => {
-    const aux = emptyAux();
-    aux.militaryCii = { GB: { ...GB_LIVE, foreignFlights: 0, foreignVessels: 0 } };
-    const gb = scoreFor(computeCIIScores([], aux), 'GB')!;
-    const base = scoreFor(computeCIIScores([], emptyAux()), 'GB')!;
-    assert.equal(gb.components!.militaryActivity, 0, 'own flights/vessels are routine, not instability');
-    assert.equal(gb.combinedScore, base.combinedScore);
-  });
-
-  it('own training sorties no longer swing Security between two days', () => {
-    const yesterday = emptyAux();
-    yesterday.militaryCii = { GB: { ...GB_LIVE, ownFlights: 9, foreignFlights: 0, foreignVessels: 3 } };
-    const today = emptyAux();
-    today.militaryCii = { GB: { ...GB_LIVE, foreignFlights: 0, foreignVessels: 3 } };
-    assert.equal(
-      scoreFor(computeCIIScores([], today), 'GB')!.combinedScore,
-      scoreFor(computeCIIScores([], yesterday), 'GB')!.combinedScore,
-      '9 → 31 own RAF flights must not move GB',
-    );
-  });
-
+describe('CII v14: hosting-location cyber feeds', () => {
   it('hosting-location cyber IOC rows do not move any country', () => {
     // Live 2026-10-20T09:47Z cyber:threats-bootstrap:v2 rows for GB: 40 AbuseIPDB
     // CRITICAL; every source in the feed geolocates attacker infrastructure.
@@ -1284,13 +1131,7 @@ describe('CII scoring', () => {
   });
 
   it('UAE geo events attributed to AE not SA despite bbox overlap', () => {
-    const nowMs = Date.UTC(2026, 9, 19);
-    const aux = emptyAux();
-    aux.earthquakes = [{ magnitude: 7.0, occurredAt: nowMs - 3_600_000, location: { latitude: 25.2, longitude: 55.3 } }];
-    const scores = computeCIIScores([], aux, { nowMs });
-    const base = computeCIIScores([], emptyAux(), { nowMs });
-    assert.ok(scoreFor(scores, 'AE')!.combinedScore > scoreFor(base, 'AE')!.combinedScore, 'AE should get the Dubai quake');
-    assert.equal(scoreFor(scores, 'SA')!.combinedScore, scoreFor(base, 'SA')!.combinedScore, 'SA should not get the Dubai quake');
+    assert.equal(geoToCountry(25.2, 55.3), 'AE', 'Dubai is AE');
   });
 
   it('empty data returns baseline-derived scores with floors', () => {
@@ -1301,17 +1142,6 @@ describe('CII scoring', () => {
 
   it('clamps negative upstream counts before score math', () => {
     const aux = emptyAux();
-    aux.militaryCii = {
-      UA: {
-        ownFlights: -5,
-        foreignFlights: -3,
-        ownVessels: -2,
-        foreignVessels: -1,
-        aisDisruptionHigh: -4,
-        aisDisruptionElevated: -8,
-        aisDisruptionLow: -13,
-      },
-    };
     aux.orefData = { activeAlertCount: -5, historyCount24h: -12 };
     aux.threatSummaryByCountry = { UA: { critical: -2, high: -3, medium: -5, low: -8, info: -13 } };
 
@@ -1320,11 +1150,10 @@ describe('CII scoring', () => {
 
     assert.equal(Number.isFinite(ua.combinedScore), true, 'negative fatalities must not produce NaN scores');
     assert.equal(Number.isFinite(ua.components!.ciiContribution), true, 'negative counts must not produce NaN components');
-    assert.ok(ua.components!.militaryActivity >= 0, 'negative military counts must not lower security below zero');
     assert.ok(ua.components!.newsActivity >= 0, 'negative threat counts must not lower news below zero');
   });
 
-  it('applies ACLED bucket weights and replays earthquake lookback, trend prior, and computedAt from fixed nowMs', () => {
+  it('applies ACLED bucket weights and replays trend prior and computedAt from fixed nowMs', () => {
     const replayNowMs = Date.UTC(2020, 0, 10, 12, 0, 0);
     // ACLED `daysAgo` is computed before computeCIIScores runs; this guards the
     // scorer's bucket weights, not clock-derived ACLED age calculation.
@@ -1352,26 +1181,13 @@ describe('CII scoring', () => {
       '8-30d ACLED bucket still contributes to scoring',
     );
 
-    const withRecentEqAux = emptyAux();
-    withRecentEqAux.earthquakes = [
-      { magnitude: 7.0, occurredAt: replayNowMs - 24 * 60 * 60 * 1000, location: { latitude: 39, longitude: -98 } },
-    ];
-    const withStaleEqAux = emptyAux();
-    withStaleEqAux.earthquakes = [
-      { magnitude: 7.0, occurredAt: replayNowMs - 8 * 24 * 60 * 60 * 1000, location: { latitude: 39, longitude: -98 } },
-    ];
-    const withRecentEq = scoreFor(computeCIIScores([], withRecentEqAux, { nowMs: replayNowMs }), 'US')!;
-    const withStaleEq = scoreFor(computeCIIScores([], withStaleEqAux, { nowMs: replayNowMs }), 'US')!;
-    assert.ok(withRecentEq.combinedScore > base.combinedScore, 'earthquake inside fixed 7d replay window raises score');
-    assert.equal(withStaleEq.combinedScore, base.combinedScore, 'earthquake outside fixed 7d replay window is ignored');
-
     const targetSnapshot = trendSnapshot(replayNowMs - CII_TREND_TARGET_AGE_MS);
-    targetSnapshot.ciiScores = [priorCiiScore('US', withRecentEq.combinedScore - 5, targetSnapshot.capturedAt)];
+    targetSnapshot.ciiScores = [priorCiiScore('US', recent.combinedScore - 5, targetSnapshot.capturedAt)];
     const recentSnapshot = trendSnapshot(replayNowMs - 10 * 60 * 1000);
-    recentSnapshot.ciiScores = [priorCiiScore('US', withRecentEq.combinedScore + 40, recentSnapshot.capturedAt)];
+    recentSnapshot.ciiScores = [priorCiiScore('US', recent.combinedScore + 40, recentSnapshot.capturedAt)];
     const selectedPrior = selectCiiTrendPriorSnapshot([recentSnapshot, targetSnapshot], replayNowMs);
     const replayed = scoreFor(
-      computeCIIScores([], withRecentEqAux, {
+      computeCIIScores(recentAcled, emptyAux(), {
         nowMs: replayNowMs,
         priorScores: selectedPrior?.ciiScores ?? null,
       }),
@@ -1762,7 +1578,6 @@ describe('CII scoring', () => {
       'UCDP classification window must remain a two-year trailing window',
     );
     assertFormulaLiteralCovered(scoreFormulaLiterals, 'computeCIIScores', 0.4, '(ev.daysAgo ?? 0) <= 7 ? 1.0 : 0.4');
-    assertFormulaLiteralCovered(scoreFormulaLiterals, 'computeCIIScores', 5.5, 'mag < 5.5');
     if (getRiskScoresSource.includes('NEWS_THREAT_WEIGHT')) {
       assertFormulaLiteralCovered(scoreFormulaLiterals, 'NEWS_THREAT_WEIGHT', 4, 'critical: 4');
       assertFormulaLiteralCovered(scoreFormulaLiterals, 'NEWS_THREAT_WEIGHT', 0.5, 'low: 0.5');
@@ -2193,14 +2008,15 @@ describe('CII scoring', () => {
 
   it('proto and OpenAPI CiiComponents descriptions match the server scoring sources', () => {
     const expectedGeo = 'Armed-conflict contribution from ACLED events, fatalities, civilian violence, GDELT conflict coverage, and OREF alerts (0-100).';
-    const expectedMilitary = 'Security-mobility contribution from military flights, military vessels, aviation disruption, and GPS interference (0-100).';
-    const staleSourcePattern = /ACLED\/UCDP|AIS disruption/;
+    // v15 scores no Security input: flights, vessels, aviation and GPS left under rule I1.
+    const expectedMilitary = 'Security contribution; always 0 because v15 scores no Security input.';
+    const staleSourcePattern = /ACLED\/UCDP|AIS disruption|military flights|military vessels|GPS interference/;
 
     const proto = readRepoFile('proto/worldmonitor/intelligence/v1/intelligence.proto');
     const protoBlock = proto.match(/message CiiComponents \{[\s\S]*?\n\}/)?.[0] ?? '';
     assert.ok(protoBlock, 'intelligence.proto must define CiiComponents.');
     assert.ok(protoBlock.includes(expectedGeo), 'intelligence.proto must describe geo_convergence with current ACLED-only sources.');
-    assert.ok(protoBlock.includes(expectedMilitary), 'intelligence.proto must describe military_activity with military vessels.');
+    assert.ok(protoBlock.includes(expectedMilitary), 'intelligence.proto must describe military_activity as always 0.');
     assert.doesNotMatch(protoBlock, staleSourcePattern);
 
     const serviceOpenApi = JSON.parse(readRepoFile('docs/api/IntelligenceService.openapi.json')) as {
@@ -2215,9 +2031,14 @@ describe('CII scoring', () => {
       const block = openApi.match(/\n {8}[A-Za-z0-9_]*CiiComponents:\n[\s\S]*?(?=\n {8}[A-Za-z][A-Za-z0-9_]*:\n)/)?.[0] ?? '';
       assert.ok(block, `${path} must define CiiComponents.`);
       assert.ok(block.includes(`description: ${expectedGeo}`), `${path} must describe geoConvergence with current ACLED-only sources.`);
-      assert.ok(block.includes(`description: ${expectedMilitary}`), `${path} must describe militaryActivity with military vessels.`);
+      assert.ok(block.includes(`description: ${expectedMilitary}`), `${path} must describe militaryActivity as always 0.`);
       assert.doesNotMatch(block, staleSourcePattern);
     }
+
+    // The MCP get_risk_scores schema agents read must say the same.
+    const rpcTools = readRepoFile('api/mcp/registry/rpc-tools.ts');
+    const mcpMilitary = rpcTools.match(/militaryActivity: \{ type: 'number', description: '([^']*)' \}/)?.[1] ?? '';
+    assert.equal(mcpMilitary, 'SECURITY contribution; always 0 because v15 scores no Security input.');
   });
 
   // ===== Methodology doc drift guard (issue #3725) =====

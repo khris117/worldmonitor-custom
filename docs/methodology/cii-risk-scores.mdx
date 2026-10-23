@@ -33,7 +33,7 @@ behavior — CII is a triage dial, not a verdict.
 Every country carries a **baseline** — how volatile it is in normal times — and
 an **event multiplier** that scales how much a given incident should move the
 needle there. The headline score is 40% baseline and 60% live events, then
-adjusted by situational boosts for things like earthquakes, strikes, and
+adjusted by situational boosts for things like strikes, displacement, and
 travel advisories. Since v15 the live events can reach 80 of their 100 points,
 because Security carries no weight.
 
@@ -47,7 +47,7 @@ flowchart TD
   I["Information<br/>weighted critical news"] --> E
   B["Baseline risk<br/>how volatile this country<br/>is in normal times"] --> M["Composite<br/>baseline 40% + events 60%"]
   E --> M
-  M --> X["Situational boosts<br/>earthquake, advisory,<br/>displacement, AIS disruption,<br/>strike pressure"]
+  M --> X["Situational boosts<br/>advisory, displacement,<br/>strike pressure"]
   X --> R["combinedScore 0-100"]
 ```
 
@@ -120,8 +120,6 @@ composite = baseline * 0.4
           + displacementBoost (≤ 20)
           + crossBorderArrivalSurgeBoost (0 or 5)
           + newsUrgencyBoost  (≤  5)
-          + earthquakeBoost   (≤ 25)
-          + aisBoost          (≤ 10, AIS disruptions)
           + strikeBoost       (≤ 10, strike pressure)
 ```
 
@@ -223,8 +221,8 @@ Component details that are easy to miss:
   scores from the first days after deploy while the baseline backfills. Once the
   ACLED path returns events, both terms are 0, so a credentialed deployment
   never counts the same activity twice.
-- **Coordinate attribution**: earthquakes, strike events and AIS disruptions
-  are placed in a Tier-1 country by point-in-polygon against real borders
+- **Coordinate attribution**: strike events are placed in a Tier-1 country by
+  point-in-polygon against real borders
   (`scripts/shared/cii-country-borders.data.mjs`, generated from the Natural Earth
   1:50m map the dashboard ships). A point on any other country's land counts
   for no Tier-1 country; a point at sea counts for the nearest coast within 12
@@ -538,15 +536,20 @@ in `CURATED_COUNTRIES`.
 > - Aviation delay alerts (Security). Their count scales with reporting
 >   airports: the US has 30, most countries 1.
 >
+> Two inputs the register shows as context only leave the score too:
+> earthquakes (a natural hazard; boost up to 25) and AIS disruptions (station
+> density; boost up to 10).
+>
 > Security has no inputs left. It reads 0 with weight 0 in the event score, and
 > its 0.20 is not redistributed; reweighting belongs to the later aggregation
 > change. The build stops reading `sanctions:pressure:v1`,
 > `sanctions:country-counts:v1`, `climate:anomalies:v2`,
 > `wildfire:fires-summary:v1` (and its `wildfire:fires:v1` fallback),
-> `intelligence:gpsjam:v2` and `aviation:delays-bootstrap:v2`. Those keys stay
-> seeded for their other readers, and their entries leave `riskScores` input
-> health. `intelligence:military-cii:v1` is still read for its AIS
-> disruptions. On the committed fixtures, most countries drop 4–29 points.
+> `intelligence:gpsjam:v2`, `aviation:delays-bootstrap:v2`,
+> `seismology:earthquakes:v1` and `intelligence:military-cii:v1`. All but the
+> last stay seeded for their other readers. `intelligence:military-cii:v1` now
+> has no reader. Their entries leave `riskScores` input health. On the
+> committed fixtures, most countries drop 4–29 points.
 > Countries whose blend falls below a floor now sit on it: floor-lifted
 > countries rise from 9–10 to 16–17. That is an interim artefact of the floors,
 > which the aggregation change removes.

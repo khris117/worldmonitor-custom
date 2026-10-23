@@ -540,21 +540,22 @@ describe('CII docs drift guards', () => {
   it('CII docs publish no input the register removed as a score term (v15 B4)', () => {
     // docs/methodology/cii-input-register.md removes sanctions counts, climate
     // anomalies, fires, foreign military flights and vessels, GPS jamming and
-    // aviation delays; Security is left with no inputs and weight 0.
+    // aviation delays, and shows earthquakes and AIS disruptions as context only;
+    // Security is left with no inputs and weight 0.
     const scorer = readFileSync(resolve(root, 'server/worldmonitor/intelligence/v1/get-risk-scores.ts'), 'utf8');
-    for (const term of ['climateBoost', 'fireBoost', 'sanctionsBoost', 'flightScore', 'vesselScore', 'aviationScore', 'gpsJammingScore']) {
+    for (const term of ['climateBoost', 'fireBoost', 'sanctionsBoost', 'earthquakeBoost', 'aisBoost', 'flightScore', 'vesselScore', 'aviationScore', 'gpsJammingScore']) {
       assert.ok(!scorer.includes(term), `get-risk-scores.ts still computes ${term}`);
     }
     for (const path of ['docs/methodology/cii-risk-scores.mdx', 'docs/zh/methodology/cii-risk-scores.mdx']) {
       const doc = readFileSync(resolve(root, path), 'utf8');
       const formula = doc.slice(doc.indexOf('eventScore = U'), doc.indexOf('```', doc.indexOf('eventScore = U')));
       assert.match(formula, /eventScore = U \* 0\.25 \+ C \* 0\.30 \+ S \* 0 \+ I \* 0\.25/, `${path} must publish Security at weight 0`);
-      for (const term of ['climateBoost', 'fireBoost', 'sanctionsBoost']) {
+      for (const term of ['climateBoost', 'fireBoost', 'sanctionsBoost', 'earthquakeBoost', 'aisBoost']) {
         assert.ok(!formula.includes(term), `${path} formula still lists ${term}`);
       }
     }
     const boosts = markdownSection(readFileSync(resolve(root, 'docs/country-instability-index.mdx'), 'utf8'), '## Boosts And Floors');
-    assert.doesNotMatch(boosts, /^\| (?:Climate anomalies|Wildfires|Sanctions) \|/m, 'country-instability-index boosts table lists a removed input');
+    assert.doesNotMatch(boosts, /^\| (?:Climate anomalies|Wildfires|Sanctions|Earthquakes|AIS disruptions) \|/m, 'country-instability-index boosts table lists a removed input');
   });
 
   it('public CII surfaces point to the canonical live rankings page', () => {

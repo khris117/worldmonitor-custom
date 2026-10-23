@@ -73,7 +73,7 @@ function stubRedis(stored: Record<string, string> = {}, failingKeys: string[] = 
 }
 
 /**
- * The fixture production had for months: UCDP, news and military
+ * The fixture production had for months: UCDP and news
  * alive, no realtime conflict feed. The strike feed is off by default
  * (IRAN_EVENTS_ENABLED), so it reports not_configured beside ACLED.
  */
@@ -82,7 +82,6 @@ function liveFeedsWithoutRealtimeConflict(): Record<string, string> {
   return {
     'conflict:ucdp-events:v1': JSON.stringify({ events }),
     'news:insights:v1': JSON.stringify({ topStories: [{ countryCode: 'UA', threatLevel: 'critical', primaryTitle: 'Strikes on Kyiv' }] }),
-    'intelligence:military-cii:v1': JSON.stringify({ byCountry: { UA: { ownFlights: 4, foreignFlights: 2 } } }),
   };
 }
 
@@ -324,8 +323,8 @@ describe('assessCiiInputs', () => {
   });
 
   it('an input whose quiet is plausible indefinitely never goes dead', () => {
-    assert.equal(CII_INPUT_POLICY.inputs.earthquakes.maxQuietMin, null);
-    const inputs = { ...allLive(), earthquakes: { state: 'quiet', quietSince: NOW - 90 * 24 * 60 * MIN } };
+    assert.equal(CII_INPUT_POLICY.inputs.crossBorder.maxQuietMin, null);
+    const inputs = { ...allLive(), crossBorder: { state: 'quiet', quietSince: NOW - 90 * 24 * 60 * MIN } };
     assert.deepEqual(assessCiiInputs({ inputs }, NOW).dead, []);
   });
 
@@ -374,12 +373,6 @@ describe('assessCiiInputs', () => {
     assert.deepEqual(result.dead, [{ id: 'gdeltCountryEvents', state: 'stale', sourceCheck: 'gdeltCountryEvents' }]);
   });
 
-  it('the militaryCii input is graded against its own probe, and its AIS-only quiet is legitimate', () => {
-    const result = assessCiiInputs({ inputs: allLive() }, NOW, { militaryCii: 'STALE_SEED' });
-    assert.deepEqual(result.dead, [{ id: 'militaryCii', state: 'stale', sourceCheck: 'militaryCii' }]);
-    assert.equal(CII_INPUT_POLICY.inputs.militaryCii.maxQuietMin, null);
-  });
-
   it('seed-meta without an inputs block cannot prove anything', () => {
     assert.equal(assessCiiInputs({ fetchedAt: NOW, recordCount: 3 }, NOW).valid, false);
     assert.equal(assessCiiInputs(null, NOW).valid, false);
@@ -398,7 +391,7 @@ describe('composeRiskScoresInputHealth', () => {
   });
 
   it('one dead input with its family still fed is COVERAGE_PARTIAL', () => {
-    const entry = riskScoresHealth(meta({ ...allLive(), earthquakes: { state: 'missing' } }));
+    const entry = riskScoresHealth(meta({ ...allLive(), crossBorder: { state: 'missing' } }));
     assert.equal(entry.status, 'COVERAGE_PARTIAL');
     assert.deepEqual(entry.ciiInputs.unfedFamilies, []);
   });
@@ -421,7 +414,7 @@ describe('composeRiskScoresInputHealth', () => {
     // Containment means "served, just old"; scores missing a signal are wrong, not old.
     for (const [inputs, recordCount] of [
       [{ ...allLive(), acled: { state: 'not_configured' }, gdeltCountryEvents: { state: 'missing' } }, 3],
-      [{ ...allLive(), earthquakes: { state: 'missing' } }, 2],
+      [{ ...allLive(), crossBorder: { state: 'missing' } }, 2],
     ] as const) {
       const raw = JSON.stringify(meta(inputs, { recordCount }));
       const ctx = {
@@ -460,9 +453,9 @@ describe('composeRiskScoresInputHealth', () => {
   });
 
   it('never softens a stronger verdict the seed-meta already earned', () => {
-    const entry = riskScoresHealth(meta({ ...allLive(), earthquakes: { state: 'missing' } }, { fetchedAt: NOW - 120 * MIN }));
+    const entry = riskScoresHealth(meta({ ...allLive(), crossBorder: { state: 'missing' } }, { fetchedAt: NOW - 120 * MIN }));
     assert.equal(entry.status, 'STALE_SEED');
-    assert.deepEqual(entry.ciiInputs.dead.map((input: { id: string }) => input.id), ['earthquakes']);
+    assert.deepEqual(entry.ciiInputs.dead.map((input: { id: string }) => input.id), ['crossBorder']);
   });
 
   it('a stale report with an unfed family is not contained either', () => {

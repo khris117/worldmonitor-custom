@@ -3,7 +3,9 @@
 // that affects its order. docs/methodology/cii-input-register.md marks these
 // seven inputs **remove**:
 //   sanctions entry counts, climate anomalies, FIRMS fires, foreign military
-//   flights, foreign military vessels, GPS jamming and aviation delay alerts.
+//   flights, foreign military vessels, GPS jamming and aviation delay alerts;
+// and two more **context** (shown beside the score, never scored): earthquakes
+// (a natural hazard) and AIS disruptions (station density).
 // Each test feeds one of them at the raw-input level (what the Redis reads
 // return), so parsing, attribution and scoring are all covered. Each test
 // either amplifies the input in every Tier-1 country or removes it, and
@@ -73,6 +75,20 @@ const AMPLIFIED: Record<string, (inputs: Obj) => Obj> = {
       return [c, { ...m, foreignFlights: Number(m.foreignFlights ?? 0) + 10 }];
     })) },
   }),
+  earthquakes: (inputs) => ({
+    ...inputs,
+    // A magnitude 7.6 quake an hour before the build, at each country's own reported place.
+    earthquakes: { earthquakes: [...(inputs.earthquakes?.earthquakes ?? []), ...CODES.map((c) => ({
+      magnitude: 7.6, occurredAt: inputs.__nowMs - 3_600_000, place: `10 km N of somewhere, ${name(c)}`, location: { latitude: -89, longitude: 0 },
+    }))] },
+  }),
+  'AIS disruptions': (inputs) => ({
+    ...inputs,
+    militaryCii: { byCountry: Object.fromEntries(CODES.map((c) => {
+      const m = inputs.militaryCii?.byCountry?.[c] ?? {};
+      return [c, { ...m, aisDisruptionHigh: Number(m.aisDisruptionHigh ?? 0) + 4 }];
+    })) },
+  }),
   'foreign military vessels': (inputs) => ({
     ...inputs,
     militaryCii: { byCountry: Object.fromEntries(CODES.map((c) => {
@@ -89,6 +105,9 @@ const REMOVED: Record<string, (inputs: Obj) => Obj> = {
   'FIRMS fires': (inputs) => ({ ...inputs, fires: null }),
   'GPS jamming': (inputs) => ({ ...inputs, gpsjam: null }),
   'aviation delay alerts': (inputs) => ({ ...inputs, aviation: null }),
+  earthquakes: (inputs) => ({ ...inputs, earthquakes: null }),
+  'AIS disruptions': (inputs) => ({ ...inputs, militaryCii: null }),
+  // Already covered by 'AIS disruptions' (the whole key missing); kept for the flight and vessel counts alone.
   'foreign military flights and vessels': (inputs) => ({
     ...inputs,
     militaryCii: inputs.militaryCii && { byCountry: Object.fromEntries(Object.entries(inputs.militaryCii.byCountry ?? {})
@@ -100,7 +119,9 @@ describe('CII inputs the register removes move no score (rule I1)', () => {
   for (const [input, amplify] of Object.entries(AMPLIFIED)) {
     it(`more ${input} in every country leave every blend and score unchanged`, () => {
       for (const f of FIXTURES) {
-        assert.deepEqual(moved(f, amplify(structuredClone(f.inputs) as Obj) as CiiRawInputs), [], `${f.label}: ${input} moved`);
+        const inputs = amplify({ ...structuredClone(f.inputs) as Obj, __nowMs: f.nowMs });
+        delete inputs.__nowMs;
+        assert.deepEqual(moved(f, inputs as CiiRawInputs), [], `${f.label}: ${input} moved`);
       }
     });
   }

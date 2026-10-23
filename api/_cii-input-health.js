@@ -44,10 +44,6 @@ const INPUTS = {
   crossBorder:        { maxQuietMin: null, sourceCheck: null },
   newsInsights:       { maxQuietMin: 360, sourceCheck: 'newsInsights' },
   threatSummary:      { maxQuietMin: 360, sourceCheck: 'newsThreatSummary' },
-  earthquakes:        { maxQuietMin: null, sourceCheck: 'earthquakes' },
-  // Scored only for its AIS disruptions, which can be absent from every Tier-1
-  // country for days (one GB disruption on 2026-10-23), so quiet is legitimate.
-  militaryCii:        { maxQuietMin: null, sourceCheck: 'militaryCii' },
 };
 
 // A family is unfed when none of its inputs is live or plausibly quiet. The

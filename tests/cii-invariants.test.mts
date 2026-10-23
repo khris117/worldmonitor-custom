@@ -46,7 +46,7 @@ const KNOWN_GAPS: Record<string, ReadonlySet<string>> = {
   // B2 split P8: P8a (no country moves > K) is still a gap, P8b (an alarm on
   // an advisory provenance flip) now holds.
   v15: new Set([
-    'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P7b', 'P8a', 'P9',
+    'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P7b', 'P8a', 'P9', 'P10b',
     'P11a', 'P12a', 'P12b', 'P14', 'P15b', 'P15e',
   ]),
 };
@@ -66,7 +66,7 @@ const V15_RELEASE_BLOCKERS: Array<{ id: string; measured: string; reason: string
   {
     id: 'P5b',
     measured: '8/31 = 26% of countries in [60, 65) on 2026-10-21T0628Z (AF, IQ, IR, KP, LB, MM, RU, SY at the advisory floor of 60)',
-    reason: 'B4 removed seven off-construct inputs; blends fell 4-29 points and floor-lifted countries rose from 9 to 17, so max(blend, floor) stacks eight countries on 60',
+    reason: 'B4 removed nine off-construct or context-only inputs; blends fell and floor-lifted countries rose, so max(blend, floor) stacks eight countries on 60. Pending owner sign-off',
     owner: 'stage-c',
   },
 ];
@@ -368,8 +368,7 @@ const FAILED_INPUT: Record<string, Partial<AuxiliarySources> | ((aux: AuxiliaryS
   iranEvents: { iranEvents: [] }, oref: { orefData: null },
   advisories: (aux) => ({ advisories: aux.advisories ? { ...aux.advisories, provenance: 'fallback' } : null }),
   displacement: { displacedByIso3: {} }, crossBorder: { crossBorderSurgeCountries: [] }, newsInsights: { newsTopStories: [] },
-  threatSummary: { threatSummaryByCountry: null }, earthquakes: { earthquakes: [] },
-  militaryCii: { militaryCii: null },
+  threatSummary: { threatSummaryByCountry: null },
   gdeltCountryEvents: { gdeltCountryEvents: null }, strikePressure: { confirmedStrikes: null },
 };
 
@@ -456,20 +455,63 @@ function measureP9(): Measurement {
   };
 }
 
-function measureP10(): Measurement {
+/**
+ * P10a: more airports, ADS-B receivers, AIS stations, satellite passes and
+ * seismic stations never raise S. Each instrument-density feed the fixtures
+ * carry is densified at the raw-input level. None is scored since v15, so this
+ * is the regression guard against any removed input returning.
+ */
+function measureP10a(): Measurement {
+  const moves: Array<{ code: string; feed: string; delta: number }> = [];
+  for (const { f, table } of fixtureTables) {
+    const military = (f.inputs.militaryCii as { byCountry?: Record<string, any> } | null)?.byCountry ?? {};
+    const fires = f.inputs.fires as { byCountry?: Record<string, object[]> } | null;
+    const denser: Record<string, Record<string, any>> = {
+      // Ten more airports reporting moderate delays.
+      airports: { aviation: { alerts: [...rawRows(f, 'aviation', 'alerts'), ...CODES.flatMap((code) => Array.from({ length: 10 }, () => ({ country: TIER1_COUNTRIES[code as keyof typeof TIER1_COUNTRIES], severity: 'moderate', delayType: 'general' })))] } },
+      // More ADS-B receivers: every jammed hex seen six times.
+      'ADS-B receivers': { gpsjam: { hexes: rawRows(f, 'gpsjam', 'hexes').flatMap((h) => Array.from({ length: 6 }, () => h)) } },
+      // More AIS stations and ADS-B coverage: ten more vessels, flights and AIS disruptions per country.
+      'AIS stations': { militaryCii: { byCountry: Object.fromEntries(CODES.map((code) => {
+        const m = military[code] ?? {};
+        return [code, { ...m, foreignFlights: Number(m.foreignFlights ?? 0) + 10, foreignVessels: Number(m.foreignVessels ?? 0) + 10, aisDisruptionHigh: Number(m.aisDisruptionHigh ?? 0) + 10 }];
+      })) } },
+      // More satellite passes: twenty more bright detections per country.
+      // More seismic stations: ten more magnitude 5.6 quakes recorded in each country.
+      'seismic stations': { earthquakes: { earthquakes: [...rawRows(f, 'earthquakes', 'earthquakes'), ...CODES.flatMap((code) => Array.from({ length: 10 }, () => ({
+        magnitude: 5.6, occurredAt: f.nowMs - 3_600_000, place: `10 km N of a town, ${TIER1_COUNTRIES[code as keyof typeof TIER1_COUNTRIES]}`, location: { latitude: -89, longitude: 0 },
+      })))] } },
+      'satellite passes': fires ? { fires: { ...fires, byCountry: Object.fromEntries(CODES.map((code) => [code, [...(fires.byCountry?.[code] ?? []), ...Array.from({ length: 20 }, () => ({ brightness: 400, frp: 80 }))]])) } } : {},
+    };
+    for (const [feed, inputs] of Object.entries(denser)) {
+      const moved = score(parseRaw(f, inputs), f.nowMs);
+      for (const code of CODES) moves.push({ code, feed, delta: S(moved, code) - S(table, code) });
+    }
+  }
+  const w = worst(moves, (m) => m.delta, 1)[0]!;
+  return { pass: w.delta <= 0, value: `denser airports, ADS-B, AIS, satellite and seismic coverage raise ${moves.filter((m) => m.delta > 0).length}/${moves.length} cases, up to +${w.delta} (${w.code}, ${w.feed})` };
+}
+
+/**
+ * P10b: twice the media volume on the scored inputs never raises S: each top
+ * story from a second outlet, and twice the classified headline counts. GDELT
+ * article volume is P12b's, so it is not counted twice here. Outage records are
+ * left out: none maps to a country until the outage reader is fixed (B1), so a
+ * second monitor per outage would read 0 vacuously; re-run then.
+ */
+function measureP10b(): Measurement {
   const moves: Array<{ code: string; delta: number }> = [];
   for (const { f, table } of fixtureTables) {
-    // Ten more airports reporting moderate delays: infrastructure density, not
-    // instability. Injected into the raw aviation payload, so a scorer that no
-    // longer reads it is measured too.
-    const aviation = f.inputs.aviation as { alerts?: object[] } | null | undefined;
-    const alerts = [...(aviation?.alerts ?? []), ...CODES.flatMap((code) => Array.from({ length: 10 }, () => ({ country: TIER1_COUNTRIES[code as keyof typeof TIER1_COUNTRIES], severity: 'moderate', delayType: 'general' })))];
-    const next = buildCiiAuxiliarySources({ ...f.inputs, aviation: { alerts } }, f.nowMs, { iranEventsEnabled: f.iranEventsEnabled });
+    const next = clone(parse(f));
+    next.newsTopStories = [...next.newsTopStories, ...next.newsTopStories];
+    if (next.threatSummaryByCountry) {
+      for (const row of Object.values(next.threatSummaryByCountry)) for (const level of Object.keys(row)) (row as any)[level] *= 2;
+    }
     const moved = score(next, f.nowMs);
     for (const code of CODES) moves.push({ code, delta: S(moved, code) - S(table, code) });
   }
   const w = worst(moves, (m) => m.delta, 1)[0]!;
-  return { pass: w.delta <= 0, value: `10 more delayed airports raise ${moves.filter((m) => m.delta > 0).length}/${moves.length} cases, up to +${w.delta} (${w.code})` };
+  return { pass: w.delta <= 0, value: `twice the news and threat-summary volume raises ${moves.filter((m) => m.delta > 0).length}/${moves.length} cases, up to +${w.delta} (${w.code}); GDELT volume: see P12b; outages vacuous until B1 maps records, re-run then` };
 }
 
 function measureP11a(): Measurement {
@@ -485,13 +527,18 @@ function measureP11a(): Measurement {
   return { pass: moves.every((m) => m.delta === 0), value: `a headline on A's strike abroad raises A in ${moves.filter((m) => m.delta !== 0).length}/${moves.length} cases, up to +${w.delta} (${w.code})` };
 }
 
+/** Raw inputs as the Redis reads return them, parsed again: measures a scorer that stops reading an input too. */
+function parseRaw(f: CiiFixture, inputs: Record<string, any>): AuxiliarySources {
+  return buildCiiAuxiliarySources({ ...f.inputs, ...inputs }, f.nowMs, { iranEventsEnabled: f.iranEventsEnabled });
+}
+const rawRows = (f: CiiFixture, key: string, field: string): any[] => ((f.inputs as Record<string, any>)[key]?.[field] ?? []) as any[];
+
 function measureP11b(): Measurement {
   const moves: number[] = [];
   for (const { f, table } of fixtureTables) {
-    const aux = parse(f);
-    const militaryCii = { ...(aux.militaryCii ?? {}) };
-    for (const code of CODES) militaryCii[code] = { ...(militaryCii[code] ?? {}), ownFlights: Number(militaryCii[code]?.ownFlights ?? 0) + 50, ownVessels: Number(militaryCii[code]?.ownVessels ?? 0) + 20 };
-    const moved = score({ ...aux, militaryCii }, f.nowMs);
+    const byCountry = { ...((f.inputs.militaryCii as { byCountry?: Record<string, any> } | null)?.byCountry ?? {}) };
+    for (const code of CODES) byCountry[code] = { ...(byCountry[code] ?? {}), ownFlights: Number(byCountry[code]?.ownFlights ?? 0) + 50, ownVessels: Number(byCountry[code]?.ownVessels ?? 0) + 20 };
+    const moved = score(parseRaw(f, { militaryCii: { byCountry } }), f.nowMs);
     for (const code of CODES) moves.push(S(moved, code) - S(table, code));
   }
   const maxMove = Math.max(...moves.map(Math.abs));
@@ -512,7 +559,7 @@ function mulberry32(seed: number): () => number {
 
 /**
  * ±10% on every magnitude, including the scored numbers inside list records
- * (UCDP deaths, quake magnitude); dates and locations stay fixed. Each list
+ * (UCDP deaths); dates and locations stay fixed. Each list
  * record is also dropped or duplicated with probability 5% each.
  */
 function perturb(aux: AuxiliarySources, rand: () => number): AuxiliarySources {
@@ -525,14 +572,12 @@ function perturb(aux: AuxiliarySources, rand: () => number): AuxiliarySources {
     return out;
   };
   const next = clone(aux);
-  for (const field of ['ucdpEvents', 'outages', 'iranEvents', 'earthquakes', 'newsTopStories'] as const) {
+  for (const field of ['ucdpEvents', 'outages', 'iranEvents', 'newsTopStories'] as const) {
     (next as any)[field] = resample((next as any)[field] ?? []);
   }
   next.ucdpEvents = next.ucdpEvents.map((e) => jitterFields(e, ['deathsBest']));
-  next.earthquakes = next.earthquakes.map((e) => jitterFields(e, ['magnitude']));
   next.displacedByIso3 = mapValues(next.displacedByIso3, jitter) ?? {};
   next.threatSummaryByCountry = mapValues(next.threatSummaryByCountry, (row) => mapValues(row as any, jitter) as any);
-  next.militaryCii = mapValues(next.militaryCii, (m: any) => mapValues(m, (v: any) => (typeof v === 'number' ? jitter(v) : v)));
   next.confirmedStrikes = mapValues(next.confirmedStrikes, (days) => mapValues(days, jitter) as any);
   if (next.orefData) next.orefData = { activeAlertCount: Math.round(jitter(next.orefData.activeAlertCount)), historyCount24h: Math.round(jitter(next.orefData.historyCount24h)) };
   if (next.gdeltCountryEvents) {
@@ -675,7 +720,8 @@ const PROPERTIES: Array<{ id: string; title: string; measure: () => Measurement 
   { id: 'P8a', title: 'robust to a failed input: no country moves by > 10', measure: measureP8a },
   { id: 'P8b', title: 'robust to a failed input: an alarm fires on an advisory provenance flip', measure: measureP8b },
   { id: 'P9', title: 'window honesty: the cached window equals the calibrated window', measure: measureP9 },
-  { id: 'P10', title: 'normalisation: more infrastructure never raises S', measure: measureP10 },
+  { id: 'P10a', title: 'normalisation (regression guard for removed inputs): more airports, receivers, stations, satellite passes or seismometers never raise S', measure: measureP10a },
+  { id: 'P10b', title: 'normalisation: more news and threat-summary volume never raises S', measure: measureP10b },
   { id: 'P11a', title: "exclusion: A's strikes on B leave A unchanged", measure: measureP11a },
   { id: 'P11b', title: "exclusion: A's forces abroad leave A unchanged", measure: measureP11b },
   { id: 'P12a', title: 'noise: ±10% on every input gives median |ΔS| ≤ 2, p99 ≤ 6', measure: measureP12a },
@@ -718,7 +764,7 @@ describe(`CII invariants (${SCORED}, ${FIXTURES.length} fixtures)`, () => {
 
   it('every release blocker still fails, and none is also a known gap', () => {
     const fixed = results.filter((r) => BLOCKED.has(r.id) && r.pass).map((r) => r.id);
-    assert.deepEqual(fixed, [], `release blocker now passes, remove it from V15_RELEASE_BLOCKERS: ${fixed.join(', ')}`);
+    assert.deepEqual(fixed, [], `release blocker now passes; remove it from V15_RELEASE_BLOCKERS so it runs as a real assertion again: ${fixed.join(', ')}`);
     const unknown = [...BLOCKED.keys()].filter((id) => !results.some((r) => r.id === id));
     assert.deepEqual(unknown, [], `V15_RELEASE_BLOCKERS names unmeasured properties: ${unknown.join(', ')}`);
     const both = [...BLOCKED.keys()].filter((id) => gaps.has(id));

@@ -78,7 +78,15 @@ The suite injects evidence into parsed sources (`buildCiiAuxiliarySources` outpu
   - a failed read with no snapshot;
   - a failed read whose snapshot read also failed.
 - **P9** compares the span of the cached UCDP rows with the 2-year window the UCDP classes assume. It needs at least 90% of that window.
-- **P10.** Ten more delayed airports per country must not raise S.
+- **P10a** densifies each instrument feed in the fixtures at the raw-input level and requires that S never rises:
+  - ten more delayed airports per country;
+  - every GPS-jamming hex seen six times;
+  - ten more foreign flights, foreign vessels and AIS disruptions;
+  - twenty more FIRMS detections;
+  - ten more recorded quakes.
+
+  None of these feeds is scored in v15, so P10a is the regression guard against a removed input coming back.
+- **P10b** doubles the media volume on the scored inputs (top stories and classified headline counts) and requires that S never rises. GDELT article volume belongs to P12b.
 - **P11a.** A critical headline naming country A and a non-Tier-1 target (an attack abroad) must not raise A. **P11b.** +50 own military flights and +20 own vessels must not raise A.
 - **P12a.** Every magnitude is scaled by a uniform factor in 0.9–1.1. That includes the scored numbers inside list records: UCDP deaths, quake magnitude, fire brightness and radiative power. Dates and locations stay fixed. Every list record is dropped or duplicated with probability 0.05 each. The run uses 40 seeded draws per fixture. **P12b.** GDELT counts and classified headline counts are scaled ×0.5, ×2 and ×4 with every share unchanged.
 - **P14.** |final − blend| must be at most 0.5. The blend is baseline × 0.4 + eventScore × 0.6 + every boost.
@@ -135,7 +143,9 @@ The PR that ships `next` to main bumps `CII_FORMULA_VERSION`, clears `inProgress
 - the reason;
 - the owner (`stage-c`).
 
-While the property is listed, it runs as a todo that carries its measured value. The ratchet fails once it passes, and the release gate keeps v15 off main until the list is empty. Never list a property to hide a defect that the listing PR itself owns.
+While the property is listed, it runs as a todo that carries its measured value. The ratchet fails once it passes. The failure names the property and tells you to remove it from the list, which restores the real assertion. The release gate keeps v15 off main until the list is empty. Never list a property to hide a defect that the listing PR itself owns.
+
+The owner must sign off on each entry. The PR that adds one marks it **pending owner sign-off** in its body until the owner approves it. Without that approval the entry is a proposal, not a decision.
 
 Capture a new fixture GET-only, with no Redis writes:
 
