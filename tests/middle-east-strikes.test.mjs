@@ -30,7 +30,7 @@ function post(channel, text, ageMs = 10 * MIN, overrides = {}) {
 }
 
 function cls(overrides = {}) {
-  return { isStrike: true, kind: 'strike', place: 'Jizan', countryIso2: 'SA', severity: 'high', ...overrides };
+  return { isStrike: true, kind: 'strike', when: 'new', atSea: false, place: 'Jizan', countryIso2: 'SA', severity: 'high', ...overrides };
 }
 
 function candidate(channel, classification, ageMs = 10 * MIN, text = `${channel} reports ${classification.place} (${ageMs})`) {
@@ -74,10 +74,19 @@ describe('classifier response parsing', () => {
   it('normalizes well-formed entries and keeps index alignment', () => {
     const parsed = strikes.parseStrikeClassifications([
       { i: 1, isStrike: false },
-      { i: 0, isStrike: true, kind: 'intercept', place: ' Riyadh ', countryIso2: 'sa', severity: 'elevated' },
+      { i: 0, isStrike: true, kind: 'intercept', when: 'new', atSea: false, place: ' Riyadh ', countryIso2: 'sa', severity: 'elevated' },
     ], 2);
-    assert.deepEqual(parsed[0], { isStrike: true, kind: 'intercept', place: 'Riyadh', countryIso2: 'SA', severity: 'elevated' });
-    assert.deepEqual(parsed[1], { isStrike: false, kind: null, place: '', countryIso2: null, severity: null });
+    assert.deepEqual(parsed[0], { isStrike: true, kind: 'intercept', when: 'new', atSea: false, place: 'Riyadh', countryIso2: 'SA', severity: 'elevated' });
+    assert.deepEqual(parsed[1], { isStrike: false, kind: null, when: null, atSea: false, place: '', countryIso2: null, severity: null });
+  });
+
+  it('reads when and atSea, and gives an answer without a valid when no recency signal', () => {
+    const parsed = strikes.parseStrikeClassifications([
+      { i: 0, isStrike: true, kind: 'strike', when: 'past', atSea: true, place: 'Strait of Hormuz', countryIso2: 'IR', severity: 'critical' },
+      { i: 1, isStrike: true, kind: 'strike', place: 'Aden', countryIso2: 'YE', severity: 'high' },
+      { i: 2, isStrike: true, kind: 'strike', when: 'yesterday', atSea: 'yes', place: 'Aden', countryIso2: 'YE', severity: 'high' },
+    ], 3);
+    assert.deepEqual(parsed.map((p) => [p.when, p.atSea]), [['past', true], ['unknown', false], ['unknown', false]]);
   });
 
   it('rejects out-of-range, duplicate, and malformed entries instead of guessing', () => {
@@ -254,7 +263,7 @@ describe('corroboration rule', () => {
 });
 
 describe('dedupe and window', () => {
-  it('merges reports of one place inside a 30-minute bucket into one stable event', () => {
+  it('merges reports of one place inside one incident into one stable event', () => {
     const a = candidate('SaudiDCD', cls(), 12 * MIN);
     const b = candidate('OSINTdefender', cls(), 11 * MIN);
     const out = strikes.deriveStrikeEvents([a, b], NOW);
@@ -264,10 +273,10 @@ describe('dedupe and window', () => {
     assert.deepEqual(strikes.deriveStrikeEvents([b, a], NOW).map((e) => e.id), out.map((e) => e.id));
   });
 
-  it('keeps separate buckets and separate places apart', () => {
+  it('keeps separate incidents and separate places apart', () => {
     const out = strikes.deriveStrikeEvents([
       candidate('SaudiDCD', cls(), 10 * MIN),
-      candidate('SaudiDCD', cls(), 70 * MIN),
+      candidate('SaudiDCD', cls(), 4 * HOUR),
       candidate('SaudiDCD', cls({ place: 'Najran' }), 10 * MIN),
     ], NOW);
     assert.equal(out.length, 3);
@@ -490,6 +499,123 @@ describe('incident integrity', () => {
   });
 });
 
+// CII v15 Stage B3. Global rule: one physical incident counts once, on the
+// country hit, at the time it happened. Each case paraphrases a defect measured
+// in the production window of 2026-10-20..23 (no post text is copied).
+describe('precision: one incident, once, on the country hit, when it happened', () => {
+  const events = (cands) => strikes.deriveStrikeEvents(cands, NOW);
+  const tally = (evs) => strikes.mergeStrikePressure(null, evs, NOW).days;
+
+  it('drops a retrospective post the classifier marks as an old attack', () => {
+    const item = post('OSINTdefender', 'Video shows an Iranian missile hitting a US base in the UAE during the summer war');
+    assert.equal(strikes.buildTelegramCandidate(item, cls({ place: 'Al Dhafra Air Base', countryIso2: 'AE', when: 'past' }), NOW), null);
+  });
+
+  it('drops a retrospective post by its wording even when the classifier calls it new', () => {
+    for (const text of [
+      'WATCH: Previously unseen footage of an Iranian ballistic missile hitting a US base in the UAE',
+      'Never-before-seen footage shows a missile striking a military installation in the UAE',
+      'Newly obtained footage allegedly shows the moment a missile struck a base in the UAE',
+      'Leaked images and whistleblower accounts show the damage at Prince Sultan Air Base, Saudi Arabia',
+      'Newly circulating footage of strikes on Prince Sultan Air Base in Saudi Arabia',
+      'Never seen before footage of a ballistic missile striking a US base in the UAE, from during the war',
+      'تصاویر دیده نشده از تخریب پایگاه هوایی موفق سلطی اردن',
+    ]) {
+      assert.equal(strikes.isRetrospectivePost(text), true, text);
+      assert.equal(strikes.prefilterStrikeText(text), false, `not worth a classifier call: ${text}`);
+      assert.equal(strikes.buildTelegramCandidate(post('OSINTdefender', text), cls({ place: 'Riyadh' }), NOW), null, text);
+    }
+    for (const text of ['Ballistic missile impact in Riyadh moments ago', 'Footage shows smoke rising after a drone strike in Jizan']) {
+      assert.equal(strikes.isRetrospectivePost(text), false, text);
+      assert.equal(strikes.prefilterStrikeText(text), true, text);
+    }
+  });
+
+  it('holds a report with no recency signal until an independent report agrees', () => {
+    const undated = candidate('OSINTdefender', cls({ place: 'Riyadh', when: 'unknown' }), 30 * MIN);
+    assert.equal(events([undated]).length, 0);
+    assert.equal(events([undated, candidate('ClashReport', cls({ place: 'Riyadh' }), 20 * MIN)]).length, 1);
+  });
+
+  it('counts one airport attack once, whichever name, language or outlet reports it', () => {
+    // The 2026-10-21 Dammam airport attack: an outlet's report, the aviation
+    // authority's confirmation 35 minutes later, a Persian report naming the
+    // airport 86 minutes later, then GDELT articles the next morning.
+    const out = events([
+      candidate('wfwitness', cls({ place: 'Dammam', severity: 'critical' }), 14 * HOUR),
+      candidate('Alsaa_plus_EN', cls({ place: 'King Fahd International Airport', when: 'update', severity: 'critical' }), 14 * HOUR - 35 * MIN),
+      candidate('VahidOnline', cls({ place: 'King Fahd International Airport, Dammam', severity: 'critical' }), 14 * HOUR - 86 * MIN),
+      ...strikes.mapGdeltExportToStrikeCandidates([
+        gdeltRow({ id: '1', fips: 'SA', lat: 26.43, lon: 50.1, numSources: 3, url: 'https://a.example/1', added: '20261019100000', fullName: 'Dammam, Eastern Province, Saudi Arabia' }),
+        gdeltRow({ id: '2', fips: 'SA', lat: 26.43, lon: 50.1, numSources: 2, url: 'https://b.example/2', added: '20261019100500', fullName: 'Dammam, Eastern Province, Saudi Arabia' }),
+      ].join('\n')),
+    ]);
+    assert.deepEqual(out.map((e) => [e.countryCode, e.locationName, e.severity]), [['SA', 'Dammam', 'critical']]);
+    assert.deepEqual(tally(out), { '2026-10-18': { SA: [1, 0, 0, 0] } });
+  });
+
+  it('joins a later toll update to its strike, but counts a new attack on the same city hours later', () => {
+    const strike = candidate('wfwitness', cls({ place: 'Shabwah', countryIso2: 'YE', severity: 'critical' }), 20 * HOUR);
+    const toll = candidate('Alsaa_plus_EN', cls({ place: 'Shabwah', countryIso2: 'YE', when: 'update', severity: 'critical' }), 7 * HOUR);
+    assert.equal(events([strike, toll]).length, 1, 'a death-toll update 13h later is the same incident');
+    const again = candidate('wfwitness', cls({ place: 'Riyadh', severity: 'high' }), 20 * HOUR);
+    const second = candidate('wfwitness', cls({ place: 'Riyadh', severity: 'high' }), 11 * HOUR);
+    assert.equal(events([again, second]).length, 2, 'a new attack on the same city 9h later is a second incident');
+  });
+
+  it('keeps strikes on two unlisted villages of one country apart', () => {
+    // Neither village is in the gazetteer, so both resolve to the Lebanon centroid.
+    const out = events([
+      candidate('wfwitness', cls({ place: 'Kfar Tebnit', countryIso2: 'LB' }), 3 * HOUR),
+      candidate('wfwitness', cls({ place: 'Qantara', countryIso2: 'LB' }), 2 * HOUR),
+      candidate('Alsaa_plus_EN', cls({ place: 'Qantara', countryIso2: 'LB' }), 2 * HOUR - 20 * MIN),
+    ]);
+    assert.equal(out.length, 2);
+    assert.equal(new Set(out.map((e) => e.id)).size, 2);
+    assert.ok(out.every((e) => e.countryCode === 'LB'));
+  });
+
+  it('maps an interception but never tallies it as a strike on the country', () => {
+    const intercepted = events([candidate('SaudiDCD', cls({ place: 'Medina', kind: 'intercept', severity: 'elevated' }))]);
+    assert.equal(intercepted[0].category, 'defense');
+    assert.deepEqual(tally(intercepted), {});
+    // An incident that one carrying report says hit something is a strike.
+    const mixed = events([
+      candidate('SaudiDCD', cls({ place: 'Shaybah', kind: 'intercept', severity: 'elevated' }), 2 * HOUR),
+      candidate('wfwitness', cls({ place: 'Shaybah oil field', kind: 'strike', severity: 'critical' }), 2 * HOUR - 70 * MIN),
+    ]);
+    assert.deepEqual(mixed.map((e) => [e.category, e.severity]), [['airstrike', 'critical']]);
+    assert.deepEqual(tally(mixed), { '2026-10-19': { SA: [1, 0, 0, 0] } });
+  });
+
+  it('scores no country for a ship hit at sea, by the classifier or by a waterway place', () => {
+    const tanker = events([candidate('wfwitness', cls({ place: 'Bukha', countryIso2: 'OM', atSea: true, severity: 'elevated' }))]);
+    const mined = events([candidate('wfwitness', cls({ place: 'Strait of Hormuz', countryIso2: 'IR', severity: 'critical' }))]);
+    for (const out of [tanker, mined]) {
+      assert.equal(out.length, 1, 'still on the map');
+      assert.equal(out[0].countryCode, '');
+      assert.ok(Number.isFinite(out[0].latitude) && Number.isFinite(out[0].longitude));
+      assert.deepEqual(tally(out), {});
+    }
+    // The same place on land still scores: a launcher struck in Sirik is a strike on Iran.
+    assert.equal(events([candidate('wfwitness', cls({ place: 'Sirik', countryIso2: 'IR' }))])[0].countryCode, 'IR');
+  });
+
+  it('discards a tally written before these rules, instead of keeping its inflated days', () => {
+    const v1 = { version: 1, updatedAt: NOW - HOUR, days: { '2026-10-18': { SA: [3, 4, 2, 0] } } };
+    assert.deepEqual(strikes.mergeStrikePressure(v1, [], NOW).days, {});
+    const v2 = { ...v1, version: 2 };
+    assert.deepEqual(strikes.mergeStrikePressure(v2, [], NOW).days, v1.days);
+  });
+
+  it('asks the classifier for the fields these rules read', () => {
+    for (const field of ['"when":"new|update|past"', '"atSea":false']) assert.ok(strikes.STRIKE_CLASSIFIER_PROMPT.includes(field), field);
+    assert.match(strikes.STRIKE_CLASSIFIER_PROMPT, /launches with no reported impact or interception/);
+    assert.match(strikes.STRIKE_CLASSIFIER_PROMPT, /summaries or tallies of many attacks/);
+    assert.match(strikes.STRIKE_CLASSIFIER_PROMPT, /not the attacker's country and not the launch site/);
+  });
+});
+
 describe('extraction cycle', () => {
   function harness(overrides = {}) {
     const cache = new Map();
@@ -502,7 +628,7 @@ describe('extraction cycle', () => {
       writeCache: async (key, value) => { cache.set(key, value); },
       classify: async (texts) => {
         calls.push(texts);
-        return texts.map((_, i) => ({ i, isStrike: true, kind: 'strike', place: 'Jizan', countryIso2: 'SA', severity: 'high' }));
+        return texts.map((_, i) => ({ i, isStrike: true, kind: 'strike', when: 'new', place: 'Jizan', countryIso2: 'SA', severity: 'high' }));
       },
       gdeltCandidates: [],
       telegramPolledAt: NOW - 2 * MIN,
@@ -524,7 +650,8 @@ describe('extraction cycle', () => {
     assert.equal(first.payload.events.length, 1);
     assert.equal(first.payload.events[0].locationName, 'Jizan');
     assert.equal(first.healthy, true);
-    assert.ok([...cache.keys()].every((k) => /^conflict:iran-events:classify:v1:[0-9a-f]{16}$/.test(k)));
+    assert.ok([...cache.keys()].every((k) => /^conflict:iran-events:classify:v2:[0-9a-f]{16}$/.test(k)));
+    assert.match(calls[0][0], /^\[posted 2026-10-19\] /, 'the classifier sees the posting date, to judge an old attack');
 
     const again = harness({ telegramItems: [{ ...items[0], id: 'saudidcd:99999' }], previousStore: first.store });
     for (const [k, v] of cache) again.cache.set(k, v);
@@ -549,7 +676,7 @@ describe('extraction cycle', () => {
     assert.equal(useless.healthy, false, 'an answer with nothing usable is a classifier failure');
     const partial = await strikes.runStrikeCycle(harness({
       telegramItems: [post('SaudiDCD', 'Missile intercepted over Riyadh'), post('SaudiDCD', 'Drone debris fell in Jizan')],
-      classify: async () => [{ i: 0, isStrike: true, kind: 'intercept', place: 'Riyadh', countryIso2: 'SA', severity: 'elevated' }],
+      classify: async () => [{ i: 0, isStrike: true, kind: 'intercept', when: 'new', place: 'Riyadh', countryIso2: 'SA', severity: 'elevated' }],
     }).deps);
     assert.equal(partial.healthy, false, 'an unanswered post is not a healthy cycle');
     assert.equal(partial.pending.length, 1);
@@ -574,7 +701,7 @@ describe('extraction cycle', () => {
       writeSeedMeta: async (m) => { writes.meta.push(m); return true; },
       readCache: async () => null,
       writeCache: async () => {},
-      classify: async (texts) => texts.map((_, i) => ({ i, isStrike: true, kind: 'intercept', place: 'Riyadh', countryIso2: 'SA', severity: 'elevated' })),
+      classify: async (texts) => texts.map((_, i) => ({ i, isStrike: true, kind: 'intercept', when: 'new', place: 'Riyadh', countryIso2: 'SA', severity: 'elevated' })),
       loadGdelt: async (processed) => ({ candidates: [], processed, fetched: 0 }),
       telegramPolledAt: NOW - MIN,
       ...overrides,
@@ -587,7 +714,7 @@ describe('extraction cycle', () => {
     const out = await strikes.publishStrikeCycle(deps);
     assert.equal(out.status, 'ok');
     assert.equal(writes.canonical[0].n, 1);
-    assert.deepEqual(writes.meta, [{ fetchedAt: NOW, recordCount: 1, sourceVersion: 'telegram-strikes-v1' }]);
+    assert.deepEqual(writes.meta, [{ fetchedAt: NOW, recordCount: 1, sourceVersion: 'telegram-strikes-v2' }]);
     assert.deepEqual(out.doneIds, deps.pendingItems.map((i) => i.id));
   });
 
@@ -644,7 +771,7 @@ describe('strike pressure tally (conflict:strike-pressure:v1)', () => {
 
   it('tallies published events per country, UTC day of the event and severity', () => {
     const out = strikes.mergeStrikePressure(null, window, NOW);
-    assert.equal(out.version, 1);
+    assert.equal(out.version, 2);
     assert.equal(out.updatedAt, NOW);
     // [critical, high, elevated, moderate]
     assert.deepEqual(out.days['2026-10-19'], { SA: [0, 1, 1, 0], YE: [0, 0, 0, 1] });
@@ -664,25 +791,29 @@ describe('strike pressure tally (conflict:strike-pressure:v1)', () => {
   // The tally must count what the window shows, not every id it ever saw.
   const at = Date.parse('2026-10-15T10:00:00Z');
   const riyadh = (id, ts) => ({
-    id, src: 'telegram', cls: 'official', kind: 'strike', severity: 'high', iso2: 'SA', placeKey: 'riyadh',
+    id, src: 'telegram', cls: 'official', kind: 'strike', when: 'new', severity: 'high', iso2: 'SA', placeKey: 'riyadh',
     place: 'Riyadh', lat: 24.7, lon: 46.7, ts, title: id, url: '', handle: 'h', group: 'g',
   });
 
   it('does not count a re-partitioned incident twice when a late report with an earlier time arrives', () => {
-    const cands = [riyadh('a', at + 10 * MIN), riyadh('b', at + 35 * MIN)];
-    const first = strikes.deriveStrikeEvents(cands, at + 2 * HOUR);
+    // Reports 2h50m apart are one incident (3h); a late post 15 minutes before
+    // the first re-anchors it and pushes the last report into a second one.
+    const cands = [riyadh('a', at + 10 * MIN), riyadh('b', at + 170 * MIN)];
+    const first = strikes.deriveStrikeEvents(cands, at + 4 * HOUR);
     assert.equal(first.length, 1);
-    let state = strikes.mergeStrikePressure(null, first, at + 2 * HOUR);
-    const late = strikes.deriveStrikeEvents([...cands, riyadh('z', at - 15 * MIN)], at + 2 * HOUR + 10 * MIN);
+    let state = strikes.mergeStrikePressure(null, first, at + 4 * HOUR);
+    const late = strikes.deriveStrikeEvents([...cands, riyadh('z', at - 15 * MIN)], at + 4 * HOUR + 10 * MIN);
     assert.equal(late.length, 2, 'the late post splits the incident into two sessions');
-    state = strikes.mergeStrikePressure(state, late, at + 2 * HOUR + 10 * MIN);
+    state = strikes.mergeStrikePressure(state, late, at + 4 * HOUR + 10 * MIN);
     assert.deepEqual(state.days['2026-10-15'], { SA: [0, 2, 0, 0] });
   });
 
   it('does not count an incident again when its first report leaves the 72h window and its id moves', () => {
-    const cands = [riyadh('a', at + 25 * MIN), riyadh('b', at + 40 * MIN), riyadh('c', at + 60 * MIN)];
+    // a and b are one incident, c (3h05m after a) a second; once a leaves the
+    // window, b and c form one incident dated b.
+    const cands = [riyadh('a', at + 25 * MIN), riyadh('b', at + 2 * HOUR), riyadh('c', at + 210 * MIN)];
     let state = null;
-    for (const now of [at + 2 * HOUR, at + 72 * HOUR + 26 * MIN, at + 72 * HOUR + 41 * MIN]) {
+    for (const now of [at + 4 * HOUR, at + 72 * HOUR + 26 * MIN, at + 72 * HOUR + 2 * HOUR + MIN]) {
       state = strikes.mergeStrikePressure(state, strikes.deriveStrikeEvents(cands, now), now);
     }
     assert.deepEqual(state.days['2026-10-15'], { SA: [0, 2, 0, 0] });
@@ -732,7 +863,7 @@ describe('strike pressure tally (conflict:strike-pressure:v1)', () => {
   });
 
   it('survives a malformed stored snapshot without throwing or keeping garbage', () => {
-    const out = strikes.mergeStrikePressure({ days: { 'not-a-date': { SA: [1, 0, 0, 0] }, '2026-10-18': { SA: 'x', YE: [0, 1, 0, 0] } }, events: [] }, [], NOW);
+    const out = strikes.mergeStrikePressure({ version: 2, days: { 'not-a-date': { SA: [1, 0, 0, 0] }, '2026-10-18': { SA: 'x', YE: [0, 1, 0, 0] } }, events: [] }, [], NOW);
     assert.deepEqual(out.days, { '2026-10-18': { YE: [0, 1, 0, 0] } });
   });
 
@@ -740,14 +871,14 @@ describe('strike pressure tally (conflict:strike-pressure:v1)', () => {
     const writes = { store: [], canonical: [], meta: [], pressure: [], pressureMeta: [] };
     const deps = {
       now: NOW,
-      pendingItems: [post('SaudiDCD', 'Missile intercepted over Riyadh')],
+      pendingItems: [post('SaudiDCD', 'Missile debris hit a building in Riyadh')],
       readStore: async () => ({ ok: true, value: null }),
       writeStore: async (s) => { writes.store.push(s); return true; },
       writeCanonical: async (p, n) => { writes.canonical.push({ p, n }); return true; },
       writeSeedMeta: async (m) => { writes.meta.push(m); return true; },
       readCache: async () => null,
       writeCache: async () => {},
-      classify: async (texts) => texts.map((_, i) => ({ i, isStrike: true, kind: 'intercept', place: 'Riyadh', countryIso2: 'SA', severity: 'elevated' })),
+      classify: async (texts) => texts.map((_, i) => ({ i, isStrike: true, kind: 'strike', when: 'new', place: 'Riyadh', countryIso2: 'SA', severity: 'elevated' })),
       loadGdelt: async (processed) => ({ candidates: [], processed, fetched: 0 }),
       telegramPolledAt: NOW - MIN,
       readPressure: async () => ({ ok: true, value: null }),
@@ -764,7 +895,7 @@ describe('strike pressure tally (conflict:strike-pressure:v1)', () => {
     assert.equal(out.status, 'ok');
     assert.equal(out.pressureStatus, 'ok');
     assert.deepEqual(writes.pressure[0].days['2026-10-19'], { SA: [0, 0, 1, 0] });
-    assert.deepEqual(writes.pressureMeta, [{ fetchedAt: NOW, recordCount: 1, sourceVersion: 'strike-pressure-v1' }]);
+    assert.deepEqual(writes.pressureMeta, [{ fetchedAt: NOW, recordCount: 1, sourceVersion: 'strike-pressure-v2' }]);
   });
 
   it('never overwrites 30 days of tallies after a failed read, and keeps the feed publishing', async () => {

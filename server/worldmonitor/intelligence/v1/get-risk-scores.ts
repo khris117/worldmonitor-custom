@@ -250,12 +250,14 @@ function countryNamedExactly(text: string): string | null {
 }
 
 // A strike event that carries its country (the Middle East strike feed sets
-// countryCode from its gazetteer) scores there, including at sea where no
-// polygon reaches; a non-Tier-1 country scores nowhere. Older events without
-// it fall back to their coordinates, then to the country named in the text.
+// countryCode to the country hit) scores there; a non-Tier-1 country scores
+// nowhere, and so does an empty countryCode: the feed's mark for a ship hit at
+// sea, which no country's coordinates may claim. Older events without the
+// field fall back to their coordinates, then to the country named in the text.
 export function strikeEventCountry(s: any): string | null {
-  if (typeof s?.countryCode === 'string' && /^[A-Za-z]{2}$/.test(s.countryCode.trim())) {
-    return ciiCountryForIso2(s.countryCode);
+  if (typeof s?.countryCode === 'string') {
+    const code = s.countryCode.trim();
+    return /^[A-Za-z]{2}$/.test(code) ? ciiCountryForIso2(code) : null;
   }
   const lat = safeNum(s?.lat || s?.latitude);
   const lon = safeNum(s?.lon || s?.longitude);
@@ -745,15 +747,22 @@ export function confirmedStrikeDaysFromSeed(raw: unknown, nowMs: number): Record
   return out;
 }
 
+/** An interception: the feed maps it (category 'defense'), but nothing hit the country. */
+export function isInterceptStrikeEvent(event: unknown): boolean {
+  return (event as any)?.category === 'defense';
+}
+
 /**
  * The same weights read straight from the 72h strike window
  * (conflict:iran-events:v1). The 30-day tally is built from these events, so
  * the scorer takes the larger of the two per day: the window covers the tally's
- * first cycles after a deploy, or a relay whose tally write failed.
+ * first cycles after a deploy, or a relay whose tally write failed. Like the
+ * tally, it skips interceptions.
  */
 export function confirmedStrikeDaysFromEvents(events: unknown[], nowMs: number): Record<string, StrikeDays> {
   const out: Record<string, StrikeDays> = {};
   for (const event of Array.isArray(events) ? events : []) {
+    if (isInterceptStrikeEvent(event)) continue;
     const severity = String((event as any)?.severity ?? '').toLowerCase();
     if (!Object.prototype.hasOwnProperty.call(CII_STRIKE_SEVERITY_WEIGHTS, severity)) continue;
     const ts = (event as any)?.timestamp;

@@ -29,6 +29,7 @@ import {
   confirmedStrikeDaysFromSeed,
   gdeltCountryEventsFromSeed,
   gdeltStrikeDays,
+  strikeEventCountry,
   strikePressure,
   strikePressureBoost,
   strikePressureFloor,
@@ -160,6 +161,18 @@ describe('confirmed strike days', () => {
       { id: 'd', countryCode: 'YE', severity: 'moderate', timestamp: 'yesterday' },
     ], NOW);
     assert.deepEqual(days, { SA: { [daysAgo(0)]: CII_STRIKE_SEVERITY_WEIGHTS.high, [daysAgo(1)]: CII_STRIKE_SEVERITY_WEIGHTS.critical } });
+  });
+  it('skips interceptions and ships at sea in the window, as the relay tally does', () => {
+    const days = confirmedStrikeDaysFromEvents([
+      { id: 'a', countryCode: 'SA', severity: 'high', timestamp: NOW - 2 * HOUR, category: 'airstrike' },
+      { id: 'b', countryCode: 'SA', severity: 'elevated', timestamp: NOW - 2 * HOUR, category: 'defense' },
+      // A tanker hit off southern Iran: the feed sends countryCode '' with a map
+      // point inside Iran's box; the coordinates must not claim it for Iran.
+      { id: 'c', countryCode: '', severity: 'critical', timestamp: NOW - 2 * HOUR, category: 'airstrike', latitude: 27.0, longitude: 56.3 },
+    ], NOW);
+    assert.deepEqual(days, { SA: { [daysAgo(0)]: CII_STRIKE_SEVERITY_WEIGHTS.high } });
+    assert.equal(strikeEventCountry({ countryCode: '', latitude: 27.0, longitude: 56.3 }), null);
+    assert.equal(strikeEventCountry({ latitude: 27.0, longitude: 56.3 }), 'IR', 'an event without the field still falls back to its coordinates');
   });
 });
 
