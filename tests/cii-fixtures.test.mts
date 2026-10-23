@@ -115,6 +115,18 @@ describe('CII fixtures', () => {
     assert.deepEqual(fixture.expected.v14, v14, 'writing the in-progress table leaves v14 untouched');
   });
 
+  it('refuse an in-progress claim that names the released version, so it can never make that table writable', () => {
+    const fixture = structuredClone(FIXTURES.at(-1)!);
+    const v14 = structuredClone(fixture.expected.v14!);
+    const moved = structuredClone(v14);
+    moved.US = { ...moved.US!, combinedScore: moved.US!.combinedScore + 1 };
+    const selfClaim = { next: 'v14', claimedBy: 'test', claimedAt: '2026-10-23T00:00:00Z', inProgress: true, branch: 'cii-v15' };
+
+    assert.throws(() => ciiScoredVersion(selfClaim, 'v14'), /names the released v14/);
+    assert.throws(() => recordExpectedTable(fixture, moved, selfClaim, 'v14'), /names the released v14/);
+    assert.deepEqual(fixture.expected.v14, v14, 'v14 stays untouched');
+  });
+
   it('refuse a capture on an integration branch, whose scorer is not the released one', {
     skip: CLAIM.inProgress === true ? false : 'no version is in progress',
   }, () => {
