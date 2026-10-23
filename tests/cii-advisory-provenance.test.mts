@@ -17,7 +17,7 @@ import { assessCiiInputs } from '../api/_cii-input-health.js';
 
 // Namespace imports so each case reports on its own against a scorer that
 // predates the snapshot path.
-const { assessCiiInputAvailability, ciiInputSnapshotTimes, computeCiiScoreTable, withCiiInputQuietClocks } = riskScores;
+const { assessCiiInputAvailability, ciiInputDetails, computeCiiScoreTable, withCiiInputQuietClocks, CII_ADVISORY_LEVEL_SOURCES } = riskScores;
 const { CII_ADVISORY_MAX_AGE_MS } = riskConfig;
 const FIXTURES = loadCiiFixtures();
 const HOUR_MS = 60 * 60 * 1000;
@@ -108,9 +108,25 @@ describe('CII advisory provenance', () => {
   it('trimming a fixture keeps the producer clock the age gate reads', () => {
     const f = FIXTURES[0]!;
     const fetchedAt = new Date(f.nowMs - HOUR_MS).toISOString();
-    const trimmed = trimCiiRawInputs({ advisories: { byCountry: liveLevels(f), fetchedAt, advisories: [{ title: 'x' }] } });
-    assert.deepEqual(Object.keys(trimmed.advisories as object).sort(), ['byCountry', 'fetchedAt']);
+    const items = [
+      { title: 'Qatar - Level 3', link: 'https://x.invalid', sourceCountry: 'US', level: 'reconsider' },
+      { title: 'Qatar - Level 1', link: 'https://x.invalid', sourceCountry: 'US', level: 'normal' },
+      { title: 'Embassy alert', link: 'https://x.invalid', sourceCountry: 'US', level: 'info' },
+      { title: 'Qatar', link: 'https://x.invalid', sourceCountry: 'AU', level: 'caution' },
+    ];
+    const trimmed = trimCiiRawInputs({ advisories: { byCountry: liveLevels(f), fetchedAt, advisories: items } });
+    assert.deepEqual(Object.keys(trimmed.advisories as object).sort(), ['advisories', 'byCountry', 'fetchedAt']);
     assert.equal((trimmed.advisories as { fetchedAt: string }).fetchedAt, fetchedAt);
+    // One level-bearing item per source keeps which level sources were present, and nothing else.
+    assert.deepEqual((trimmed.advisories as { advisories: unknown[] }).advisories, [
+      { sourceCountry: 'US', level: 'normal' },
+      { sourceCountry: 'AU', level: 'caution' },
+    ]);
+    const auOnly = { ...f.inputs, advisories: { byCountry: liveLevels(f), advisories: items.filter((i) => i.sourceCountry === 'AU') } };
+    const full = table(f, auOnly).aux.advisories?.sourcesMissing;
+    const trimmedInputs = trimCiiRawInputs(auOnly);
+    assert.deepEqual(table(f, trimmedInputs).aux.advisories?.sourcesMissing, full);
+    assert.deepEqual(full, ['us']);
   });
 });
 
@@ -118,7 +134,7 @@ describe('CII advisory provenance alarm', () => {
   function verdict(f: (typeof FIXTURES)[number], inputs: CiiRawInputs) {
     const t = table(f, inputs);
     const states = assessCiiInputAvailability([], t.aux, f.nowMs, false);
-    const reports = withCiiInputQuietClocks(states, null, f.nowMs, ciiInputSnapshotTimes(t.aux));
+    const reports = withCiiInputQuietClocks(states, null, f.nowMs, { details: ciiInputDetails(t.aux) });
     return { states, reports, health: assessCiiInputs({ inputs: reports }, f.nowMs + 10 * 60_000) };
   }
   const advisoryAlarm = (v: ReturnType<typeof verdict>) => v.health.dead.find((d: { id: string }) => d.id === 'advisories');
@@ -132,7 +148,7 @@ describe('CII advisory provenance alarm', () => {
       const v = verdict(f, { ...f.inputs, advisories: null, advisoriesLastGood: snapshot(f, 2 * HOUR_MS) });
       assert.equal(v.states.advisories, 'fallback', f.label);
       assert.equal(v.reports.advisories.snapshotAt, f.nowMs - 2 * HOUR_MS, f.label);
-      assert.deepEqual(advisoryAlarm(v), { id: 'advisories', state: 'fallback', ageMin: 130 }, f.label);
+      assert.deepEqual(advisoryAlarm(v), { id: 'advisories', state: 'fallback', ageMin: 130, filled: Object.keys(liveLevels(f)).sort() }, f.label);
     }
   });
 
@@ -156,5 +172,102 @@ describe('CII advisory provenance alarm', () => {
         if (t.scores.some((s) => s.advisoryProvenance === 'fallback')) assert.ok(advisoryAlarm(v), `${f.label}: fallback without an alarm`);
       }
     }
+  });
+});
+
+// A partial feed loss: the US register fails while Smartraveller is up (or the
+// reverse). The read still clears the seeder's coverage bound and is live, so
+// every Tier-1 country the surviving source does not list used to go absent
+// with no alarm (QA −37 in P8a). The countries a fresh snapshot still lists are
+// filled from it, disclosed as fallback, and the input alarms.
+describe('CII advisory partial feed loss', () => {
+  const LOST = ['LB', 'QA', 'UA'];
+  const partial = (f: (typeof FIXTURES)[number]) => {
+    const byCountry = { ...liveLevels(f) };
+    for (const code of LOST) delete byCountry[code];
+    return byCountry;
+  };
+  function verdict(f: (typeof FIXTURES)[number], inputs: CiiRawInputs) {
+    const t = table(f, inputs);
+    const states = assessCiiInputAvailability([], t.aux, f.nowMs, false);
+    const reports = withCiiInputQuietClocks(states, null, f.nowMs, { details: ciiInputDetails(t.aux) });
+    const health = assessCiiInputs({ inputs: reports }, f.nowMs);
+    return { t, states, reports, alarm: health.dead.find((d: { id: string }) => d.id === 'advisories') };
+  }
+
+  it('a live map that lost Tier-1 countries is filled from a fresh snapshot and alarms', () => {
+    for (const f of FIXTURES) {
+      const v = verdict(f, { ...f.inputs, advisories: { byCountry: partial(f) }, advisoriesLastGood: snapshot(f, HOUR_MS) });
+      assert.deepEqual(combined(v.t), combined(table(f, f.inputs)), `${f.label}: the lost countries keep their scores`);
+      const d = disclosure(v.t);
+      for (const code of LOST) assert.equal(d[code], `${liveLevels(f)[code]}/fallback`, `${f.label} ${code}`);
+      assert.equal(d.IR, `${liveLevels(f).IR}/live`, `${f.label} IR stays live`);
+      assert.equal(v.states.advisories, 'fallback', f.label);
+      assert.deepEqual(v.alarm, { id: 'advisories', state: 'fallback', ageMin: 60, filled: LOST }, f.label);
+    }
+  });
+
+  it('a lost country is not filled from an expired snapshot: it is absent', () => {
+    const f = FIXTURES[0]!;
+    const v = verdict(f, { ...f.inputs, advisories: { byCountry: partial(f) }, advisoriesLastGood: snapshot(f, CII_ADVISORY_MAX_AGE_MS + 1) });
+    for (const code of LOST) assert.equal(disclosure(v.t)[code], '/absent', code);
+  });
+
+  it('a level source missing from the live read is reported and alarms', () => {
+    const f = FIXTURES[0]!;
+    // The seeder's stored list: only the level-issuing feeds (us, au parsers) carry a level other than info.
+    const items = (sources: string[]) => [
+      ...sources.map((sourceCountry) => ({ sourceCountry, level: 'caution', title: 't', source: sourceCountry })),
+      { sourceCountry: 'US', level: 'info', title: 'embassy alert', source: 'US Embassy Ukraine' },
+    ];
+    const both = verdict(f, { ...f.inputs, advisories: { byCountry: liveLevels(f), advisories: items(['US', 'AU']) } });
+    assert.equal(both.alarm, undefined);
+    const auOnly = verdict(f, { ...f.inputs, advisories: { byCountry: liveLevels(f), advisories: items(['AU']) } });
+    assert.deepEqual(auOnly.reports.advisories.sourcesMissing, ['us']);
+    assert.deepEqual(auOnly.alarm, { id: 'advisories', state: 'live', sourcesMissing: ['us'] });
+  });
+
+  it('a payload without its item list cannot say which source failed, and claims nothing', () => {
+    const f = FIXTURES[0]!;
+    const v = verdict(f, f.inputs);
+    assert.equal(v.reports.advisories.sourcesMissing, undefined);
+    assert.equal(v.alarm, undefined);
+  });
+
+  it('the level sources the scorer expects are the seeder feeds that parse a level', async () => {
+    const { ADVISORY_FEEDS } = await import('../scripts/seed-security-advisories.mjs');
+    const parsing = [...new Set((ADVISORY_FEEDS as Array<{ levelParser?: string; sourceCountry: string }>)
+      .filter((feed) => feed.levelParser).map((feed) => feed.sourceCountry.toLowerCase()))].sort();
+    assert.deepEqual([...CII_ADVISORY_LEVEL_SOURCES], parsing);
+  });
+
+  it('a failed snapshot read is unavailable, not a failed build, and health records it', () => {
+    const f = FIXTURES[0]!;
+    const live = verdict(f, { ...f.inputs, advisoriesLastGoodReadFailed: true });
+    assert.equal(live.states.advisories, 'live');
+    assert.equal(live.reports.advisories.snapshotReadFailed, true);
+    assert.equal(live.alarm, undefined, 'live levels still score; the read failure is recorded, not alarmed');
+    const missing = verdict(f, { ...f.inputs, advisories: null, advisoriesLastGoodReadFailed: true });
+    assert.ok(missing.t.scores.every((s) => s.advisoryProvenance === 'absent'));
+    assert.deepEqual(missing.alarm, { id: 'advisories', state: 'missing', snapshotReadFailed: true });
+  });
+});
+
+describe('withCiiInputQuietClocks options', () => {
+  const f = FIXTURES[0]!;
+  const t = table(f, { ...f.inputs, advisories: null, advisoriesLastGood: snapshot(f, HOUR_MS) });
+  const states = assessCiiInputAvailability([], t.aux, f.nowMs, false);
+
+  it('takes its details as a named option', () => {
+    const reports = withCiiInputQuietClocks(states, null, f.nowMs, { details: ciiInputDetails(t.aux) });
+    assert.equal(reports.advisories.snapshotAt, f.nowMs - HOUR_MS);
+  });
+
+  it('throws when an object is passed in the old positional slot, instead of misreading it', () => {
+    // Tests run without type checking: a details map, or any other branch's
+    // positional argument (an exclusion list), must not be read as options.
+    assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, ciiInputDetails(t.aux) as never), /unknown option\(s\) advisories/);
+    assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, ['fires'] as never), /unknown option/);
+    assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, { details: {}, exclusions: {} } as never), /unknown option\(s\) exclusions/);
   });
 });

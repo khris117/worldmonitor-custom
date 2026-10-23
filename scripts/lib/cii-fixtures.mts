@@ -231,10 +231,25 @@ function trimStrikeTally(raw: unknown): unknown {
   return { version: raw.version, updatedAt: raw.updatedAt, days };
 }
 
-/** Tier-1 levels plus `fetchedAt`, the producer clock the advisory age gate reads. */
+const ADVISORY_ITEM_LEVELS = new Set(['do-not-travel', 'reconsider', 'caution', 'normal']);
+
+/**
+ * Tier-1 levels, `fetchedAt` (the producer clock the advisory age gate reads)
+ * and, from the stored item list, one `{ sourceCountry, level }` per source
+ * that published a level: the scorer reads which level sources are present.
+ */
 function trimAdvisories(v: any): Obj {
   if (!isObj(v.byCountry)) return {};
-  return { byCountry: tier1Entries(v.byCountry), ...(v.fetchedAt != null ? { fetchedAt: v.fetchedAt } : {}) };
+  const items = Array.isArray(v.advisories)
+    ? [...new Map(v.advisories
+      .filter((item: any) => isObj(item) && ADVISORY_ITEM_LEVELS.has(item.level))
+      .map((item: any) => [String(item.sourceCountry ?? ''), { sourceCountry: item.sourceCountry, level: item.level }])).values()]
+    : null;
+  return {
+    byCountry: tier1Entries(v.byCountry),
+    ...(v.fetchedAt != null ? { fetchedAt: v.fetchedAt } : {}),
+    ...(items ? { advisories: items } : {}),
+  };
 }
 
 export function trimCiiRawInputs(raw: CiiRawInputs): CiiRawInputs {

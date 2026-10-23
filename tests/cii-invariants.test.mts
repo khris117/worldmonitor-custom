@@ -18,7 +18,7 @@ import { assessCiiInputs } from '../api/_cii-input-health.js';
 import {
   assessCiiInputAvailability,
   buildCiiAuxiliarySources,
-  ciiInputSnapshotTimes,
+  ciiInputDetails,
   computeCiiScoreTable,
   type CiiRawInputs,
   scoreCiiAuxiliarySources,
@@ -375,35 +375,50 @@ function measureP8a(): Measurement {
   };
 }
 
-/** P8b: no score discloses an advisory level other than this build's live read without an input-health alarm. */
+/**
+ * P8b: an advisory provenance flip raises an input-health alarm. Every case
+ * states whether it must alarm, so each one asserts; a fixture that cannot
+ * build a case fails the property rather than skipping it.
+ */
 function measureP8b(): Measurement {
-  const silent: string[] = [];
-  let flips = 0;
+  const wrong: string[] = [];
+  let checked = 0;
   for (const f of FIXTURES) {
-    const live = f.inputs.advisories as { byCountry?: Record<string, string> } | null;
-    const snapshot = live?.byCountry ? { byCountry: live.byCountry, fetchedAt: f.nowMs - HOUR_MS } : null;
-    const cases: Record<string, CiiRawInputs> = {
-      live: f.inputs,
-      'partial live map': { ...f.inputs, advisories: { byCountry: Object.fromEntries(Object.entries(live?.byCountry ?? {}).slice(0, 5)) } },
-      'failed read with snapshot': { ...f.inputs, advisories: null, advisoriesLastGood: snapshot },
-      'failed read': { ...f.inputs, advisories: null },
-    };
-    for (const [name, inputs] of Object.entries(cases)) {
-      const t = computeCiiScoreTable(inputs, { nowMs: f.nowMs, iranEventsEnabled: f.iranEventsEnabled });
-      const flipped = t.scores.filter((s) => s.advisoryProvenance !== 'live' && s.advisoryProvenance !== 'absent');
-      if (flipped.length === 0) continue;
-      flips += 1;
+    const live = (f.inputs.advisories as { byCountry?: Record<string, string> } | null)?.byCountry;
+    if (!live || Object.keys(live).length === 0) {
+      wrong.push(`${f.label}: no live advisory map to build the cases from`);
+      continue;
+    }
+    const fresh = { byCountry: live, fetchedAt: f.nowMs - HOUR_MS };
+    const expired = { byCountry: live, fetchedAt: f.nowMs - 4 * DAY_MS };
+    const partial = Object.fromEntries(Object.entries(live).filter(([code]) => code !== 'QA' && code !== 'UA'));
+    const levelItems = (sources: string[]) => sources.map((sourceCountry) => ({ sourceCountry, level: 'caution' }));
+    const cases: Array<{ name: string; inputs: CiiRawInputs; alarm: boolean }> = [
+      { name: 'live', inputs: f.inputs, alarm: false },
+      { name: 'live with both level sources', inputs: { ...f.inputs, advisories: { byCountry: live, advisories: levelItems(['US', 'AU']) } }, alarm: false },
+      { name: 'live without the US source', inputs: { ...f.inputs, advisories: { byCountry: live, advisories: levelItems(['AU']) } }, alarm: true },
+      { name: 'partial live map with a fresh snapshot', inputs: { ...f.inputs, advisories: { byCountry: partial }, advisoriesLastGood: fresh }, alarm: true },
+      { name: 'failed read with a fresh snapshot', inputs: { ...f.inputs, advisories: null, advisoriesLastGood: fresh }, alarm: true },
+      { name: 'failed read with an expired snapshot', inputs: { ...f.inputs, advisories: null, advisoriesLastGood: expired }, alarm: true },
+      { name: 'failed read, no snapshot', inputs: { ...f.inputs, advisories: null }, alarm: true },
+      { name: 'failed read, snapshot read failed', inputs: { ...f.inputs, advisories: null, advisoriesLastGoodReadFailed: true }, alarm: true },
+    ];
+    for (const c of cases) {
+      const t = computeCiiScoreTable(c.inputs, { nowMs: f.nowMs, iranEventsEnabled: f.iranEventsEnabled });
       const states = assessCiiInputAvailability([], t.aux, f.nowMs, false);
-      const reports = withCiiInputQuietClocks(states, null, f.nowMs, ciiInputSnapshotTimes(t.aux));
+      const reports = withCiiInputQuietClocks(states, null, f.nowMs, { details: ciiInputDetails(t.aux) });
       const alarmed = assessCiiInputs({ inputs: reports }, f.nowMs).dead.some((d: { id: string }) => d.id === 'advisories');
-      if (!alarmed) silent.push(`${f.label}/${name}: ${flipped.map((s) => s.region).join(' ')}`);
+      const flipped = t.scores.some((s) => s.advisoryProvenance === 'fallback');
+      checked += 1;
+      if (alarmed !== c.alarm) wrong.push(`${f.label}/${c.name}: alarm ${alarmed}, want ${c.alarm}`);
+      else if (flipped && !alarmed) wrong.push(`${f.label}/${c.name}: fallback scores without an alarm`);
     }
   }
   return {
-    pass: silent.length === 0,
-    value: silent.length
-      ? `${silent.length} case(s) disclose a non-live advisory level with no alarm, e.g. ${silent[0]}`
-      : `${flips} non-live provenance case(s), each raised as an advisories input alarm`,
+    pass: checked > 0 && wrong.length === 0,
+    value: wrong.length
+      ? `${wrong.length} of ${checked} advisory provenance case(s) wrong, e.g. ${wrong[0]}`
+      : `${checked} advisory provenance cases: each alarms exactly when the build's advisory levels are not this read's full live table`,
   };
 }
 

@@ -286,15 +286,27 @@ with the live feed (CU, LB, RU, IR and IQ) and had no entry for KP, QA, AE or
 SA. On 2026-10-21, while it stood in for the feed for about two hours, Qatar
 fell from 50 to 8 and Russia from 72 to 54. The table has been removed.
 
-Each fresh build keeps the advisory levels it read live, with the seeder's
-`fetchedAt`, in `intelligence:advisories:cii-last-good:v1`. When a later read
-is missing, or its `fetchedAt` is more than 72 hours old
-(`CII_ADVISORY_MAX_AGE_MS`), the scorer uses that snapshot instead and
-discloses `advisoryProvenance: fallback`. A snapshot more than 72 hours old is
-not used, and the advisory boost and floor are then absent. In either case the
-risk-scores seed-meta reports the advisories input as `fallback` (with
-`snapshotAt`) or `missing`, and `/api/health` marks `riskScores`
-`COVERAGE_PARTIAL` from the first failed read.
+Each fresh build keeps the Tier-1 advisory levels it read live, with the
+seeder's `fetchedAt`, in `intelligence:advisories:cii-last-good:v1`. The
+snapshot is replaced only by a live read that lost no Tier-1 country.
+
+- **A failed or stale read.** When a read is missing, or its `fetchedAt` is
+  more than 72 hours old (`CII_ADVISORY_MAX_AGE_MS`), the scorer uses the
+  snapshot instead and discloses `advisoryProvenance: fallback`.
+- **A partial loss.** `byCountry` is the higher of the US and Australian
+  levels, so a read that lost one of them can still pass the seeder's coverage
+  check. A Tier-1 country that the snapshot lists but the live read does not is
+  filled from the snapshot and disclosed as `fallback`.
+- **A lost source.** A live read whose item list lacks one of the level
+  sources (`us`, `au`) is reported with `sourcesMissing`.
+- **Expiry.** A snapshot more than 72 hours old is not used. The advisory boost
+  and floor of the countries it would have covered are then absent.
+- **Health.** The risk-scores seed-meta reports the advisories input as
+  `fallback` (with `snapshotAt` and the `filled` countries), `missing`, or
+  `live` with `sourcesMissing`. Each of these marks `riskScores`
+  `COVERAGE_PARTIAL` in `/api/health` from the first affected build.
+- **An unreadable snapshot.** If the snapshot itself cannot be read, the build
+  goes ahead without it and the report carries `snapshotReadFailed`.
 
 ### Text attribution caveat
 

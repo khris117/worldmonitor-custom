@@ -68,7 +68,15 @@ The suite injects evidence into parsed sources (`buildCiiAuxiliarySources` outpu
 - **P5c.** "Against the evidence" means against the blend: A blends above B but scores below it.
 - **P7a** nulls each input in turn. Every country whose terms change must report a coverage below 1 and below its coverage with the input present. **P7b** asks input health to call a reader that maps none of its records unusable; outages, which read `countryCode` from rows that carry only a name, are the live case.
 - **P8a.** Each parsed input is replaced by its empty value. For advisories it is what a failed read now produces: the live read is null and the last good snapshot, taken from the same fixture, stands in (Stage B2 removed the fallback table). No country may move by more than **K = 10**.
-- **P8b.** Every score that discloses an advisory level other than this build's live read must come with an input-health alarm. This holds for a live read, a partial live map, a failed read with a snapshot, and a failed read without one.
+- **P8b.** An advisory provenance flip raises an input-health alarm. Each case states whether it must alarm, so every case asserts, and a fixture that cannot build the cases fails. The cases are:
+  - a live read, which must not alarm;
+  - a live read with both level sources, which must not alarm;
+  - a live read without the US source;
+  - a partial live map with a fresh snapshot;
+  - a failed read with a fresh snapshot;
+  - a failed read with an expired snapshot;
+  - a failed read with no snapshot;
+  - a failed read whose snapshot read also failed.
 - **P9** compares the span of the cached UCDP rows with the 2-year window the UCDP classes assume. It needs at least 90% of that window.
 - **P10.** Ten more delayed airports per country must not raise S.
 - **P11a.** A critical headline naming country A and a non-Tier-1 target (an attack abroad) must not raise A. **P11b.** +50 own military flights and +20 own vessels must not raise A.

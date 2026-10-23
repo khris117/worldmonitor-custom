@@ -10,9 +10,12 @@
 //                   (`quietSince` is when that started)
 //   missing         the Redis key was absent
 //   unusable        present, but the scorer rejected it (too old or malformed)
-//   fallback        missing or rejected, so the scorer used the last good
-//                   snapshot (`snapshotAt` is its producer clock). Scores hold
-//                   steady, but the input is not being refreshed: a dead input.
+//   fallback        some or all of the scored levels came from the last good
+//                   snapshot (`snapshotAt` is its producer clock, `filled` the
+//                   countries taken from it): the read was missing or stale, or
+//                   lost countries. Scores hold, but the input is dead.
+// A report may also carry `sourcesMissing` (a live read lacked one of its
+// sources: dead) and `snapshotReadFailed` (shown, not dead on its own).
 //   not_configured  disabled by deployment design (no ACLED credentials,
 //                   IRAN_EVENTS_ENABLED off)
 // An unreadable key rejects the whole build, so it surfaces as a stale
@@ -74,6 +77,20 @@ const STALE_SOURCE_STATUSES = new Set(['STALE_SEED']);
 const QUIET_CLOCK_SKEW_MS = 5 * 60_000;
 
 /**
+ * The provenance detail a producer report may carry: Tier-1 countries filled
+ * from a snapshot, sources a live read lacked, a snapshot that could not be
+ * read. A lost source alone makes an input dead; a failed snapshot read alone
+ * does not (the live levels still score) but is shown when the input is dead.
+ */
+function provenanceDetail(report) {
+  const detail = {};
+  if (Array.isArray(report?.filled) && report.filled.length) detail.filled = report.filled.map(String);
+  if (Array.isArray(report?.sourcesMissing) && report.sourcesMissing.length) detail.sourcesMissing = report.sourcesMissing.map(String);
+  if (report?.snapshotReadFailed === true) detail.snapshotReadFailed = true;
+  return detail;
+}
+
+/**
  * Grade the producer's per-input report. `sourceStatuses` maps an input id to
  * its own health check's status when the caller has one (/api/health does,
  * /api/seed-health does not).
@@ -94,6 +111,7 @@ export function assessCiiInputs(meta, now, sourceStatuses = {}) {
     const sourceCheck = cfg.sourceCheck && STALE_SOURCE_STATUSES.has(sourceStatuses[id]) ? cfg.sourceCheck : null;
     states[id] = state;
 
+    const detail = provenanceDetail(report);
     if (state === 'not_configured') {
       notConfigured.push(id);
     } else if (state === 'missing' && cfg.missingIsQuiet) {
@@ -102,22 +120,26 @@ export function assessCiiInputs(meta, now, sourceStatuses = {}) {
       // A provenance flip: the scores still stand on an older snapshot.
       const snapshotAt = Number(report.snapshotAt);
       dead.push(Number.isFinite(snapshotAt) && snapshotAt > 0 && snapshotAt <= now + QUIET_CLOCK_SKEW_MS
-        ? { id, state, ageMin: Math.max(0, Math.floor((now - snapshotAt) / 60_000)) }
-        : { id, state });
+        ? { id, state, ageMin: Math.max(0, Math.floor((now - snapshotAt) / 60_000)), ...detail }
+        : { id, state, ...detail });
     } else if (state === 'missing' || state === 'unusable' || state === 'unreported') {
-      dead.push({ id, state });
+      dead.push({ id, state, ...detail });
     } else if (sourceCheck) {
       states[id] = 'stale';
-      dead.push({ id, state: 'stale', sourceCheck });
+      dead.push({ id, state: 'stale', sourceCheck, ...detail });
     } else if (state === 'quiet') {
       const quietSince = Number(report.quietSince);
       // The producer stamps the clock on another instance, so allow small skew.
       const quietMin = Number.isFinite(quietSince) && quietSince > 0 && quietSince <= now + QUIET_CLOCK_SKEW_MS
         ? Math.max(0, Math.floor((now - quietSince) / 60_000))
         : null;
-      if (quietMin === null) dead.push({ id, state });
-      else if (cfg.maxQuietMin != null && quietMin > cfg.maxQuietMin) dead.push({ id, state, quietMin });
+      if (quietMin === null) dead.push({ id, state, ...detail });
+      else if (cfg.maxQuietMin != null && quietMin > cfg.maxQuietMin) dead.push({ id, state, quietMin, ...detail });
+      else if (detail.sourcesMissing) dead.push({ id, state, ...detail });
       else healthy.add(id);
+    } else if (detail.sourcesMissing) {
+      // Live, but one of the sources behind it is gone: part of the input is unknown.
+      dead.push({ id, state, ...detail });
     } else {
       healthy.add(id);
     }

@@ -153,10 +153,21 @@ function isAdvisoryProvenance(value: unknown): value is AdvisoryProvenance {
  */
 export const CII_ADVISORY_LAST_GOOD_KEY = 'intelligence:advisories:cii-last-good:v1';
 
+/**
+ * The feeds that publish a level (scripts/seed-security-advisories.mjs, the
+ * `levelParser` feeds), by `sourceCountry`. byCountry is the max over them, so
+ * losing one still clears the seeder's coverage bound; the stored item list is
+ * what shows which one is missing.
+ */
+export const CII_ADVISORY_LEVEL_SOURCES = ['au', 'us'] as const;
+const ADVISORY_ITEM_LEVELS = new Set<unknown>(['do-not-travel', 'reconsider', 'caution', 'normal']);
+
 interface AdvisorySnapshot {
   byCountry: Record<string, AdvisoryLevel>;
   /** The seeder's `fetchedAt`; null for a live payload written before it carried one. */
   fetchedAtMs: number | null;
+  /** Level sources present in the payload's item list; null when it carries no list. */
+  sources: string[] | null;
 }
 
 function advisoryClockMs(value: unknown): number | null {
@@ -180,7 +191,42 @@ function advisorySnapshotFromSeed(raw: unknown, nowMs: number, requireClock: boo
   } else if (fetchedAtMs > nowMs || nowMs - fetchedAtMs > CII_ADVISORY_MAX_AGE_MS) {
     return null;
   }
-  return { byCountry: byCountry as Record<string, AdvisoryLevel>, fetchedAtMs };
+  const items = (raw as { advisories?: unknown }).advisories;
+  const sources = Array.isArray(items)
+    ? [...new Set(items.flatMap((item) => (
+      item && typeof item === 'object' && ADVISORY_ITEM_LEVELS.has((item as { level?: unknown }).level)
+        ? [String((item as { sourceCountry?: unknown }).sourceCountry ?? '').toLowerCase()]
+        : [])))].filter(Boolean).sort()
+    : null;
+  return { byCountry: byCountry as Record<string, AdvisoryLevel>, fetchedAtMs, sources };
+}
+
+/**
+ * The advisory levels a build scores. A live read wins; a Tier-1 country it
+ * lost (no entry at all, where the snapshot has one) is filled from the
+ * snapshot, and with no usable live read the snapshot stands in whole.
+ */
+function ciiAdvisoriesFromReads(live: AdvisorySnapshot | null, lastGood: AdvisorySnapshot | null): AuxiliarySources['advisories'] {
+  const tier1 = Object.keys(TIER1_COUNTRIES);
+  const lists = (map: Record<string, unknown>, code: string) => Object.prototype.hasOwnProperty.call(map, code);
+  if (!live) {
+    if (!lastGood) return null;
+    const filled = tier1.filter((code) => lists(lastGood.byCountry, code)).sort();
+    return { byCountry: lastGood.byCountry, provenance: 'fallback', fetchedAtMs: lastGood.fetchedAtMs, filled, snapshotAtMs: lastGood.fetchedAtMs };
+  }
+  const filled = lastGood
+    ? tier1.filter((code) => !lists(live.byCountry, code) && lists(lastGood.byCountry, code)).sort()
+    : [];
+  const sourcesMissing = live.sources ? CII_ADVISORY_LEVEL_SOURCES.filter((source) => !live.sources!.includes(source)) : [];
+  return {
+    byCountry: filled.length
+      ? { ...live.byCountry, ...Object.fromEntries(filled.map((code) => [code, lastGood!.byCountry[code]!])) }
+      : live.byCountry,
+    provenance: 'live',
+    fetchedAtMs: live.fetchedAtMs,
+    ...(filled.length ? { filled, snapshotAtMs: lastGood!.fetchedAtMs } : {}),
+    ...(sourcesMissing.length ? { sourcesMissing } : {}),
+  };
 }
 
 // ========================================================================
@@ -876,7 +922,20 @@ export interface AuxiliarySources {
   orefData: { activeAlertCount: number; historyCount24h: number } | null;
   // `provenance` 'fallback' marks the last good live snapshot standing in for a
   // missing or stale read; `fetchedAtMs` is the seeder clock when known.
-  advisories: { byCountry: Record<string, 'do-not-travel' | 'reconsider' | 'caution'>; provenance?: 'live' | 'fallback'; fetchedAtMs?: number | null } | null;
+  // `filled` lists the Tier-1 countries whose entry came from that snapshot
+  // (all of them on a fallback read, the ones a live read lost otherwise), and
+  // `snapshotAtMs` its seeder clock. `sourcesMissing`: level sources absent
+  // from a live read's item list.
+  advisories: {
+    byCountry: Record<string, 'do-not-travel' | 'reconsider' | 'caution'>;
+    provenance?: 'live' | 'fallback';
+    fetchedAtMs?: number | null;
+    filled?: string[];
+    snapshotAtMs?: number | null;
+    sourcesMissing?: string[];
+  } | null;
+  /** The last good advisory snapshot could not be read; it was treated as unavailable. */
+  advisoriesSnapshotReadFailed?: boolean;
   // Per-country displaced population by ISO3 code (UNHCR — persists after ceasefires)
   displacedByIso3: Record<string, number>;
   crossBorderSurgeCountries?: string[];
@@ -1006,6 +1065,8 @@ async function readRiskInputs(inputs: ReadonlyArray<RiskInput | null>): Promise<
 
 async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
   const currentYear = new Date().getFullYear();
+  // Compared with every live advisory read, so it is read on every build, alongside the inputs.
+  const advisoriesLastGoodPending = readCachedJson(CII_ADVISORY_LAST_GOOD_KEY, false);
   const [ucdpRaw, outagesRaw, climateRaw, firesSummaryRaw, gpsRaw, iranRaw, orefRaw, advisoriesRaw, displacementCurrentRaw, insightsRaw, threatSummaryRaw, aviationRaw, earthquakesRaw, sanctionsRaw, sanctionsCountsRaw, temporalRaw, militaryCiiRaw, countryEventsRaw, strikePressureRaw] = await readRiskInputs([
     { key: 'conflict:ucdp-events:v1', raw: true },
     { key: 'infra:outages:v1', raw: true },
@@ -1056,12 +1117,10 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     : null;
   const firesRaw = firesSummaryRaw
     ?? (firesCanonicalRaw == null ? null : summarizeWildfireDetections(firesCanonicalRaw) ?? firesCanonicalRaw);
-  // The last good advisory snapshot is read only when the live read cannot be
-  // scored. An errored read rejects the build like any other input.
+  // Optional: an errored read leaves the snapshot unavailable and is reported;
+  // it does not reject the build.
+  const advisoriesLastGoodRead = await advisoriesLastGoodPending;
   const nowMs = Date.now();
-  const advisoriesLastGoodRaw = advisorySnapshotFromSeed(advisoriesRaw, nowMs, false) == null
-    ? (await readRiskInputs([{ key: CII_ADVISORY_LAST_GOOD_KEY, raw: false }]))[0]
-    : null;
   const borderSnapshots = await readRiskInputs(CROSS_BORDER_SOURCES.map(source => ({ key: source.key, raw: true, envelope: true })));
   return buildCiiAuxiliarySources({
     ucdp: ucdpRaw,
@@ -1072,7 +1131,8 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     iranEvents: iranRaw,
     oref: orefRaw,
     advisories: advisoriesRaw,
-    advisoriesLastGood: advisoriesLastGoodRaw,
+    advisoriesLastGood: advisoriesLastGoodRead.status === 'hit' ? advisoriesLastGoodRead.value : null,
+    advisoriesLastGoodReadFailed: advisoriesLastGoodRead.status === 'error',
     displacement: displacementRaw,
     newsInsights: insightsRaw,
     threatSummary: threatSummaryRaw,
@@ -1105,8 +1165,10 @@ export interface CiiRawInputs {
   iranEvents?: unknown;
   oref?: unknown;
   advisories?: unknown;
-  /** CII_ADVISORY_LAST_GOOD_KEY; the build reads it only when `advisories` cannot be scored. */
+  /** CII_ADVISORY_LAST_GOOD_KEY: stands in for a failed read, and fills Tier-1 countries a live read lost. */
   advisoriesLastGood?: unknown;
+  /** The snapshot read errored (runtime only; a capture fails instead). */
+  advisoriesLastGoodReadFailed?: boolean;
   displacement?: unknown;
   newsInsights?: unknown;
   threatSummary?: unknown;
@@ -1144,8 +1206,10 @@ export function buildCiiAuxiliarySources(
   const iranRaw = iranEventsEnabled ? raw.iranEvents ?? null : null;
   const orefRaw = raw.oref ?? null;
   const advisoriesRaw = raw.advisories ?? null;
-  const advisoriesLive = advisorySnapshotFromSeed(advisoriesRaw, nowMs, false);
-  const advisoriesLastGood = advisoriesLive ? null : advisorySnapshotFromSeed(raw.advisoriesLastGood, nowMs, true);
+  const advisories = ciiAdvisoriesFromReads(
+    advisorySnapshotFromSeed(advisoriesRaw, nowMs, false),
+    advisorySnapshotFromSeed(raw.advisoriesLastGood, nowMs, true),
+  );
   const displacementRaw = raw.displacement ?? null;
   const insightsRaw = raw.newsInsights ?? null;
   const threatSummaryRaw = raw.threatSummary ?? null;
@@ -1243,9 +1307,8 @@ export function buildCiiAuxiliarySources(
     gpsHexes: arr(gpsRaw, 'hexes'),
     iranEvents: arr(iranRaw, 'events'),
     orefData,
-    advisories: advisoriesLive
-      ? { ...advisoriesLive, provenance: 'live' }
-      : advisoriesLastGood ? { ...advisoriesLastGood, provenance: 'fallback' } : null,
+    advisories,
+    ...(raw.advisoriesLastGoodReadFailed ? { advisoriesSnapshotReadFailed: true } : {}),
     displacedByIso3,
     crossBorderSurgeCountries: borderMovements
       .filter(m => m.kind === 'arrival' && m.surge && !m.stale)
@@ -1287,8 +1350,19 @@ export type CiiInputId = typeof CII_HEALTH_INPUT_IDS[number];
 type CiiInputRead = 'present' | 'missing' | 'not_configured';
 /** `fallback`: this build's read was missing or stale and the last good snapshot was scored. */
 export type CiiInputState = 'live' | 'quiet' | 'missing' | 'unusable' | 'not_configured' | 'fallback';
-/** `snapshotAt`: for `fallback`, the producer clock of the snapshot scored instead. */
-export interface CiiInputReport { state: CiiInputState; quietSince?: number; snapshotAt?: number }
+/**
+ * `snapshotAt`/`filled`: the producer clock of the snapshot scored and the
+ * Tier-1 countries taken from it. `sourcesMissing`: level sources a live read
+ * lacked. `snapshotReadFailed`: the snapshot could not be read.
+ */
+export interface CiiInputReport {
+  state: CiiInputState;
+  quietSince?: number;
+  snapshotAt?: number;
+  filled?: string[];
+  sourcesMissing?: string[];
+  snapshotReadFailed?: boolean;
+}
 
 const CII_INPUT_AUX_FIELD: Record<Exclude<CiiInputId, 'acled'>, keyof AuxiliarySources> = {
   ucdp: 'ucdpEvents',
@@ -1342,7 +1416,7 @@ export function assessCiiInputAvailability(
   } as Record<CiiInputId, CiiInputState>;
   for (const [id, field] of Object.entries(CII_INPUT_AUX_FIELD) as Array<[Exclude<CiiInputId, 'acled'>, keyof AuxiliarySources]>) {
     const read = aux.inputReads?.[id] ?? 'missing';
-    if (id === 'advisories' && aux.advisories?.provenance === 'fallback') {
+    if (id === 'advisories' && (aux.advisories?.provenance === 'fallback' || (aux.advisories?.filled?.length ?? 0) > 0)) {
       states[id] = 'fallback';
     } else if (read !== 'present') {
       states[id] = read;
@@ -1355,39 +1429,58 @@ export function assessCiiInputAvailability(
   return states;
 }
 
-/** The producer clock of every snapshot scored in place of a failed read (`fallback`). */
-export function ciiInputSnapshotTimes(aux: AuxiliarySources): Partial<Record<CiiInputId, number>> {
-  const at = aux.advisories?.provenance === 'fallback' ? aux.advisories.fetchedAtMs : null;
-  return typeof at === 'number' ? { advisories: at } : {};
+/** What a per-input report adds beyond the state. Only advisories carries any. */
+export type CiiInputDetail = Pick<CiiInputReport, 'snapshotAt' | 'filled' | 'sourcesMissing' | 'snapshotReadFailed'>;
+
+export function ciiInputDetails(aux: AuxiliarySources): Partial<Record<CiiInputId, CiiInputDetail>> {
+  const a = aux.advisories;
+  const detail: CiiInputDetail = {};
+  if (a?.filled?.length) {
+    if (typeof a.snapshotAtMs === 'number') detail.snapshotAt = a.snapshotAtMs;
+    detail.filled = a.filled;
+  }
+  if (a?.sourcesMissing?.length) detail.sourcesMissing = a.sourcesMissing;
+  if (aux.advisoriesSnapshotReadFailed) detail.snapshotReadFailed = true;
+  return Object.keys(detail).length ? { advisories: detail } : {};
 }
+
+/** Named options of withCiiInputQuietClocks. Add a new one here, never as a positional argument. */
+export interface CiiInputReportOptions {
+  /** ciiInputDetails output. */
+  details?: Partial<Record<CiiInputId, CiiInputDetail>>;
+}
+const CII_INPUT_REPORT_OPTION_KEYS = new Set<string>(['details']);
 
 /**
  * Attaches `quietSince`, carried from the previous report while the input
- * stays quiet, and `snapshotAt` to a `fallback` input.
+ * stays quiet, and each input's details. Options are named: tests run without
+ * type checking, so an unknown key (an object passed where an older signature
+ * took a positional argument) throws instead of being misread.
  */
 export function withCiiInputQuietClocks(
   states: Record<CiiInputId, CiiInputState>,
   previousInputs: unknown,
   nowMs: number,
-  snapshotTimes: Partial<Record<CiiInputId, number>> = {},
+  options: CiiInputReportOptions = {},
 ): Record<CiiInputId, CiiInputReport> {
+  const unknownOptions = Object.keys(options ?? {}).filter((key) => !CII_INPUT_REPORT_OPTION_KEYS.has(key));
+  if (unknownOptions.length > 0) {
+    throw new TypeError(`withCiiInputQuietClocks: unknown option(s) ${unknownOptions.join(', ')}`);
+  }
+  const details = options.details ?? {};
   const previous = previousInputs && typeof previousInputs === 'object'
     ? previousInputs as Record<string, Partial<CiiInputReport> | undefined>
     : {};
   const reports = {} as Record<CiiInputId, CiiInputReport>;
   for (const id of CII_HEALTH_INPUT_IDS) {
     const state = states[id];
-    if (state === 'fallback') {
-      const snapshotAt = snapshotTimes[id];
-      reports[id] = typeof snapshotAt === 'number' ? { state, snapshotAt } : { state };
-      continue;
-    }
+    const detail = details[id] ?? {};
     if (state !== 'quiet') {
-      reports[id] = { state };
+      reports[id] = { state, ...detail };
       continue;
     }
     const since = previous[id]?.state === 'quiet' ? Number(previous[id]?.quietSince) : NaN;
-    reports[id] = { state, quietSince: Number.isFinite(since) && since > 0 && since <= nowMs ? since : nowMs };
+    reports[id] = { state, quietSince: Number.isFinite(since) && since > 0 && since <= nowMs ? since : nowMs, ...detail };
   }
   return reports;
 }
@@ -1432,7 +1525,8 @@ export function computeCIIScores(
     // Only the advisory feed sets a level; a country it does not list is absent.
     const level = aux.advisories?.byCountry?.[code];
     data[code].advisoryLevel = isAdvisoryLevel(level) ? level : null;
-    data[code].advisoryProvenance = isAdvisoryLevel(level) ? aux.advisories!.provenance ?? 'live' : 'absent';
+    data[code].advisoryProvenance = !isAdvisoryLevel(level) ? 'absent'
+      : aux.advisories!.provenance === 'fallback' || aux.advisories!.filled?.includes(code) ? 'fallback' : 'live';
   }
 
   // --- Displacement ingestion (UNHCR — persists after ceasefires) ---
@@ -2271,19 +2365,23 @@ async function recordRejectedRiskScoresBuild(err: RiskInputsUnavailableError): P
 interface RiskScoresBuildSide {
   realtimeSignalDensityCoverageCount: number;
   ciiInputs: Record<CiiInputId, CiiInputState> | null;
-  ciiInputSnapshotAt: Partial<Record<CiiInputId, number>>;
-  /** This build's live advisory levels with the seeder clock, kept as the next last-good snapshot. */
-  advisoriesLastGood: { byCountry: Record<string, AdvisoryLevel>; fetchedAt: number } | null;
+  ciiInputDetails: Partial<Record<CiiInputId, CiiInputDetail>>;
+  /** This build's live Tier-1 levels (`normal` included) with the seeder clock, kept as the next last-good snapshot. */
+  advisoriesLastGood: { byCountry: Record<string, string>; fetchedAt: number } | null;
 }
 
-/** Tier-1 levels only: the scorer reads nothing else from the snapshot. */
+/**
+ * Tier-1 entries of a live read that lost no Tier-1 country, `normal`
+ * included: a later read is compared against which countries are listed. A
+ * read that needed the snapshot leaves it as it was, so it ages out.
+ */
 export function ciiAdvisoryLastGoodSnapshot(aux: AuxiliarySources): RiskScoresBuildSide['advisoriesLastGood'] {
   const advisories = aux.advisories;
-  if (!advisories || advisories.provenance === 'fallback' || typeof advisories.fetchedAtMs !== 'number') return null;
-  const byCountry: Record<string, AdvisoryLevel> = {};
+  if (!advisories || advisories.provenance === 'fallback' || advisories.filled?.length || typeof advisories.fetchedAtMs !== 'number') return null;
+  const byCountry: Record<string, string> = {};
   for (const code of Object.keys(TIER1_COUNTRIES)) {
-    const level = advisories.byCountry[code];
-    if (isAdvisoryLevel(level)) byCountry[code] = level;
+    const level: unknown = advisories.byCountry[code];
+    if (typeof level === 'string' && ADVISORY_ITEM_LEVELS.has(level)) byCountry[code] = level;
   }
   return { byCountry, fetchedAt: advisories.fetchedAtMs };
 }
@@ -2306,7 +2404,7 @@ async function buildRiskScoresPayload(): Promise<RiskScoresBuildSide & { respons
     response: { ciiScores, strategicRisks, degraded: false, stale: false },
     realtimeSignalDensityCoverageCount,
     ciiInputs: assessCiiInputAvailability(acled, aux, nowMs),
-    ciiInputSnapshotAt: ciiInputSnapshotTimes(aux),
+    ciiInputDetails: ciiInputDetails(aux),
     advisoriesLastGood: ciiAdvisoryLastGoodSnapshot(aux),
   };
 }
@@ -2324,7 +2422,7 @@ async function persistFreshRiskScorePayload(
   // restarts the clocks, which can only delay a quiet-too-long verdict.
   const previousMeta = ciiInputs ? await getCachedJson(RISK_SEED_META_KEY).catch(() => null) : null;
   const inputs = ciiInputs
-    ? withCiiInputQuietClocks(ciiInputs, (previousMeta as { inputs?: unknown } | null)?.inputs, fetchedAt, side.ciiInputSnapshotAt)
+    ? withCiiInputQuietClocks(ciiInputs, (previousMeta as { inputs?: unknown } | null)?.inputs, fetchedAt, { details: side.ciiInputDetails })
     : undefined;
   const writes: Array<Promise<unknown>> = [
     setCachedJson(RISK_STALE_CACHE_KEY, freshResult, RISK_STALE_TTL),
@@ -2355,7 +2453,7 @@ export async function getRiskScores(
 ): Promise<GetRiskScoresResponse> {
   try {
     let side: RiskScoresBuildSide = {
-      realtimeSignalDensityCoverageCount: 0, ciiInputs: null, ciiInputSnapshotAt: {}, advisoriesLastGood: null,
+      realtimeSignalDensityCoverageCount: 0, ciiInputs: null, ciiInputDetails: {}, advisoriesLastGood: null,
     };
     const { data: result, source, leader } = await cachedFetchJsonWithMeta<GetRiskScoresResponse>(
       RISK_CACHE_KEY,
