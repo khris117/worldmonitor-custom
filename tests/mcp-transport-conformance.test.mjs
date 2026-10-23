@@ -314,6 +314,8 @@ describe('api/mcp.ts — transport conformance over real HTTP', () => {
           assert.equal(body.result.structuredContent, undefined, where);
           const payload = JSON.parse(body.result.content[0].text);
           assert.equal(typeof payload.error, 'string', where);
+          // The payload is flat, so a message must not point at `data.*`.
+          assert.doesNotMatch(payload.error, /\bdata\./, where);
           checkData(payload);
         } else {
           assert.equal(body.result, undefined, `${where}: ${JSON.stringify(body)}`);

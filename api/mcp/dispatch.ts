@@ -550,7 +550,11 @@ export async function dispatchToolsCall(
     const plan = typeof upgradeArgs.plan === 'string' ? upgradeArgs.plan : '';
     const productId = checkoutProductIdForPlan(plan);
     if (!productId) {
-      return invalidArguments('Unknown plan. Pass one of the self-serve plans listed in data.plans.', { plans: MCP_CHECKOUT_PLANS });
+      return invalidArguments(
+        // The tool-result payload is flat; the -32602 error nests it under data.
+        `Unknown plan. Pass one of the self-serve plans listed in ${inputErrorsAsToolResults ? 'plans' : 'data.plans'}.`,
+        { plans: MCP_CHECKOUT_PLANS },
+      );
     }
     const upgrade = await startUpgradeCheckout(deps.createCheckout, context.userId, plan, productId, id, corsHeaders, ctx);
     if (upgrade instanceof Response) return upgrade;
