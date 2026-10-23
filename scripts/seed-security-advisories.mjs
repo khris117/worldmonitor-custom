@@ -427,6 +427,10 @@ if (isMain) {
     sourceVersion: 'rss-feeds',
     publishTransform: advisoryPublishTransform,
     afterPublish: advisoryAfterPublish,
+    // A rejected report (no register cleared the coverage floor) skips the
+    // publish; this replaces the previous run's sourceState instead of
+    // carrying it forward onto the mirrored seed-meta.
+    afterValidationSkip: advisoryAfterPublish,
     extraKeys: [{ key: BOOTSTRAP_KEY, transform: advisoryPublishTransform, ttl: TTL, declareRecords }],
 
     declareRecords,

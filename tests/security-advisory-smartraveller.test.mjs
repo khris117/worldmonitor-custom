@@ -168,10 +168,26 @@ describe('advisory source health', () => {
     assert.deepEqual(freshnessMetaPatch, { sourceState: 'ok', emptyFeeds: [] });
   });
 
-  it('keeps diagnostics out of the bootstrap key too', async () => {
+  // When no register yields a level the report fails validation and runSeed
+  // skips the publish. That path keeps the previous seed-meta diagnostics and
+  // mirrors the old canonical fetchedAt, so without afterValidationSkip health
+  // would keep reading the last run's sourceState 'ok' until the data aged out.
+  it('names both registers when the rejected report has neither', async () => {
+    const report = await fetchAll({
+      feeds: [STATE_DEPT, SMARTRAVELLER, CDC],
+      doFetch: routedFetch({ [CDC.url]: respond('<rss><channel><item><title>Measles</title><link>https://wwwnc.cdc.gov/m</link></item></channel></rss>') }),
+    });
+    assert.equal(validateAdvisoryReport(advisoryPublishTransform(report)), false);
+    const { freshnessMetaPatch } = await advisoryAfterPublish(report);
+    assert.equal(freshnessMetaPatch.sourceState, 'degraded');
+    assert.equal(freshnessMetaPatch.errorCode, 'ADVISORY_REGISTER_MISSING_AU_US');
+  });
+
+  it('wires the diagnostics into the seed run: stripped from both keys, written on publish and on a validation skip', async () => {
     const source = readFileSync(new URL('../scripts/seed-security-advisories.mjs', import.meta.url), 'utf8');
     assert.match(source, /publishTransform: advisoryPublishTransform/);
     assert.match(source, /key: BOOTSTRAP_KEY, transform: advisoryPublishTransform/);
     assert.match(source, /afterPublish: advisoryAfterPublish/);
+    assert.match(source, /afterValidationSkip: advisoryAfterPublish/);
   });
 });
