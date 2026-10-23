@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { createHash } from 'node:crypto';
 import { deflateRawSync } from 'node:zlib';
+import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 import { TELEGRAM_CHANNEL_TRUST } from '../shared/telegram-channel-trust.ts';
 import { GDELT_FIPS_TO_ISO2 } from '../scripts/_gdelt-country-codes.mjs';
 import { geoToCountry } from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
@@ -529,7 +531,12 @@ describe('precision: one incident, once, on the country hit, when it happened', 
       assert.equal(strikes.prefilterStrikeText(text), false, `not worth a classifier call: ${text}`);
       assert.equal(strikes.buildTelegramCandidate(post('OSINTdefender', text), cls({ place: 'Riyadh' }), NOW), null, text);
     }
-    for (const text of ['Ballistic missile impact in Riyadh moments ago', 'Footage shows smoke rising after a drone strike in Jizan']) {
+    for (const text of [
+      'Ballistic missile impact in Riyadh moments ago', 'Footage shows smoke rising after a drone strike in Jizan',
+      // Context about the past is not a look back at an old attack.
+      'Drone strike hits the Abqaiq plant, rebuilt years ago after the 2019 attack', 'Missiles struck Haifa port today, months ago it was hit too',
+      'On the anniversary of the war, a drone struck Erbil airport',
+    ]) {
       assert.equal(strikes.isRetrospectivePost(text), false, text);
       assert.equal(strikes.prefilterStrikeText(text), true, text);
     }
@@ -602,6 +609,24 @@ describe('precision: one incident, once, on the country hit, when it happened', 
     }
   });
 
+  it('never folds a GDELT land strike into a ship hit at sea nearby', () => {
+    // Duqm, Oman: a tanker hit offshore (Telegram, at sea) and GDELT coverage
+    // of a strike geocoded to the town 6h later. The land rows must not vanish
+    // into the sea incident, whichever is processed first.
+    const ship = candidate('wfwitness', cls({ place: 'Duqm', countryIso2: 'OM', atSea: true, severity: 'elevated' }), 8 * HOUR);
+    const land = strikes.mapGdeltExportToStrikeCandidates([
+      gdeltRow({ id: '1', fips: 'MU', lat: 19.66, lon: 57.7, numSources: 3, url: 'https://a.example/1', added: '20261019100000', fullName: 'Duqm, Al Wusta, Oman' }),
+      gdeltRow({ id: '2', fips: 'MU', lat: 19.66, lon: 57.7, numSources: 2, url: 'https://b.example/2', added: '20261019100500', fullName: 'Duqm, Al Wusta, Oman' }),
+    ].join('\n'));
+    for (const order of [[ship, ...land], [...land, ship]]) {
+      const out = events(order);
+      assert.deepEqual(out.map((e) => [e.category, e.countryCode]).sort(), [['airstrike', ''], ['gdelt', 'OM']]);
+    }
+    // A Telegram land strike there does absorb the same GDELT rows.
+    const onLand = candidate('wfwitness', cls({ place: 'Duqm', countryIso2: 'OM', severity: 'high' }), 8 * HOUR);
+    assert.deepEqual(events([onLand, ...land]).map((e) => e.countryCode), ['OM']);
+  });
+
   it('keeps strikes on two unlisted villages of one country apart', () => {
     // Neither village is in the gazetteer, so both resolve to the Lebanon centroid.
     const out = events([
@@ -645,6 +670,29 @@ describe('precision: one incident, once, on the country hit, when it happened', 
     assert.deepEqual(strikes.mergeStrikePressure(v1, [], NOW).days, {});
     const v2 = { ...v1, version: 2 };
     assert.deepEqual(strikes.mergeStrikePressure(v2, [], NOW).days, v1.days);
+  });
+
+  it('gives the classifier room for the longest answer it may give, and the relay passes that budget', () => {
+    // The relay's provider chain caps max_tokens at posts x maxTokensPerItem; a
+    // cut answer is unparseable, so a full batch would fail and retry forever.
+    const longest = JSON.stringify({
+      i: 19, isStrike: true, kind: 'intercept', when: 'update', atSea: false,
+      place: 'x'.repeat(80), countryIso2: 'SA', severity: 'critical',
+    });
+    const tokens = Math.ceil(longest.length / 3); // JSON runs about 3 characters a token
+    assert.ok(tokens <= strikes.CLASSIFY_MAX_TOKENS_PER_ITEM, `${tokens} tokens > ${strikes.CLASSIFY_MAX_TOKENS_PER_ITEM}`);
+    assert.ok(tokens > 60, 'the v1 budget of 60 would cut the longest answer');
+    const relay = ts.createSourceFile('ais-relay.cjs', readFileSync(new URL('../scripts/ais-relay.cjs', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
+    const budgets = [];
+    const visit = (node) => {
+      if (ts.isObjectLiteralExpression(node)) {
+        const props = new Map(node.properties.filter(ts.isPropertyAssignment).map((p) => [p.name.getText(relay), p.initializer.getText(relay)]));
+        if (props.get('systemPrompt') === 'middleEastStrikes.STRIKE_CLASSIFIER_PROMPT') budgets.push(props.get('maxTokensPerItem'));
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(relay);
+    assert.deepEqual(budgets, ['middleEastStrikes.CLASSIFY_MAX_TOKENS_PER_ITEM']);
   });
 
   it('asks the classifier for the fields these rules read', () => {

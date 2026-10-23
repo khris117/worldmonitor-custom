@@ -52,6 +52,7 @@ import {
   CII_STRIKE_GDELT_SUSTAINED_DAYS,
   CII_STRIKE_HALF_LIFE_DAYS,
   CII_STRIKE_SEVERITY_WEIGHTS,
+  CII_STRIKE_TALLY_VERSION,
   CII_STRIKE_WINDOW_DAYS,
   STRATEGIC_RISK_POSITIONAL_DECAY,
   STRATEGIC_RISK_SCALE_FACTOR,
@@ -725,13 +726,15 @@ function strikeTallyWeight(tally: unknown): number | null {
 /**
  * Weighted confirmed strikes per Tier-1 country and day from the relay's
  * 30-day tally (conflict:strike-pressure:v1), or null when it is missing,
- * malformed or older than CII_STRIKE_CONFIRMED_MAX_AGE_MS (GDELT then carries
- * every country alone). Countries map like every strike input
+ * malformed, of another version than CII_STRIKE_TALLY_VERSION, or older than
+ * CII_STRIKE_CONFIRMED_MAX_AGE_MS (the 72h window and GDELT then carry every
+ * country). Countries map like every strike input
  * (Gaza to Israel); a non-Tier-1 country scores nowhere.
  */
 export function confirmedStrikeDaysFromSeed(raw: unknown, nowMs: number): Record<string, StrikeDays> | null {
   if (!raw || typeof raw !== 'object') return null;
-  const { days, updatedAt } = raw as Record<string, unknown>;
+  const { days, updatedAt, version } = raw as Record<string, unknown>;
+  if (version !== CII_STRIKE_TALLY_VERSION) return null;
   if (!days || typeof days !== 'object' || Array.isArray(days)) return null;
   const age = nowMs - safeNum(updatedAt);
   if (!(safeNum(updatedAt) > 0 && age <= CII_STRIKE_CONFIRMED_MAX_AGE_MS)) return null;

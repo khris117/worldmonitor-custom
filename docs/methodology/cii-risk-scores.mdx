@@ -145,7 +145,9 @@ Component details that are easy to miss:
     `moderate 0.5`). The relay keeps 30 days of per-country counts by the UTC
     day each incident happened (`conflict:strike-pressure:v1`); the 72h
     window it is built from (`conflict:iran-events:v1`) is read too, and the
-    larger per day wins.
+    larger per day wins. Only a tally of the current version (`version: 2`)
+    is read; an older one is reported unusable, not calm, and the window alone
+    carries the feed until the relay's new tally refills.
     One physical incident counts once, on the country hit, at the time it
     happened: the feed merges every report of one place within 3 hours of
     the first (a late update, such as a death toll or an official

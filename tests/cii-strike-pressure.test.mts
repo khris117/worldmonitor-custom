@@ -21,9 +21,12 @@ import {
   CII_STRIKE_GDELT_SUSTAINED_DAYS,
   CII_STRIKE_HALF_LIFE_DAYS,
   CII_STRIKE_SEVERITY_WEIGHTS,
+  CII_STRIKE_TALLY_VERSION,
   CII_STRIKE_WINDOW_DAYS,
 } from '../server/worldmonitor/intelligence/v1/_risk-config.ts';
 import {
+  assessCiiInputAvailability,
+  buildCiiAuxiliarySources,
   computeCIIScores,
   confirmedStrikeDaysFromEvents,
   confirmedStrikeDaysFromSeed,
@@ -65,7 +68,7 @@ function score(a: any, code: string, acled: any[] = []) {
 
 /** A relay tally snapshot: { date: { CC: [critical, high, elevated, moderate] } }. */
 function tally(days: Record<string, Record<string, [number, number, number, number]>>, updatedAt = NOW - 10 * 60_000) {
-  return { version: 1, days, events: {}, updatedAt };
+  return { version: 2, days, events: {}, updatedAt };
 }
 
 describe('strike pressure decay', () => {
@@ -140,6 +143,21 @@ describe('confirmed strike days', () => {
     assert.equal(days.IL![daysAgo(0)], w.high + w.elevated);
     assert.equal(days.SA![daysAgo(1)], w.moderate);
     assert.equal(days.KW, undefined, 'a non-Tier-1 country scores nowhere');
+  });
+
+  it('reads only the tally version the relay writes; a v1 tally is unknown, not calm', () => {
+    const require = createRequire(import.meta.url);
+    const strikes = require('../scripts/lib/middle-east-strikes.cjs');
+    assert.equal(strikes.PRESSURE_VERSION, CII_STRIKE_TALLY_VERSION, 'the scorer reads the version the relay writes');
+    // A v1 tally counted retrospective posts, duplicates and interceptions.
+    const v1 = { ...tally({ [daysAgo(1)]: { SA: [3, 4, 2, 0] } }), version: 1 };
+    assert.equal(confirmedStrikeDaysFromSeed(v1, NOW), null);
+    assert.equal(confirmedStrikeDaysFromSeed({ ...v1, version: undefined }, NOW), null);
+    assert.ok(confirmedStrikeDaysFromSeed({ ...v1, version: 2 }, NOW));
+    const raw = { strikePressure: v1, iranEvents: { events: [] } };
+    const parsed = buildCiiAuxiliarySources(raw as any, NOW, { iranEventsEnabled: true });
+    assert.equal(parsed.confirmedStrikes, null);
+    assert.equal(assessCiiInputAvailability([], parsed, NOW).strikePressure, 'unusable', 'health must not read a rejected tally as quiet');
   });
 
   it('ignores a stale or malformed tally (the relay stopped), instead of freezing it', () => {

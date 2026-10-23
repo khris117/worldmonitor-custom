@@ -224,11 +224,15 @@ const STRIKE_STEM_RE = new RegExp(STRIKE_TERMS_STEMS.map(gazetteer.normalizePlac
 // earlier) were 46-60% of Saudi Arabia's strike weight, each scored as a new
 // critical strike. The classifier's `when` is the main rule; this list is the
 // deterministic backstop for the phrasing that dominated, matched on
-// normalized text (lowercase, punctuation as spaces).
+// normalized text (lowercase, punctuation as spaces). Every cue names a
+// release of old material; time words alone ("years ago", "anniversary of")
+// also describe context in a report of a new strike, so they stay with the
+// classifier. On the 326 stored posts of 2026-10-20..23 the list matched 13,
+// all retrospective.
 const RETROSPECTIVE_CUES = [
   'previously unseen', 'never before seen', 'never seen before', 'newly obtained', 'newly circulating', 'newly surfaced',
   'leaked footage', 'leaked images', 'leaked video', 'leaked videos', 'leaked photos',
-  'hidden toll', 'whistleblower', 'months ago', 'years ago', 'anniversary of',
+  'hidden toll', 'whistleblower',
   // Persian "unseen images/footage", Arabic "never published before".
   'تصاویر دیده نشده', 'ویدیوی دیده نشده', 'لم تنشر من قبل', 'لم يسبق نشرها',
 ].map(gazetteer.normalizePlaceName);
@@ -757,7 +761,9 @@ function deriveStrikeEvents(candidates, now) {
     const first = incident.members[0];
     // GDELT dates an article, not the attack: coverage of a Telegram-reported
     // incident keeps arriving for up to a day after it.
-    const folded = published.some((p) => p.iso2 === first.iso2
+    // Coverage folds only into an incident on the same side of the shore: a
+    // ship hit offshore must not swallow a strike on the town.
+    const folded = published.some((p) => p.iso2 === first.iso2 && p.sea === (first.sea === true)
       && first.ts - p.ts >= -GDELT_FOLD_WINDOW_MS && first.ts - p.ts <= LATE_REPORT_MS
       && gazetteer.distanceKm(p.lat, p.lon, first.lat, first.lon) <= GDELT_FOLD_KM);
     if (folded || !inWindow(first.ts, now)) continue;
@@ -1086,6 +1092,7 @@ module.exports = {
   PRESSURE_SEED_META_KEY,
   PRESSURE_ACTIVATION_KEY,
   PRESSURE_SOURCE_VERSION,
+  PRESSURE_VERSION,
   PRESSURE_DAYS,
   PRESSURE_SEVERITIES,
   PRESSURE_WEIGHTS,

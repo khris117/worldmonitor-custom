@@ -44,6 +44,7 @@ import {
   CII_STRIKE_GDELT_SUSTAINED_DAYS,
   CII_STRIKE_HALF_LIFE_DAYS,
   CII_STRIKE_SEVERITY_WEIGHTS,
+  CII_STRIKE_TALLY_VERSION,
   CII_STRIKE_WINDOW_DAYS,
   STRATEGIC_RISK_POSITIONAL_DECAY,
   STRATEGIC_RISK_SCALE_FACTOR,
@@ -127,7 +128,7 @@ const CII_PROTOCOL_SNAPSHOT_HASH_BY_VERSION: Record<string, string> = {
   // Each Stage B PR regenerates this entry, and only this one, with the command in
   // docs/methodology/cii-change-brief.md section 3, and says so in its PR body. It
   // is frozen as released when v15 ships.
-  v15: 'dbfde746fb27478461511b21a72c0d5922b40cae005c41b5ab2ed0f20e025675',
+  v15: '268f02f1ce0fbea260326b841edbf75652e58b75fab637bfe953e7362f781f6c',
 };
 
 // The released entries above are a record. This digest of every entry except
@@ -141,7 +142,21 @@ const GUARDED_TOP_LEVEL_SCORE_CONST_NAMES = ['NEWS_THREAT_WEIGHT', 'UCDP_CLASSIF
 const GUARDED_SCORE_FUNCTION_NAMES = [
   'climateSeverityScore', 'deriveUcdpIntensityByRegion', 'computeCIIScores',
   'gdeltStrikeDays', 'strikePressure', 'strikePressureFloor', 'strikePressureBoost',
+  'strikeEventCountry', 'isInterceptStrikeEvent', 'confirmedStrikeDaysFromEvents', 'confirmedStrikeDaysFromSeed',
 ];
+// Strike attribution and counting (CII v15 B3) turn on strings and record
+// shapes, not numeric literals: which events count, for which country, from
+// which tally version. Their whole bodies are hashed, comments removed.
+const GUARDED_STRIKE_READER_NAMES = [
+  'strikeEventCountry', 'isInterceptStrikeEvent', 'confirmedStrikeDaysFromEvents', 'confirmedStrikeDaysFromSeed', 'strikeTallyWeight',
+];
+
+function guardedFunctionSourceSha256(source: string, names: readonly string[]): string {
+  const sourceFile = ts.createSourceFile('get-risk-scores.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  const printer = ts.createPrinter({ removeComments: true });
+  const bodies = names.map((name) => printer.printNode(ts.EmitHint.Unspecified, findFunctionDeclaration(sourceFile, name), sourceFile));
+  return createHash('sha256').update(JSON.stringify(bodies)).digest('hex');
+}
 
 function readRepoFile(path: string): string {
   return readFileSync(resolve(REPO_ROOT, path), 'utf8');
@@ -1927,6 +1942,7 @@ describe('CII scoring', () => {
         CII_STRIKE_GDELT_SUSTAINED_DAYS,
         CII_STRIKE_HALF_LIFE_DAYS,
         CII_STRIKE_SEVERITY_WEIGHTS,
+        CII_STRIKE_TALLY_VERSION,
         CII_STRIKE_WINDOW_DAYS,
         STRATEGIC_RISK_POSITIONAL_DECAY,
         STRATEGIC_RISK_SCALE_FACTOR,
@@ -1936,6 +1952,7 @@ describe('CII scoring', () => {
       scoreFormulaLiterals,
       scoreHelperInputs,
       scoreLevelCutoffs: extractScoreLevelCutoffs(cachedRiskSource, 'getScoreLevel'),
+      strikeReadersSha256: guardedFunctionSourceSha256(getRiskScoresSource, GUARDED_STRIKE_READER_NAMES),
       // Coordinate attribution: which Tier-1 country a fire, jamming hex, quake or strike scores to.
       countryBordersSha256: createHash('sha256').update(readRepoFile('scripts/shared/cii-country-borders.data.mjs')).digest('hex'),
     };
@@ -1950,6 +1967,16 @@ describe('CII scoring', () => {
         ? 'CII coefficient/formula/cutoff snapshot changed. Bump CII_FORMULA_VERSION, update methodology docs/changelogs, and add the new version-keyed snapshot hash.'
         : `CII coefficient/formula/cutoff snapshot changed on the ${CII_SCORED_VERSION} integration branch. Regenerate the ${CII_SCORED_VERSION} entry only, and state the change in the PR body.`,
     );
+  });
+
+  it('CII protocol snapshot guards which strike events count, and for which country', () => {
+    const source = readRepoFile('server/worldmonitor/intelligence/v1/get-risk-scores.ts');
+    const base = guardedFunctionSourceSha256(source, GUARDED_STRIKE_READER_NAMES);
+    assert.ok(source.includes("=== 'defense'"), 'the interception filter this guard pins');
+    assert.notEqual(guardedFunctionSourceSha256(source.replace("=== 'defense'", "=== 'intercept'"), GUARDED_STRIKE_READER_NAMES), base,
+      'changing the interception filter must change the protocol hash');
+    assert.equal(guardedFunctionSourceSha256(source.replace('An interception: the feed maps it', 'An interception, mapped'), GUARDED_STRIKE_READER_NAMES), base,
+      'a comment edit must not');
   });
 
   it('CII protocol snapshot includes guarded top-level score constants and helpers', () => {
@@ -1987,8 +2014,21 @@ describe('CII scoring', () => {
       export function strikePressureBoost(): number {
         return 0;
       }
+      export function strikeEventCountry(): null {
+        return null;
+      }
+      export function isInterceptStrikeEvent(): boolean {
+        return false;
+      }
+      export function confirmedStrikeDaysFromEvents(): number {
+        return 3;
+      }
+      export function confirmedStrikeDaysFromSeed(): number {
+        return 2;
+      }
     `);
     assertFormulaLiteralCovered(literals, 'gdeltStrikeDays', 7, 'return 7');
+    assertFormulaLiteralCovered(literals, 'confirmedStrikeDaysFromSeed', 2, 'return 2');
 
     assertFormulaLiteralCovered(literals, 'UCDP_CLASSIFICATION_WINDOW_MS', 2, '2 * 365');
     assertFormulaLiteralCovered(literals, 'NEWS_THREAT_WEIGHT', 4, 'critical: 4');
