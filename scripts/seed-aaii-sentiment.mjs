@@ -11,12 +11,14 @@ const AAII_HTML_URL = 'https://www.aaii.com/sentimentsurvey';
 
 const CFB_MAGIC = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const CFB_END_OF_CHAIN = 0xFFFFFFFE;
+// sentiment.xls is ~1.3 MB and grows by roughly 20 KB a year; refuse anything far larger.
+const MAX_XLS_BYTES = 32 * 1024 * 1024;
 
 // Read the Workbook stream out of an OLE2 compound file. The stream's sectors
 // follow the FAT chain and are not contiguous, so BIFF records cannot be
 // scanned from the start of the file.
 function readWorkbookStream(bytes) {
-  if (bytes.length < 512 || CFB_MAGIC.some((b, j) => bytes[j] !== b)) return null;
+  if (bytes.length < 512 || bytes.length > MAX_XLS_BYTES || CFB_MAGIC.some((b, j) => bytes[j] !== b)) return null;
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const sectorSize = 1 << dv.getUint16(0x1E, true);
   const numFatSectors = dv.getUint32(0x2C, true);
@@ -25,13 +27,18 @@ function readWorkbookStream(bytes) {
   let difatSector = dv.getUint32(0x44, true);
   const sectorOffset = (n) => (n + 1) * sectorSize;
 
+  // Header fields come from the download; a file cannot hold more sectors than
+  // its length allows, so bound the FAT and the DIFAT walk by that (a DIFAT
+  // sector that points at itself would otherwise expand without limit).
+  const maxSectors = Math.floor(bytes.length / sectorSize);
+  const fatSectorCount = Math.min(numFatSectors, maxSectors);
   const fatSectors = [];
-  for (let j = 0; j < 109 && fatSectors.length < numFatSectors; j++) fatSectors.push(dv.getUint32(0x4C + j * 4, true));
+  for (let j = 0; j < 109 && fatSectors.length < fatSectorCount; j++) fatSectors.push(dv.getUint32(0x4C + j * 4, true));
   const perDifat = sectorSize / 4 - 1;
-  for (let guard = 0; fatSectors.length < numFatSectors && difatSector < CFB_END_OF_CHAIN && guard < 10000; guard++) {
+  for (let guard = 0; fatSectors.length < fatSectorCount && difatSector < CFB_END_OF_CHAIN && guard < maxSectors; guard++) {
     const off = sectorOffset(difatSector);
     if (off + sectorSize > bytes.length) return null;
-    for (let j = 0; j < perDifat && fatSectors.length < numFatSectors; j++) fatSectors.push(dv.getUint32(off + j * 4, true));
+    for (let j = 0; j < perDifat && fatSectors.length < fatSectorCount; j++) fatSectors.push(dv.getUint32(off + j * 4, true));
     difatSector = dv.getUint32(off + perDifat * 4, true);
   }
 
@@ -375,7 +382,10 @@ async function fetchAaiiSentiment() {
       headers: { 'User-Agent': CHROME_UA, Accept: 'application/vnd.ms-excel,*/*' },
       signal: AbortSignal.timeout(15_000),
     });
-    if (resp.ok) {
+    const declared = Number(resp.headers.get('content-length'));
+    if (resp.ok && declared > MAX_XLS_BYTES) {
+      console.warn(`  XLS fetch: ${declared} bytes exceeds ${MAX_XLS_BYTES}`);
+    } else if (resp.ok) {
       const buffer = await resp.arrayBuffer();
       console.log(`  XLS downloaded: ${(buffer.byteLength / 1024).toFixed(0)} KB`);
       const rows = parseXlsRows(buffer);

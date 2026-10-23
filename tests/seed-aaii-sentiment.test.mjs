@@ -208,6 +208,23 @@ describe('AAII Sentiment seed parsing', () => {
       assert.equal(rows[3 + w][6], ((20 + (w % 40)) - (15 + (w % 30))) / 100);
     });
 
+    it('does not expand a self-referencing DIFAT chain past the file size', () => {
+      // 1 KB compound file: header claims a huge FAT whose DIFAT sector points at itself.
+      const buf = new ArrayBuffer(1024);
+      const bytes = new Uint8Array(buf);
+      const dv = new DataView(buf);
+      [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1].forEach((b, j) => { bytes[j] = b; });
+      dv.setUint16(0x1E, 9, true);
+      dv.setUint32(0x2C, 0x7FFFFFFF, true); // numFatSectors
+      dv.setUint32(0x38, 4096, true);
+      dv.setUint32(0x44, 0, true); // first DIFAT sector = 0
+      for (let j = 0; j < 109; j++) dv.setUint32(0x4C + j * 4, 0, true);
+      dv.setUint32(512 + 127 * 4, 0, true); // DIFAT sector 0 chains to itself
+      const started = Date.now();
+      assert.deepEqual(parseXlsRows(buf), []);
+      assert.ok(Date.now() - started < 500, 'DIFAT expansion was not bounded');
+    });
+
     it('rejects a Workbook stream larger than the file', () => {
       const buf = buildAaiiXlsFixture();
       const bytes = new Uint8Array(buf);
