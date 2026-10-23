@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 const { extractSentimentData, parseHtmlSentiment, parseXlsRows, excelDateToISO } = await import('../scripts/seed-aaii-sentiment.mjs');
+const { buildAaiiXlsFixture, FIXTURE_FIRST_SERIAL, FIXTURE_WEEKS } = await import('./helpers/aaii-xls-fixture.mjs');
 
 describe('AAII Sentiment seed parsing', () => {
   describe('excelDateToISO', () => {
@@ -122,6 +123,29 @@ describe('AAII Sentiment seed parsing', () => {
       assert.equal(result[0].spread, -7.3);
     });
 
+    it('extracts the current ssv2 gauge and dates it to the reporting Thursday', () => {
+      const html = `
+        <span class="ssv2-gauge-week">Week ending October 21, 2026</span>
+        <div class="ssv2-slabel bull">Bullish</div><div class="ssv2-snum bull">36.9%</div><div class="ssv2-savg">Avg 37.5%</div>
+        <div class="ssv2-slabel neut">Neutral</div><div class="ssv2-snum neut">17.3%</div><div class="ssv2-savg">Avg 31.0%</div>
+        <div class="ssv2-slabel bear">Bearish</div><div class="ssv2-snum bear">45.8%</div><div class="ssv2-savg">Avg 31.5%</div>
+      `;
+      const result = parseHtmlSentiment(html);
+      assert.deepEqual(result, [{ date: '2026-10-22', bullish: 36.9, neutral: 17.3, bearish: 45.8, spread: -8.9 }]);
+    });
+
+    it('reads ssv2 values by class, not by position', () => {
+      const html = `
+        <div class="ssv2-snum bear">45.8%</div>
+        <div class="ssv2-snum bull">36.9%</div>
+        <div class="ssv2-snum neut">17.3%</div>
+      `;
+      const [row] = parseHtmlSentiment(html);
+      assert.equal(row.bullish, 36.9);
+      assert.equal(row.bearish, 45.8);
+      assert.equal(new Date(row.date + 'T12:00:00Z').getUTCDay(), 4);
+    });
+
     it('returns empty array when fewer than 3 percentages found', () => {
       const html = `<td class="tableTxt">35.7%</td><td class="tableTxt">21.3%</td>`;
       const result = parseHtmlSentiment(html);
@@ -145,6 +169,28 @@ describe('AAII Sentiment seed parsing', () => {
     it('returns empty array for empty buffer', () => {
       const result = parseXlsRows(new ArrayBuffer(0));
       assert.deepEqual(result, []);
+    });
+
+    it('reads the Workbook stream through the FAT chain and extracts every week', () => {
+      const rows = parseXlsRows(buildAaiiXlsFixture());
+      const data = extractSentimentData(rows);
+      assert.equal(data.length, FIXTURE_WEEKS);
+      const last = FIXTURE_WEEKS - 1;
+      assert.equal(data[0].date, excelDateToISO(FIXTURE_FIRST_SERIAL + 7 * last));
+      assert.equal(data[0].bullish, 20 + (last % 40));
+      assert.equal(data[0].bearish, 15 + (last % 30));
+      assert.equal(data.at(-1).date, '1987-07-24');
+    });
+
+    it('reads a shared string split across a CONTINUE record', () => {
+      const rows = parseXlsRows(buildAaiiXlsFixture());
+      assert.deepEqual(rows[2].slice(0, 4), ['Date', 'Bullish', 'Neutral', 'Bearish']);
+    });
+
+    it('skips footer summary rows', () => {
+      const data = extractSentimentData(parseXlsRows(buildAaiiXlsFixture()));
+      assert.ok(data.length > 0);
+      assert.ok(data.every((w) => w.bullish <= 100 && w.bearish <= 100), 'footer counts leaked in as a week');
     });
 
     it('returns empty array for non-XLS data', () => {
