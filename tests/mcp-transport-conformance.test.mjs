@@ -288,26 +288,38 @@ describe('api/mcp.ts — transport conformance over real HTTP', () => {
   // errors the model can read and correct. Older revisions keep the documented
   // -32602 + error.data.violations contract (#6559).
   it('reports invalid tool arguments as an isError result on 2025-11-25 and as -32602 before it', async () => {
-    const badArguments = rpcBody(9, 'tools/call', {
-      name: 'get_tariff_trends', arguments: { dataset: ['tariffs', 'bigmac'], country: 'DE' },
-    });
-    for (const version of ['2025-11-25', '2025-06-18', null]) {
-      const res = await fetch(server.url, {
-        method: 'POST',
-        headers: mcpHeaders({ Accept: 'application/json', ...(version ? { 'MCP-Protocol-Version': version } : {}) }),
-        body: JSON.stringify(badArguments),
-      });
-      assert.equal(res.status, 200, String(version));
-      const body = await res.json();
-      if (version === '2025-11-25') {
-        assert.equal(body.error, undefined, JSON.stringify(body));
-        assert.equal(body.result.isError, true);
-        assert.equal(body.result.structuredContent, undefined);
-        assert.equal(JSON.parse(body.result.content[0].text).violations[0].field, 'dataset');
-      } else {
-        assert.equal(body.result, undefined, String(version));
-        assert.equal(body.error.code, -32602, String(version));
-        assert.equal(body.error.data.violations[0].field, 'dataset', String(version));
+    // Each argument-validation path: alias resolution, the registered tool's
+    // input schema, and a tool-specific argument check.
+    const cases = [
+      ['alias', { name: 'get_tariff_trends', arguments: { dataset: ['tariffs', 'bigmac'], country: 'DE' } },
+        (data) => assert.equal(data.violations[0].field, 'dataset')],
+      ['input schema', { name: 'get_consumer_prices', arguments: { limit: 'many' } },
+        (data) => assert.ok(data.violations.length > 0)],
+      ['tool-specific', { name: 'start_upgrade', arguments: { plan: 'no_such_plan' } },
+        (data) => assert.ok(Array.isArray(data.plans) && data.plans.length > 0)],
+    ];
+    for (const [label, params, checkData] of cases) {
+      for (const version of ['2025-11-25', '2025-06-18', null]) {
+        const res = await fetch(server.url, {
+          method: 'POST',
+          headers: mcpHeaders({ Accept: 'application/json', ...(version ? { 'MCP-Protocol-Version': version } : {}) }),
+          body: JSON.stringify(rpcBody(9, 'tools/call', params)),
+        });
+        const where = `${label} ${version}`;
+        assert.equal(res.status, 200, where);
+        const body = await res.json();
+        if (version === '2025-11-25') {
+          assert.equal(body.error, undefined, `${where}: ${JSON.stringify(body)}`);
+          assert.equal(body.result.isError, true, where);
+          assert.equal(body.result.structuredContent, undefined, where);
+          const payload = JSON.parse(body.result.content[0].text);
+          assert.equal(typeof payload.error, 'string', where);
+          checkData(payload);
+        } else {
+          assert.equal(body.result, undefined, `${where}: ${JSON.stringify(body)}`);
+          assert.equal(body.error.code, -32602, where);
+          checkData(body.error.data);
+        }
       }
     }
 

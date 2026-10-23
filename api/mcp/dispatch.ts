@@ -455,12 +455,14 @@ export async function dispatchToolsCall(
   inputErrorsAsToolResults?: boolean,
 ): Promise<Response> {
   const id = body.id ?? null;
-  const invalidArguments = (violations: unknown): Response => inputErrorsAsToolResults
+  // Every argument-validation failure goes through here. Protocol errors (a
+  // missing or unknown tool name) keep calling rpcError directly.
+  const invalidArguments = (message: string, data?: Record<string, unknown>): Response => inputErrorsAsToolResults
     ? rpcOk(id, {
-      content: [{ type: 'text', text: JSON.stringify({ error: 'Invalid arguments', violations }) }],
+      content: [{ type: 'text', text: JSON.stringify({ error: message, ...data }) }],
       isError: true,
     }, corsHeaders)
-    : rpcError(id, -32602, 'Invalid params', corsHeaders, { violations });
+    : rpcError(id, -32602, message, corsHeaders, data);
   // Only a user-bound caller can call start_upgrade, so only they get a
   // checkout hint. The free allowance is upgraded as free even when a lapsed
   // paid row still carries its old plan key.
@@ -494,7 +496,7 @@ export async function dispatchToolsCall(
       const limited = await applyPerMinuteLimit(context, corsHeaders, toolBurstPerMinute, id);
       if (limited) return limited;
     }
-    return invalidArguments(resolved.violations);
+    return invalidArguments('Invalid params', { violations: resolved.violations });
   }
   const tool = resolved.tool;
   const notice = resolved.kind === 'alias' ? resolved.notice : null;
@@ -526,7 +528,7 @@ export async function dispatchToolsCall(
     }
     if (Object.keys(p.arguments ?? {}).some(key => key !== 'jmespath')
       || (p.arguments?.jmespath !== undefined && typeof p.arguments.jmespath !== 'string')) {
-      return rpcError(id, -32602, 'Allowance status accepts only the optional jmespath projection.', corsHeaders);
+      return invalidArguments('Allowance status accepts only the optional jmespath projection.');
     }
   }
 
@@ -543,12 +545,12 @@ export async function dispatchToolsCall(
     // only copy of checkoutUrl. The result is three small fields anyway.
     const upgradeArgs = p.arguments ?? {};
     if (Object.keys(upgradeArgs).some(key => key !== 'plan')) {
-      return rpcError(id, -32602, 'start_upgrade accepts only plan; it takes no jmespath projection.', corsHeaders);
+      return invalidArguments('start_upgrade accepts only plan; it takes no jmespath projection.');
     }
     const plan = typeof upgradeArgs.plan === 'string' ? upgradeArgs.plan : '';
     const productId = checkoutProductIdForPlan(plan);
     if (!productId) {
-      return rpcError(id, -32602, 'Unknown plan. Pass one of the self-serve plans listed in data.plans.', corsHeaders, { plans: MCP_CHECKOUT_PLANS });
+      return invalidArguments('Unknown plan. Pass one of the self-serve plans listed in data.plans.', { plans: MCP_CHECKOUT_PLANS });
     }
     const upgrade = await startUpgradeCheckout(deps.createCheckout, context.userId, plan, productId, id, corsHeaders, ctx);
     if (upgrade instanceof Response) return upgrade;
@@ -597,7 +599,7 @@ export async function dispatchToolsCall(
       const limited = await applyPerMinuteLimit(context, corsHeaders, toolBurstPerMinute, id);
       if (limited) return limited;
     }
-    return rpcError(id, -32602, 'Invalid params', corsHeaders, { violations: error.violations });
+    return invalidArguments('Invalid params', { violations: error.violations });
   }
 
   let panelRequest: PaidPanelAdmission | undefined;
@@ -1278,7 +1280,7 @@ export async function dispatchToolsCall(
     // `error.code === -32602` and `error.data.violations[]`. A 2025-11-25+
     // tools/call gets the same violations in an `isError` result (SEP-1303).
     if (err instanceof RpcValidationError) {
-      return invalidArguments(err.violations);
+      return invalidArguments('Invalid params', { violations: err.violations });
     }
     return rpcError(id, -32603, 'Internal error: data fetch failed', corsHeaders);
   }
