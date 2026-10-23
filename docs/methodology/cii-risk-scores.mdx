@@ -247,9 +247,7 @@ Component details that are easy to miss:
   estimate, at least one per event, decayed with a half-life of a quarter of the
   window (91.25 days), and the sum is divided by the country's population (UN
   World Population Prospects 2024, 2026 medium variant, frozen in
-  `CII_POPULATION_MILLIONS`; the Israel row adds the State of Palestine,
-  because it scores Gaza and the West Bank, which UCDP also codes as Israel)
-  and by the decay kernel, so it reads as deaths per
+  `CII_POPULATION_MILLIONS`) and by the decay kernel, so it reads as deaths per
   million people per year: `R = Σ max(deathsBest, events) · 0.5^(age / 91.25) / (kernelYears · populationMillions)`.
   The term is `70 · min(1, ln(1 + R / 1.25) / ln(1 + 100 / 1.25))`: the World
   Bank's FCS thresholds for UCDP data (medium-intensity conflict from 1, high
@@ -260,6 +258,13 @@ Component details that are easy to miss:
   score by 20 points and population did not count. Age runs from build time, so
   UCDP's publication lag (a month or more) discounts every country alike; a
   monthly candidate release moves a steady country's term by about 20%.
+  An event scores the place it happens. UCDP GED codes Gaza and West Bank
+  events with country "Israel" and names the territory in its admin-1 field;
+  the writers attribute those rows to Palestine, which is not one of the 31
+  scored countries, so they feed no row and Israel's term counts events inside
+  Israel over Israel's own population. Other CII inputs still place Gaza and
+  the West Bank in the Israel row (coordinate attribution, the strike feed's
+  `PS` code, the news keyword `gaza`); aligning them is Stage C work.
   The UCDP writers fetch the whole window: the annual GED release by date (the
   API's `StartDate`/`EndDate` filters) and every monthly GED Candidate release
   after the annual year, each of which holds one month. They publish

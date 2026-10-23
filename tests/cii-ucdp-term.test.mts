@@ -3,6 +3,7 @@
 // and the cache window is checked at read time (P9).
 // See CII_UCDP_* in server/worldmonitor/intelligence/v1/_risk-config.ts.
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
 import { describe, it } from 'node:test';
 
 import { assessCiiInputs } from '../api/_cii-input-health.js';
@@ -21,6 +22,8 @@ import {
 } from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
 import * as riskConfig from '../server/worldmonitor/intelligence/v1/_risk-config.ts';
 import { TIER1_COUNTRIES } from '../server/worldmonitor/intelligence/v1/_shared.ts';
+
+const { summarizeUcdpWindow, ucdpLocatedCountry } = createRequire(import.meta.url)('../scripts/shared/ucdp-candidate.cjs');
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const NOW = Date.UTC(2026, 9, 23, 9, 46);
@@ -190,5 +193,37 @@ describe('CII UCDP read-time window check (P9)', () => {
     assert.ok(verdict.dead.some((d: any) => d.id === 'ucdp' && d.state === 'short_window' && d.window.gapMonths.length === 8));
     const honest = withCiiInputQuietClocks(states, null, f.nowMs, { ucdp: { ...windows.ucdp!, honest: true, gapMonths: [] } });
     assert.equal(assessCiiInputs({ inputs: honest }, f.nowMs).states.ucdp, 'live');
+  });
+});
+
+describe('CII UCDP term: events score where they happen (owner ruling, 2026-10-23)', () => {
+  // UCDP GED codes Gaza and West Bank events with country "Israel" (country_id
+  // 666) and puts the territory in adm_1. The writers attribute by location, so
+  // those events feed Palestine, which is not one of the 31 scored countries.
+  const day = Math.floor((NOW - 10 * DAY_MS) / DAY_MS);
+  const raw = (adm1: string, best: number) => ({ id: `${adm1}-${best}`, country: 'Israel', adm_1: adm1, date_start: new Date(day * DAY_MS).toISOString().slice(0, 10), best });
+  const ratesFromRawRows = (rows: Array<ReturnType<typeof raw>>) => {
+    const located = rows.map((e) => ({ country: ucdpLocatedCountry(e), dateStart: Date.parse(e.date_start), deathsBest: e.best }));
+    const summary = summarizeUcdpWindow(located, { startMs: NOW - 365 * DAY_MS, endMs: NOW });
+    return ucdpViolenceRates(parseUcdpCache({ events: [], ...summary }).rows, NOW);
+  };
+
+  it('a Gaza or West Bank event raises no Israeli term', () => {
+    assert.equal(ucdpLocatedCountry(raw('Gaza Strip', 50)), 'Palestine');
+    assert.equal(ucdpLocatedCountry(raw('West Bank', 5)), 'Palestine');
+    assert.equal(ratesFromRawRows([raw('Gaza Strip', 50), raw('West Bank', 5)]).IL, undefined);
+  });
+
+  it('an event inside Israel raises the Israeli term', () => {
+    assert.equal(ucdpLocatedCountry(raw('Southern district', 3)), 'Israel');
+    assert.ok(ratesFromRawRows([raw('Southern district', 3)]).IL! > 0);
+  });
+
+  it("Israel's per-capita rate uses Israel's population only", () => {
+    const { CII_POPULATION_MILLIONS: POP, CII_UCDP_HALF_LIFE_DAYS: H, CII_UCDP_WINDOW_DAYS: W } = riskConfig;
+    assert.ok(Math.abs(POP.IL! - 9.65) < 0.01, `IL population ${POP.IL} must be Israel's own (UN WPP 2024: 9.65M)`);
+    const kernelYears = (H / Math.LN2) * (1 - 0.5 ** (W / H)) / 365;
+    const rate = ucdpViolenceRates([{ country: 'Israel', deathsBest: 100, dateStart: NOW }], NOW).IL!;
+    assert.ok(Math.abs(rate - 100 / (kernelYears * 9.65)) < 1e-6, `rate ${rate}`);
   });
 });

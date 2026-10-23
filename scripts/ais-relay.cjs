@@ -2977,6 +2977,7 @@ const {
   fetchAnnualWindow: ucdpFetchAnnualWindow,
   fetchCandidateWindow: ucdpFetchCandidateWindow,
   summarizeUcdpWindow: ucdpSummarizeWindow,
+  ucdpLocatedCountry,
 } = require('./shared/ucdp-candidate.cjs');
 // The capped `events` slice for the map, the RPC and MCP. The CII reads the
 // whole window from `countryDays` instead.
@@ -3187,7 +3188,9 @@ async function seedUcdpEvents() {
     // The whole window, aggregated per country and day, for the CII (the capped
     // `events` slice is the map's, the RPC's and MCP's).
     const windowStartMs = latestMs - UCDP_TRAILING_WINDOW_MS;
-    const summary = ucdpSummarizeWindow(mapped, { startMs: windowStartMs, endMs: latestMs });
+    // Aggregated by where each event happened (ucdpLocatedCountry), not UCDP's country code.
+    const located = filtered.map((e) => ({ country: ucdpLocatedCountry(e), dateStart: Date.parse(e.date_start) || 0, deathsBest: Number(e.best) || 0 }));
+    const summary = ucdpSummarizeWindow(located, { startMs: windowStartMs, endMs: latestMs });
     if (summary.gapMonths.length) console.warn(`[UCDP] Window has empty months before later data: ${summary.gapMonths.join(', ')}`);
     const window = {
       startMs: windowStartMs,

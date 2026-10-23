@@ -37,6 +37,7 @@ describe('UCDP retained window equals the window the CII term assumes (P9)', () 
       assert.match(src, new RegExp(`${prefix ? 'ucdpFetchCandidateWindow' : 'fetchCandidateWindow'}\\(`), `${name} must fetch every candidate month`);
       assert.match(src, /countryDays: summary\.countryDays/, `${name} must publish the per-country day aggregates the CII reads`);
       assert.match(src, /windowGapMonths/, `${name} must publish the window's gap months into seed-meta`);
+      assert.match(src, /country: ucdpLocatedCountry\(e\)/, `${name} must aggregate by where each event happened (Gaza and the West Bank are not Israel)`);
     }
     assert.match(standaloneSeed, /const MAX_EVENTS = 2000;/, 'the capped events slice for the map and the RPC changed; update the docs deliberately');
     assert.match(relay, /const UCDP_MAX_EVENTS = 2000;/, 'the capped events slice for the map and the RPC changed; update the docs deliberately');

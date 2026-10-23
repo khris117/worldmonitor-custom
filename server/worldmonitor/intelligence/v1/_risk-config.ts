@@ -217,6 +217,9 @@ export const CII_STRIKE_BOOST_CAP = 10;
  *    from 1 and high intensity above 10 conflict deaths per 100,000 people a
  *    year, i.e. 10 and 100 per million) at half the cap and at the cap:
  *    solving ln(1 + 10/k) = ln(1 + 100/k) / 2 gives k = 1.25.
+ *  - Rows are counted where the event happened: the UCDP writers attribute
+ *    Gaza and West Bank events, which UCDP codes as Israel, to Palestine
+ *    (no scored row), so Israel's term uses events in Israel only.
  *  - CONFLICT_CAP equals the other sources' caps inside Conflict
  *    (CII_CONFLICT_ACTIVITY_CAP, CII_GDELT_ESCALATION_CAP).
  * docs/methodology/cii-risk-scores.mdx reports the range of each constant over
@@ -247,13 +250,13 @@ export const CII_UCDP_MIN_MONTH_SHARE = 0.25;
  * 2026-10-23. Frozen: population moves about 1% a year, and a frozen table
  * keeps the score reproducible from its fixtures. One source for all 31
  * countries: IMF WEO (economic:imf:labor:v1) has no row for KP, SY, CU or IQ.
- * Each row's population covers the territory the row scores: the Israel row
- * counts Gaza and the West Bank (coordinate attribution, and UCDP codes events
- * there as Israel), so IL is Israel 9.65 plus the State of Palestine 5.69.
+ * Israel is Israel's own population: UCDP events in Gaza and the West Bank
+ * score Palestine, where they happened (the UCDP writers attribute them by
+ * UCDP's admin-1 field), and Palestine is not a scored country.
  */
 export const CII_POPULATION_MILLIONS: Readonly<Record<string, number>> = {
   AE: 11.57, AF: 45.05, BR: 213.56, CN: 1412.91, CU: 10.89, DE: 83.64, EG: 120.10,
-  FR: 66.75, GB: 69.93, IL: 15.34, IN: 1476.63, IQ: 48.01, IR: 93.17, JP: 122.43,
+  FR: 66.75, GB: 69.93, IL: 9.65, IN: 1476.63, IQ: 48.01, IR: 93.17, JP: 122.43,
   KP: 26.63, KR: 51.60, LB: 5.90, MM: 55.18, MX: 133.00, PK: 259.30, PL: 37.84,
   QA: 3.17, RU: 143.39, SA: 35.17, SY: 26.47, TR: 87.93, TW: 23.01, UA: 39.54,
   US: 349.04, VE: 28.63, YE: 42.96,

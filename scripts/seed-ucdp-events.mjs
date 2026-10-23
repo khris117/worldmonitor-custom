@@ -22,6 +22,7 @@ const {
   fetchAnnualWindow,
   fetchCandidateWindow,
   summarizeUcdpWindow,
+  ucdpLocatedCountry,
 } = ucdpCandidate;
 
 const REDIS_KEY = 'conflict:ucdp-events:v1';
@@ -294,7 +295,9 @@ async function main() {
   // The whole window, aggregated per country and day, for the CII (the capped
   // `events` slice is the map's and the RPC's).
   const windowStartMs = latestDatasetMs - TRAILING_WINDOW_MS;
-  const summary = summarizeUcdpWindow(mapped, { startMs: windowStartMs, endMs: latestDatasetMs });
+  // Aggregated by where each event happened (ucdpLocatedCountry), not UCDP's country code.
+  const located = filtered.map((e) => ({ country: ucdpLocatedCountry(e), dateStart: Date.parse(e.date_start) || 0, deathsBest: Number(e.best) || 0 }));
+  const summary = summarizeUcdpWindow(located, { startMs: windowStartMs, endMs: latestDatasetMs });
   if (summary.gapMonths.length) console.warn(`  Window has empty months before later data: ${summary.gapMonths.join(', ')}`);
 
   const payload = {

@@ -281,6 +281,19 @@ async function fetchCandidateWindow(fetchPage, newest, { fromMs }) {
   };
 }
 
+// An event scores the place it happens (owner ruling, 2026-10-23). UCDP GED
+// codes events by the state in conflict, so Gaza and West Bank events carry
+// country "Israel" (country_id 666); UCDP's own admin-1 field says where they
+// happened. The aggregates the CII reads attribute those rows by that field.
+// Palestine is not a CII Tier-1 country, so they feed no scored row.
+const UCDP_ADM1_TERRITORIES = Object.freeze({ 'gaza strip': 'Palestine', 'west bank': 'Palestine' });
+
+/** The country an event happened in: UCDP's country, unless its admin-1 unit is a territory listed above. */
+function ucdpLocatedCountry(event) {
+  const adm1 = String(event?.adm_1 || '').trim().toLowerCase();
+  return Object.hasOwn(UCDP_ADM1_TERRITORIES, adm1) ? UCDP_ADM1_TERRITORIES[adm1] : (event?.country || '');
+}
+
 function utcMonth(ms) {
   return new Date(ms).toISOString().slice(0, 7);
 }
@@ -371,4 +384,5 @@ module.exports = {
   fetchAnnualWindow,
   fetchCandidateWindow,
   summarizeUcdpWindow,
+  ucdpLocatedCountry,
 };
