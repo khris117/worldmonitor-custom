@@ -256,28 +256,55 @@ async function fetchAnnualWindow(fetchPage, version, { nowMs = Date.now() } = {}
   return { events, failedPages, totalPages, truncated: totalPages > ANNUAL_WINDOW_MAX_PAGES, startDate: query.StartDate, endDate: query.EndDate };
 }
 
+// The API answers a version it has not published with HTTP 400 (checked
+// 2026-10-23 on 26.0.10); a 404 would mean the same. Anything else (timeout,
+// network, 5xx) is our fetch failing, which must make the window incomplete.
+const UNPUBLISHED_STATUSES = new Set([400, 404]);
+
+function candidateMonth(version) {
+  const parsed = parseCandidateVersion(version);
+  return parsed ? `${parsed.year}-${String(parsed.month).padStart(2, '0')}` : null;
+}
+
 /**
  * Every monthly candidate release from the month containing fromMs through the
- * newest one (already discovered, its first page in hand), oldest first. A
- * release that is unpublished or fails is reported, never silently skipped.
+ * newest one (already discovered, its first page in hand), oldest first.
+ * - A release UCDP has not published (HTTP 400/404, or no rows) is an upstream
+ *   gap: reported in unpublishedReleases/unpublishedMonths, it does not make
+ *   the window incomplete, so a month UCDP skips cannot alarm for a year.
+ * - A release that fails to fetch is reported in missingReleases and makes the
+ *   window incomplete.
+ * - Rows dated before fromMs are dropped. fromMs starts after the annual
+ *   release's last year, and a candidate's late revision of an event in that
+ *   year can carry a different id from the annual's record of it (14-19% of
+ *   candidate ids did not survive into annual 26.1 for Nov-Dec 2025), so the
+ *   annual release alone counts those dates.
  */
 async function fetchCandidateWindow(fetchPage, newest, { fromMs }) {
   const versions = candidateVersionsSince(fromMs, newest.version).filter((v) => v !== newest.version);
+  const absent = (version, unpublished) => ({ version, missing: !unpublished, unpublished, events: [], complete: unpublished, truncated: false, failedPages: 0 });
   const older = await mapWithConcurrency(versions, WINDOW_FETCH_CONCURRENCY, async (version) => {
     try {
       const first = await fetchPage(version, 0, CANDIDATE_DISCOVER_TIMEOUT_MS);
-      if (!hasResults(first)) return { version, missing: true, events: [], complete: false, truncated: false, failedPages: 0 };
-      return { version, missing: false, ...(await fetchCandidatePages(fetchPage, { version, first })) };
-    } catch {
-      return { version, missing: true, events: [], complete: false, truncated: false, failedPages: 0 };
+      if (!hasResults(first)) return absent(version, true);
+      return { version, missing: false, unpublished: false, ...(await fetchCandidatePages(fetchPage, { version, first })) };
+    } catch (err) {
+      return absent(version, UNPUBLISHED_STATUSES.has(Number(err?.status)));
     }
   });
-  const newestRelease = { version: newest.version, missing: false, ...(await fetchCandidatePages(fetchPage, newest)) };
-  const releases = [...older, newestRelease];
+  const newestRelease = { version: newest.version, missing: false, unpublished: false, ...(await fetchCandidatePages(fetchPage, newest)) };
+  const inWindow = (event) => {
+    const ms = Date.parse(String(event?.date_start || ''));
+    return !Number.isFinite(fromMs) || !Number.isFinite(ms) || ms >= fromMs;
+  };
+  const releases = [...older, newestRelease].map((r) => ({ ...r, events: r.events.filter(inWindow) }));
+  const unpublished = releases.filter((r) => r.unpublished);
   return {
     releases,
-    complete: releases.every((r) => !r.missing && r.complete && !r.truncated),
+    complete: releases.every((r) => r.unpublished || (!r.missing && r.complete && !r.truncated)),
     missingReleases: releases.filter((r) => r.missing).map((r) => r.version),
+    unpublishedReleases: unpublished.map((r) => r.version),
+    unpublishedMonths: unpublished.map((r) => candidateMonth(r.version)).filter(Boolean),
   };
 }
 
@@ -309,9 +336,11 @@ function utcMonth(ms) {
  *  - months and gapMonths: events per calendar month of the window, and the
  *    months that are empty or nearly so (WINDOW_MIN_MONTH_SHARE) while a later
  *    month has rows: a missing release. A first month with under
- *    WINDOW_MIN_MONTH_OVERLAP_DAYS inside the window is not checked.
+ *    WINDOW_MIN_MONTH_OVERLAP_DAYS inside the window is not checked. Months
+ *    listed in upstreamGapMonths (releases UCDP never published) are reported
+ *    there instead of in gapMonths.
  */
-function summarizeUcdpWindow(mappedEvents, { startMs, endMs }) {
+function summarizeUcdpWindow(mappedEvents, { startMs, endMs, upstreamGapMonths = [] }) {
   const byCountry = new Map();
   const daily = new Map();
   const months = {};
@@ -352,9 +381,13 @@ function summarizeUcdpWindow(mappedEvents, { startMs, endMs }) {
   const rates = Object.fromEntries(monthKeys.map((month) => [month, months[month] / overlapDays(month)]));
   const nonEmpty = monthKeys.map((month) => rates[month]).filter((rate) => rate > 0).sort((a, b) => a - b);
   const median = nonEmpty.length ? nonEmpty[Math.floor(nonEmpty.length / 2)] : 0;
-  const gapMonths = monthKeys.filter((month, i) => rates[month] < WINDOW_MIN_MONTH_SHARE * median
+  const thin = monthKeys.filter((month, i) => rates[month] < WINDOW_MIN_MONTH_SHARE * median
     && monthKeys.slice(i + 1).some((later) => months[later] > 0)
     && !(i === 0 && overlapDays(month) < WINDOW_MIN_MONTH_OVERLAP_DAYS));
+  // A month whose release UCDP never published is an upstream gap: reported,
+  // but not a failure of this fetch.
+  const upstream = new Set(upstreamGapMonths);
+  const gapMonths = thin.filter((month) => !upstream.has(month));
   const countryDays = {};
   for (const [name, days] of [...byCountry.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     countryDays[name] = [...days.values()].sort((a, b) => a[0] - b[0]);
@@ -364,6 +397,7 @@ function summarizeUcdpWindow(mappedEvents, { startMs, endMs }) {
     dailyTotals: [...daily.entries()].sort((a, b) => a[0] - b[0]),
     months,
     gapMonths,
+    upstreamGapMonths: thin.filter((month) => upstream.has(month)),
   };
 }
 

@@ -386,14 +386,23 @@ export interface CiiUcdpRow { country?: string; location?: string; dateStart: nu
  * payload without it). A release with a failed page can leave a month dense
  * enough to pass the read-time check while the writers know it is short.
  */
-export function parseUcdpCache(raw: unknown): { rows: CiiUcdpRow[]; dailyTotals: Record<string, number> | null; writerComplete: boolean | null } {
+export function parseUcdpCache(raw: unknown): {
+  rows: CiiUcdpRow[];
+  dailyTotals: Record<string, number> | null;
+  writerComplete: boolean | null;
+  /** Months whose monthly release UCDP never published (the writers' `window.upstreamGapMonths`). */
+  upstreamGapMonths: string[];
+} {
   const payload = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
   const countryDays = payload?.countryDays;
   const window = payload?.window && typeof payload.window === 'object' ? payload.window as Record<string, unknown> : null;
   const writerComplete = typeof window?.complete === 'boolean' ? window.complete : null;
+  const upstreamGapMonths = Array.isArray(window?.upstreamGapMonths)
+    ? (window.upstreamGapMonths as unknown[]).filter((m): m is string => typeof m === 'string' && /^\d{4}-\d{2}$/.test(m))
+    : [];
   if (!countryDays || typeof countryDays !== 'object' || Array.isArray(countryDays)) {
     const events = Array.isArray(raw) ? raw : Array.isArray(payload?.events) ? payload.events : [];
-    return { rows: (events as CiiUcdpRow[]).slice(0, 10000), dailyTotals: null, writerComplete };
+    return { rows: (events as CiiUcdpRow[]).slice(0, 10000), dailyTotals: null, writerComplete, upstreamGapMonths };
   }
   const rows: CiiUcdpRow[] = [];
   for (const [country, days] of Object.entries(countryDays as Record<string, unknown>)) {
@@ -410,7 +419,7 @@ export function parseUcdpCache(raw: unknown): { rows: CiiUcdpRow[]; dailyTotals:
     const dayIndex = Array.isArray(entry) ? finiteNumber(entry[0]) : null;
     if (dayIndex !== null) dailyTotals[String(dayIndex)] = safeNonNegativeNum(entry[1]);
   }
-  return { rows, dailyTotals: Object.keys(dailyTotals).length ? dailyTotals : null, writerComplete };
+  return { rows, dailyTotals: Object.keys(dailyTotals).length ? dailyTotals : null, writerComplete, upstreamGapMonths };
 }
 
 /** Age in days, or null when the row is undated, in the future or outside the window. */
@@ -467,6 +476,8 @@ export interface CiiUcdpWindow {
   gapMonths: string[];
   /** The writers' own verdict on their fetch (`window.complete`), null when the payload has none. */
   writerComplete: boolean | null;
+  /** Near-empty months whose release UCDP never published: reported, not a failure of the cache. */
+  upstreamGapMonths: string[];
   honest: boolean;
 }
 
@@ -480,6 +491,7 @@ export function assessUcdpWindow(
   dailyTotals: Record<string, number> | null | undefined,
   nowMs: number,
   writerComplete: boolean | null = null,
+  upstreamGapMonths: readonly string[] = [],
 ): CiiUcdpWindow {
   const perDay = new Map<number, number>();
   const add = (day: number, events: number) => perDay.set(day, (perDay.get(day) ?? 0) + events);
@@ -496,7 +508,7 @@ export function assessUcdpWindow(
   }
   const days = [...perDay.keys()].sort((a, b) => a - b);
   const nowDay = Math.floor(nowMs / CII_DAY_MS);
-  if (!days.length) return { assumedDays: CII_UCDP_WINDOW_DAYS, oldestAgeDays: null, newestAgeDays: null, gapMonths: [], writerComplete, honest: false };
+  if (!days.length) return { assumedDays: CII_UCDP_WINDOW_DAYS, oldestAgeDays: null, newestAgeDays: null, gapMonths: [], writerComplete, upstreamGapMonths: [], honest: false };
   const first = days[0]!;
   const last = days[days.length - 1]!;
   // Events per covered day for each calendar month between the first and last day.
@@ -511,9 +523,13 @@ export function assessUcdpWindow(
   // The median over months that hold events: missing months must not set the bar they are measured against.
   const rates = [...months.values()].map((m) => m.events / m.days).filter((r) => r > 0).sort((a, b) => a - b);
   const median = rates[Math.floor(rates.length / 2)]!;
-  const gapMonths = [...months.entries()]
+  const thinMonths = [...months.entries()]
     .filter(([, m]) => m.events / m.days < CII_UCDP_MIN_MONTH_SHARE * median)
     .map(([month]) => month);
+  // A month UCDP never published is an upstream gap, not a short cache: it is
+  // reported apart and does not fail the check, or it would alarm for a year.
+  const upstream = new Set(upstreamGapMonths);
+  const gapMonths = thinMonths.filter((month) => !upstream.has(month));
   const oldestAgeDays = nowDay - first;
   const newestAgeDays = nowDay - last;
   return {
@@ -522,6 +538,7 @@ export function assessUcdpWindow(
     newestAgeDays,
     gapMonths,
     writerComplete,
+    upstreamGapMonths: thinMonths.filter((month) => upstream.has(month)),
     honest: gapMonths.length === 0
       && writerComplete !== false
       && newestAgeDays <= CII_UCDP_MAX_LAG_DAYS
@@ -952,6 +969,8 @@ export interface AuxiliarySources {
   ucdpDailyTotals?: Record<string, number> | null;
   /** The UCDP writers' `window.complete`; null for a payload without it. */
   ucdpWriterComplete?: boolean | null;
+  /** Months whose UCDP release was never published (`window.upstreamGapMonths`). */
+  ucdpUpstreamGapMonths?: string[];
   outages: any[];
   climate: any[];
   // Detections inside each Tier-1 country, from wildfire:fires-summary:v1
@@ -1314,6 +1333,7 @@ export function buildCiiAuxiliarySources(
     ucdpEvents: ucdp.rows,
     ucdpDailyTotals: ucdp.dailyTotals,
     ucdpWriterComplete: ucdp.writerComplete,
+    ucdpUpstreamGapMonths: ucdp.upstreamGapMonths,
     outages: arr(outagesRaw, 'outages'),
     climate: arr(climateRaw, 'anomalies'),
     fires: parseWildfireFiresSummary(firesRaw)?.byCountry ?? null,
@@ -1374,7 +1394,7 @@ export type CiiInputWindows = Partial<Record<CiiInputId, CiiUcdpWindow>>;
 
 export function assessCiiInputWindows(aux: AuxiliarySources, nowMs: number): CiiInputWindows {
   return aux.inputReads?.ucdp === 'present'
-    ? { ucdp: assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, nowMs, aux.ucdpWriterComplete ?? null) }
+    ? { ucdp: assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, nowMs, aux.ucdpWriterComplete ?? null, aux.ucdpUpstreamGapMonths ?? []) }
     : {};
 }
 
@@ -1771,9 +1791,12 @@ export function computeCIIScores(
       ? 25 + Math.min(25, d.orefAlertCount * 5)
       : 0;
     const ucdpViolence = ucdpViolenceScore(d.ucdpRate);
+    // One violence family: ACLED, GDELT conflict coverage and UCDP deaths report
+    // the same war, so they merge by max, never by sum (brief, P6). OREF rocket
+    // alerts are a separate signal and add on top.
     const conflict = Math.min(
       100,
-      acledScore + fatalityScore + civilianBoost + orefBoost + d.gdeltConflictEscalation + ucdpViolence,
+      Math.max(acledScore + fatalityScore + civilianBoost, d.gdeltConflictEscalation, ucdpViolence) + orefBoost,
     );
 
     // --- Security score (Phase 3b / decision C3 — full 4-input calcSecurityScore) ---

@@ -77,7 +77,9 @@ async function fetchGedPage(version, page, token, timeoutMs = 90_000, query = {}
     `https://ucdpapi.pcr.uu.se/api/gedevents/${version}?${params}`,
     { headers, signal: AbortSignal.timeout(timeoutMs) },
   );
-  if (!resp.ok) throw new Error(`UCDP GED API error (${version}, page ${page}): ${resp.status}`);
+  // The status rides on the error: the window fetch tells an unpublished
+  // release (400/404) from a failed one.
+  if (!resp.ok) throw Object.assign(new Error(`UCDP GED API error (${version}, page ${page}): ${resp.status}`), { status: resp.status });
   return resp.json();
 }
 
@@ -208,6 +210,8 @@ async function main() {
   let candidateComplete = false;
   let windowReleases = [version];
   let missingReleases = [];
+  let unpublishedReleases = [];
+  let unpublishedMonths = [];
   const candidateIds = new Set();
   try {
     const candidate = await discoverCandidateVersion(ucdpToken);
@@ -220,6 +224,9 @@ async function main() {
       candidateComplete = merged.complete;
       candidateVersion = candidateComplete ? candidate.version : `${candidate.version}+partial`;
       missingReleases = merged.missingReleases;
+      unpublishedReleases = merged.unpublishedReleases;
+      unpublishedMonths = merged.unpublishedMonths;
+      if (unpublishedReleases.length) console.warn(`  UCDP has not published candidate release(s) ${unpublishedReleases.join(', ')}: an upstream gap, not a failed fetch`);
       windowReleases = [version, ...merged.releases.map((r) => r.version)];
       if (!candidateComplete) {
         console.warn(`  candidate window ${merged.releases[0].version}..${candidate.version}: incomplete (missing: ${missingReleases.join(', ') || 'none'}; failed or truncated pages) — publishing as partial`);
@@ -297,7 +304,7 @@ async function main() {
   const windowStartMs = latestDatasetMs - TRAILING_WINDOW_MS;
   // Aggregated by where each event happened (ucdpLocatedCountry), not UCDP's country code.
   const located = filtered.map((e) => ({ country: ucdpLocatedCountry(e), dateStart: Date.parse(e.date_start) || 0, deathsBest: Number(e.best) || 0 }));
-  const summary = summarizeUcdpWindow(located, { startMs: windowStartMs, endMs: latestDatasetMs });
+  const summary = summarizeUcdpWindow(located, { startMs: windowStartMs, endMs: latestDatasetMs, upstreamGapMonths: unpublishedMonths });
   if (summary.gapMonths.length) console.warn(`  Window has empty months before later data: ${summary.gapMonths.join(', ')}`);
 
   const payload = {
@@ -314,9 +321,11 @@ async function main() {
       endMs: latestDatasetMs,
       months: summary.months,
       gapMonths: summary.gapMonths,
+      upstreamGapMonths: summary.upstreamGapMonths,
       complete: candidateComplete && failedPages === 0 && !annual.truncated && summary.gapMonths.length === 0,
       releases: windowReleases,
       missingReleases,
+      unpublishedReleases,
     },
   };
 

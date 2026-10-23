@@ -31,6 +31,11 @@ function eventsBetween(startMs, endMs, release, perDay = 40) {
   return out;
 }
 
+/** An error shaped like the writers' transports: the HTTP status rides on `status`. */
+function httpError(status, message) {
+  return Object.assign(new Error(message), { status });
+}
+
 function mockApi({ missing = new Set(), failing = new Set() } = {}) {
   const releases = new Map();
   // Annual 26.1: 2024-2025, shuffled so its pages are not in date order.
@@ -43,14 +48,19 @@ function mockApi({ missing = new Set(), failing = new Set() } = {}) {
     const rows = eventsBetween(Date.UTC(2026, month - 1, 1), Date.UTC(2026, month, 0), version);
     // A late revision of an event the previous release already carried.
     if (month > 1) rows.push({ id: `26.0.${month - 1}-${iso(Date.UTC(2026, month - 2, 1))}-0`, date_start: iso(Date.UTC(2026, month - 2, 1)), country: 'Mexico', best: 9 });
+    // January's release also re-issues, under a new id, an event the annual
+    // release already holds (2025-12-30, the annual's last year): candidate ids
+    // do not always survive into the annual, nor annual rows into a candidate.
+    if (month === 1) rows.push({ id: 'candidate-reissue-2025-12-30', date_start: '2025-12-30', country: 'Mexico', best: 2 });
     releases.set(version, rows);
   }
   const calls = [];
   const fetchPage = async (version, page, _timeoutMs, query = {}) => {
     calls.push({ version, page, query });
-    if (failing.has(`${version}:${page}`)) throw new Error('HTTP 500');
+    if (failing.has(`${version}:${page}`)) throw httpError(500, 'HTTP 500');
     let rows = releases.get(version);
-    if (!rows) throw new Error(`HTTP 400 ${version}`);
+    // The live API answers an unpublished version with HTTP 400.
+    if (!rows) throw httpError(400, `HTTP 400 ${version}`);
     if (query.StartDate) rows = rows.filter((e) => e.date_start >= query.StartDate && e.date_start <= query.EndDate);
     const totalPages = Math.max(1, Math.ceil(rows.length / 1000));
     return { TotalCount: rows.length, TotalPages: totalPages, Result: rows.slice(page * 1000, page * 1000 + 1000) };
@@ -106,11 +116,36 @@ describe('UCDP trailing-window fetch', () => {
     assert.equal(revised[0].deathsBest, 9, 'the 26.0.8 revision of a 26.0.7 event wins');
   });
 
-  it('reports a missing release and the month it leaves empty (the gap check fails)', async () => {
-    const { candidates, summary } = await fetchWindow(mockApi({ missing: new Set(['26.0.4']) }));
+  it('a release that failed to fetch makes the window incomplete and its month a gap', async () => {
+    const { candidates, summary } = await fetchWindow(mockApi({ failing: new Set(['26.0.4:0']) }));
     assert.equal(candidates.complete, false);
     assert.deepEqual(candidates.missingReleases, ['26.0.4']);
+    assert.deepEqual(candidates.unpublishedReleases, []);
     assert.deepEqual(summary.gapMonths, ['2026-04']);
+  });
+
+  it('a release UCDP never published is an upstream gap, not a failed fetch', async () => {
+    const { candidates } = await fetchWindow(mockApi({ missing: new Set(['26.0.4']) }));
+    assert.equal(candidates.complete, true, 'nothing failed on our side');
+    assert.deepEqual(candidates.missingReleases, []);
+    assert.deepEqual(candidates.unpublishedReleases, ['26.0.4']);
+    assert.deepEqual(candidates.unpublishedMonths, ['2026-04']);
+  });
+
+  it('an unpublished month is reported apart from fetch gaps, so it cannot alarm forever', async () => {
+    const { candidates, events, summary: plain } = await fetchWindow(mockApi({ missing: new Set(['26.0.4']) }));
+    const latest = Math.max(...events.map((e) => e.dateStart));
+    const summary = summarizeUcdpWindow(events, { startMs: latest - 365 * DAY_MS, endMs: latest, upstreamGapMonths: candidates.unpublishedMonths });
+    assert.deepEqual(plain.gapMonths, ['2026-04'], 'without the upstream list, April reads as a gap');
+    assert.deepEqual(summary.gapMonths, []);
+    assert.deepEqual(summary.upstreamGapMonths, ['2026-04']);
+  });
+
+  it('drops candidate rows dated inside the annual release\'s years: the annual is authoritative there, and ids can change between them', async () => {
+    const { candidates, events } = await fetchWindow(mockApi());
+    assert.ok(candidates.releases.every((r) => r.events.every((e) => e.date_start >= '2026-01-01')), 'no candidate row dated in 2025 survives');
+    assert.equal(events.filter((e) => e.id === 'candidate-reissue-2025-12-30').length, 0);
+    assert.equal(events.filter((e) => new Date(e.dateStart).toISOString().startsWith('2025-12-30')).length, 10, 'the annual\'s 10 rows for the day, counted once');
   });
 
   it('reports a failed candidate page as incomplete rather than silently thin', async () => {

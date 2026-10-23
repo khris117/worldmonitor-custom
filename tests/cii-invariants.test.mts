@@ -58,7 +58,7 @@ const KNOWN_GAPS: Record<string, ReadonlySet<string>> = {
 const V15_RELEASE_BLOCKERS: Array<{ id: string; measured: string; reason: string; owner: 'stage-c' }> = [
   {
     id: 'P15d',
-    measured: '60–71 (AE–SY), 26/31 outside 70–100',
+    measured: '60–64 (AE–CU), 31/31 outside 70–100',
     reason: 'B6 removed the UCDP war floor (70) that met this anchor. In the v14 linear blend Conflict carries at most '
       + '0.30 × 0.6 = 18 points: with Conflict forced to 100 the scenario blends to 54 (US, DE, GB, JP) to 72 (SY, UA, YE), '
       + 'and the advisory floor of 60 lifts some of them to 60. No Conflict term can reach 70 for a low-prior country; '
@@ -388,7 +388,7 @@ function measureP9(): Measurement {
   // between their oldest and newest rows is near-empty, and the newest is fresh.
   const cases = FIXTURES.map((f) => {
     const aux = parse(f);
-    return { label: f.label, ...assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, f.nowMs, aux.ucdpWriterComplete ?? null) };
+    return { label: f.label, ...assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, f.nowMs, aux.ucdpWriterComplete ?? null, aux.ucdpUpstreamGapMonths ?? []) };
   });
   const c = cases.find((x) => !x.honest) ?? cases[0]!;
   return {

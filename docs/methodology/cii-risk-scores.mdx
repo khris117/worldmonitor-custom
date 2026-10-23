@@ -252,7 +252,10 @@ Component details that are easy to miss:
   The term is `70 · min(1, ln(1 + R / 1.25) / ln(1 + 100 / 1.25))`: the World
   Bank's FCS thresholds for UCDP data (medium-intensity conflict from 1, high
   intensity above 10 conflict deaths per 100,000 people a year) sit at half the
-  cap and at the cap of 70, the cap the other Conflict sources use. It replaces
+  cap and at the cap of 70, the cap the other Conflict sources use. UCDP deaths
+  and GDELT conflict coverage report the same war, so inside Conflict they merge
+  with the ACLED terms by max, never by sum (one violence family, property P6):
+  `Conflict = min(100, max(acled + fatality + civilian, gdeltConflict, ucdp) + oref)`. It replaces
   the v8-v14 class floors (war 70 at more than 100 events or 1,000 deaths in two
   years, minor 50 at more than 10 events), under which one more event moved a
   score by 20 points and population did not count. Age runs from build time, so

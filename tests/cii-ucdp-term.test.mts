@@ -172,6 +172,21 @@ describe('CII UCDP read-time window check (P9)', () => {
     assert.equal(assessCiiInputWindows(complete, NOW).ucdp!.honest, true);
   });
 
+  it('a month UCDP never published is reported as an upstream gap and does not fail the check', () => {
+    const noApril = totals(340, 23, (d) => new Date(d * DAY_MS).toISOString().startsWith('2026-04'));
+    const dailyTotals = Object.entries(noApril).map(([d, n]) => [Number(d), n]);
+    const countryDays = { Mexico: [[Math.floor(NOW / DAY_MS) - 30, 2, 5]] };
+    const fetchGap = parse({ ucdp: { events: [], countryDays, dailyTotals, window: { complete: false, gapMonths: ['2026-04'] } } }, NOW);
+    const failed = assessCiiInputWindows(fetchGap, NOW).ucdp!;
+    assert.equal(failed.honest, false, 'our fetch missed April: short_window');
+    assert.deepEqual(failed.gapMonths, ['2026-04']);
+    const upstream = parse({ ucdp: { events: [], countryDays, dailyTotals, window: { complete: true, gapMonths: [], upstreamGapMonths: ['2026-04'] } } }, NOW);
+    const w = assessCiiInputWindows(upstream, NOW).ucdp!;
+    assert.equal(w.honest, true, 'UCDP never published April: not a fetch failure');
+    assert.deepEqual(w.gapMonths, []);
+    assert.deepEqual(w.upstreamGapMonths, ['2026-04']);
+  });
+
   it('rejects a missing month, a short span and a stale frontier', () => {
     const missingApril = totals(340, 23, (d) => new Date(d * DAY_MS).toISOString().startsWith('2026-04'));
     assert.deepEqual(assessUcdpWindow([], missingApril, NOW).gapMonths, ['2026-04']);
@@ -200,6 +215,16 @@ describe('CII UCDP term: events score where they happen (owner ruling, 2026-10-2
   // UCDP GED codes Gaza and West Bank events with country "Israel" (country_id
   // 666) and puts the territory in adm_1. The writers attribute by location, so
   // those events feed Palestine, which is not one of the 31 scored countries.
+  //
+  // KNOWN DIVERGENCE (Israel). The committed fixtures hold the pre-v15 events
+  // payload, whose trimmed rows carry no adm_1 or coordinates, so replay still
+  // counts Gaza and the West Bank toward Israel: IL scores 51 / 50 / 53 on the
+  // three fixtures (UCDP 31 deaths per million a year, Conflict term 52). The
+  // located payload the writers now publish gives Israel 2.9 per million a year
+  // (term 19); on the 2026-10-23T0946Z inputs that is a score of 50, held by the
+  // reconsider advisory floor. A located fixture must be captured after the
+  // writers deploy and before v15 ships (brief section 3; cii-changes/v15.json
+  // b6-ucdp.knownDivergence).
   const day = Math.floor((NOW - 10 * DAY_MS) / DAY_MS);
   const raw = (adm1: string, best: number) => ({ id: `${adm1}-${best}`, country: 'Israel', adm_1: adm1, date_start: new Date(day * DAY_MS).toISOString().slice(0, 10), best });
   const ratesFromRawRows = (rows: Array<ReturnType<typeof raw>>) => {
@@ -225,5 +250,29 @@ describe('CII UCDP term: events score where they happen (owner ruling, 2026-10-2
     const kernelYears = (H / Math.LN2) * (1 - 0.5 ** (W / H)) / 365;
     const rate = ucdpViolenceRates([{ country: 'Israel', deathsBest: 100, dateStart: NOW }], NOW).IL!;
     assert.ok(Math.abs(rate - 100 / (kernelYears * 9.65)) < 1e-6, `rate ${rate}`);
+  });
+});
+
+describe('CII UCDP term: one violence family, merged by max (P6)', () => {
+  // UCDP deaths and GDELT CAMEO 18-20 coverage report the same war: within the
+  // violence family sources merge by max, never by sum (brief, P6).
+  it('UCDP and GDELT conflict take the larger, not the sum', () => {
+    const aux = background();
+    const week = { articles: 3000, conflict: 900, protest: 60 }; // GDELT conflict level 70 * (0.3 - 0.14) / 0.26 = 43
+    aux.gdeltCountryEvents = { byCountry: { MX: { conflict: null, protest: null, week, strikes: null } }, strikeDays: null };
+    aux.ucdpEvents = [ucdpRow('MX', 10 * riskConfig.CII_POPULATION_MILLIONS.MX!, NOW - DAY_MS)];
+    const t = table(aux, NOW).MX!;
+    const gdelt = t.parts.gdeltConflict;
+    const ucdp = t.parts.ucdpViolence;
+    assert.ok(gdelt > 0 && ucdp > 0, `both sources fire (GDELT ${gdelt}, UCDP ${ucdp})`);
+    assert.ok(Math.abs(t.components.conflict - Math.max(gdelt, ucdp)) < 1e-9, `Conflict ${t.components.conflict} must be max(${gdelt}, ${ucdp}), not their sum`);
+  });
+
+  it('OREF still adds on top of the family max', () => {
+    const aux = background();
+    aux.orefData = { activeAlertCount: 1, historyCount24h: 0 };
+    aux.ucdpEvents = [ucdpRow('IL', 50, NOW - DAY_MS)];
+    const t = table(aux, NOW).IL!;
+    assert.ok(Math.abs(t.components.conflict - Math.min(100, t.parts.ucdpViolence + t.parts.orefBoost)) < 1e-9);
   });
 });

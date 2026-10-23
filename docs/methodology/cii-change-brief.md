@@ -159,6 +159,12 @@ For each new constant, report the range over which every property still holds. A
 
 Nothing counts as live until production matches. Capture a fixture with `--wait-for-rebuild` 4 hours and 24 hours after the deploy, and confirm that `tests/cii-fixtures.test.mts` reproduces the stored table 31/31. Watch provenance and per-input health on `seed-meta:intelligence:risk-scores`, not only the scores.
 
+**Located UCDP fixture before v15 ships (B6).** The committed fixtures hold the pre-v15 UCDP payload: about five weeks of event rows with no location. Replay therefore still counts Gaza and West Bank events toward Israel, and it cannot test the read-time window check (P9). After the UCDP writers (relay and the `seed-ucdp-events` cron) deploy and production's `conflict:ucdp-events:v1` carries `countryDays`, capture a fixture with the located payload, before `inProgress` is cleared. In that fixture:
+
+- `inputs.ucdp.window.honest` must be true;
+- P9 must pass;
+- Israel must match the located preview recorded in `docs/methodology/cii-changes/v15.json` (`b6-ucdp.knownDivergence`) instead of the fixture replay.
+
 ## 4. Process
 
 - **Claim the version first.** Claim it in `docs/methodology/cii-next.json`, in the PR that starts the work:

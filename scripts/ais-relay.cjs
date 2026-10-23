@@ -3002,7 +3002,9 @@ function ucdpFetchPage(version, page, timeoutMs = 30000, query = {}) {
       }
       if (resp.statusCode < 200 || resp.statusCode >= 300) {
         resp.resume();
-        return reject(new Error(`UCDP ${version} page ${page}: HTTP ${resp.statusCode}`));
+        // The status rides on the error: the window fetch tells an unpublished
+        // release (400/404) from a failed one.
+        return reject(Object.assign(new Error(`UCDP ${version} page ${page}: HTTP ${resp.statusCode}`), { status: resp.statusCode }));
       }
       let data = '';
       resp.on('data', (chunk) => { data += chunk; });
@@ -3113,6 +3115,8 @@ async function seedUcdpEvents() {
     let candidateComplete = false;
     let windowReleases = [version];
     let missingReleases = [];
+    let unpublishedReleases = [];
+    let unpublishedMonths = [];
     const candidateIds = new Set();
     try {
       const candidate = await ucdpDiscoverCandidateVersion(ucdpFetchPage);
@@ -3126,6 +3130,9 @@ async function seedUcdpEvents() {
         candidateComplete = merged.complete;
         candidateVersion = candidateComplete ? candidate.version : `${candidate.version}+partial`;
         missingReleases = merged.missingReleases;
+        unpublishedReleases = merged.unpublishedReleases;
+        unpublishedMonths = merged.unpublishedMonths;
+        if (unpublishedReleases.length) console.warn(`[UCDP] UCDP has not published candidate release(s) ${unpublishedReleases.join(', ')}: an upstream gap, not a failed fetch`);
         windowReleases = [version, ...merged.releases.map((r) => r.version)];
         if (!candidateComplete) {
           console.warn(`[UCDP] candidate window ${merged.releases[0].version}..${candidate.version}: incomplete (missing: ${missingReleases.join(', ') || 'none'}; failed or truncated pages) — publishing as partial`);
@@ -3190,16 +3197,18 @@ async function seedUcdpEvents() {
     const windowStartMs = latestMs - UCDP_TRAILING_WINDOW_MS;
     // Aggregated by where each event happened (ucdpLocatedCountry), not UCDP's country code.
     const located = filtered.map((e) => ({ country: ucdpLocatedCountry(e), dateStart: Date.parse(e.date_start) || 0, deathsBest: Number(e.best) || 0 }));
-    const summary = ucdpSummarizeWindow(located, { startMs: windowStartMs, endMs: latestMs });
+    const summary = ucdpSummarizeWindow(located, { startMs: windowStartMs, endMs: latestMs, upstreamGapMonths: unpublishedMonths });
     if (summary.gapMonths.length) console.warn(`[UCDP] Window has empty months before later data: ${summary.gapMonths.join(', ')}`);
     const window = {
       startMs: windowStartMs,
       endMs: latestMs,
       months: summary.months,
       gapMonths: summary.gapMonths,
+      upstreamGapMonths: summary.upstreamGapMonths,
       complete: candidateComplete && failedPages === 0 && !annual.truncated && summary.gapMonths.length === 0,
       releases: windowReleases,
       missingReleases,
+      unpublishedReleases,
     };
 
     const payload = { events: capped, fetchedAt: Date.now(), version, candidateVersion, candidateComplete, annualFailedPages: failedPages, totalRaw: allEvents.length, filteredCount: capped.length, countryDays: summary.countryDays, dailyTotals: summary.dailyTotals, window };
