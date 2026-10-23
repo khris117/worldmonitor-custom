@@ -449,8 +449,18 @@ export async function dispatchToolsCall(
   // The request's wm_api_usage row (#9431). Omitted → only the mcp.toolcall
   // console line is emitted.
   usage?: McpUsage,
+  // SEP-1303 (MCP 2025-11-25): report argument validation failures as a tool
+  // execution error the model can read and correct, instead of -32602. Only
+  // tools/call on 2025-11-25+ opts in; resources/read re-wraps JSON-RPC errors.
+  inputErrorsAsToolResults?: boolean,
 ): Promise<Response> {
   const id = body.id ?? null;
+  const invalidArguments = (violations: unknown): Response => inputErrorsAsToolResults
+    ? rpcOk(id, {
+      content: [{ type: 'text', text: JSON.stringify({ error: 'Invalid arguments', violations }) }],
+      isError: true,
+    }, corsHeaders)
+    : rpcError(id, -32602, 'Invalid params', corsHeaders, { violations });
   // Only a user-bound caller can call start_upgrade, so only they get a
   // checkout hint. The free allowance is upgraded as free even when a lapsed
   // paid row still carries its old plan key.
@@ -484,7 +494,7 @@ export async function dispatchToolsCall(
       const limited = await applyPerMinuteLimit(context, corsHeaders, toolBurstPerMinute, id);
       if (limited) return limited;
     }
-    return rpcError(id, -32602, 'Invalid params', corsHeaders, { violations: resolved.violations });
+    return invalidArguments(resolved.violations);
   }
   const tool = resolved.tool;
   const notice = resolved.kind === 'alias' ? resolved.notice : null;
@@ -1264,13 +1274,11 @@ export async function dispatchToolsCall(
       );
     }
     // #6559: proto/sebuf ValidationError 400s keep their field/detail pairs as
-    // structured JSON-RPC error data (`error.data.violations`). This is NOT a
-    // tools/call result envelope (`result.content` / `isError`) — agents read
-    // `error.code === -32602` and `error.data.violations[]`.
+    // structured JSON-RPC error data (`error.data.violations`) — agents read
+    // `error.code === -32602` and `error.data.violations[]`. A 2025-11-25+
+    // tools/call gets the same violations in an `isError` result (SEP-1303).
     if (err instanceof RpcValidationError) {
-      return rpcError(id, -32602, 'Invalid params', corsHeaders, {
-        violations: err.violations,
-      });
+      return invalidArguments(err.violations);
     }
     return rpcError(id, -32603, 'Internal error: data fetch failed', corsHeaders);
   }
