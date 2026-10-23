@@ -17,8 +17,10 @@
 // "Honest counts": own vs foreign presence are stored as SEPARATE integers — the consumer
 // applies any foreign-presence weighting at scoring time. This deliberately does NOT mirror
 // the frontend's synthetic-`{}`-push ×2 hack (see the plan's Phase 2 notes).
-// Since CII v14 the scorer reads only foreignFlights/foreignVessels: own counts follow the
-// operator anywhere in the world, so routine training measured air-force size, not risk.
+// Since CII v15 the scorer reads only the AIS disruption counts. v14 dropped own counts,
+// which follow the operator anywhere in the world. v15 dropped foreign flights and
+// vessels: NATO transports at cruise altitude, and AIS types 35 and 50-59 (pilot boats,
+// SAR, tugs), are not instability (docs/methodology/cii-input-register.md).
 //
 // SCHEDULING: like every other scripts/seed-*.mjs, this is a self-contained job run on a
 // schedule by Railway (the cron/job config lives in the Railway dashboard, not the repo).
@@ -422,8 +424,8 @@ function aggregate(flights, candidateReports, disruptions) {
     if (loc && byCountry[loc]) {
       if (op && loc !== op) byCountry[loc].foreignVessels++;
       // Operator unknown (e.g. classified by AIS ship-type alone): count once as local
-      // presence, NOT as foreign — foreignVessels is ×2-weighted in the CII security
-      // formula, and we cannot assert a vessel is foreign without knowing its operator.
+      // presence, NOT as foreign: we cannot assert a vessel is foreign without knowing
+      // its operator.
       else if (!op) byCountry[loc].ownVessels++;
     }
   }

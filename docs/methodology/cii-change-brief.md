@@ -127,7 +127,15 @@ The PR that ships `next` to main bumps `CII_FORMULA_VERSION`, clears `inProgress
 
 - In CI on main, on a PR into main, or in a merge-queue run for main, `inProgress` must not be set. Those runs are detected from `GITHUB_BASE_REF` and `GITHUB_REF`. Elsewhere, including local runs, the test is skipped with a message.
 - Wherever `inProgress` is unset, the tree must name its own version. `CII_FORMULA_VERSION` must equal `next`, or the claim must have moved on to the version after it. `KNOWN_GAPS[CII_FORMULA_VERSION]` must exist.
-- The integration branch's release-blocker list must be empty. Its assertion joins this gate in the PR that adds the list.
+- `V15_RELEASE_BLOCKERS` in `tests/cii-invariants.test.mts` must be empty.
+
+**Release blockers.** A Stage B PR can make a property fail that passed as a real assertion in v14, because the floors still exist and Stage C removes them. For example, removing an off-construct input lowers blends, so more countries collapse onto the same floor. Such a PR does not loosen the property and does not add it to `KNOWN_GAPS`. It lists the property in `V15_RELEASE_BLOCKERS` instead, with:
+
+- the measured value;
+- the reason;
+- the owner (`stage-c`).
+
+While the property is listed, it runs as a todo that carries its measured value. The ratchet fails once it passes, and the release gate keeps v15 off main until the list is empty. Never list a property to hide a defect that the listing PR itself owns.
 
 Capture a new fixture GET-only, with no Redis writes:
 

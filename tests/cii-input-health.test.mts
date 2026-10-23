@@ -350,10 +350,10 @@ describe('assessCiiInputs', () => {
   });
 
   it('missing, unusable and unreported inputs are dead; not_configured alone is not', () => {
-    const inputs: Record<string, unknown> = { ...allLive(), ucdp: { state: 'missing' }, fires: { state: 'unusable' }, acled: { state: 'not_configured' } };
+    const inputs: Record<string, unknown> = { ...allLive(), ucdp: { state: 'missing' }, advisories: { state: 'unusable' }, acled: { state: 'not_configured' } };
     delete inputs.oref; // unreported fails closed even where an absent key would be quiet
     const result = assessCiiInputs({ inputs }, NOW);
-    assert.deepEqual(result.dead.map((input: { id: string; state: string }) => `${input.id}:${input.state}`).sort(), ['fires:unusable', 'oref:unreported', 'ucdp:missing']);
+    assert.deepEqual(result.dead.map((input: { id: string; state: string }) => `${input.id}:${input.state}`).sort(), ['advisories:unusable', 'oref:unreported', 'ucdp:missing']);
     assert.deepEqual(result.notConfigured, ['acled']);
     assert.deepEqual(result.unfedFamilies, []);
   });
@@ -374,9 +374,10 @@ describe('assessCiiInputs', () => {
     assert.deepEqual(result.dead, [{ id: 'gdeltCountryEvents', state: 'stale', sourceCheck: 'gdeltCountryEvents' }]);
   });
 
-  it('the fires input is graded against the summary probe the build reads (#9509)', () => {
-    const result = assessCiiInputs({ inputs: allLive() }, NOW, { fires: 'STALE_SEED' });
-    assert.deepEqual(result.dead, [{ id: 'fires', state: 'stale', sourceCheck: 'wildfiresSummary' }]);
+  it('the militaryCii input is graded against its own probe, and its AIS-only quiet is legitimate', () => {
+    const result = assessCiiInputs({ inputs: allLive() }, NOW, { militaryCii: 'STALE_SEED' });
+    assert.deepEqual(result.dead, [{ id: 'militaryCii', state: 'stale', sourceCheck: 'militaryCii' }]);
+    assert.equal(CII_INPUT_POLICY.inputs.militaryCii.maxQuietMin, null);
   });
 
   it('seed-meta without an inputs block cannot prove anything', () => {
@@ -397,7 +398,7 @@ describe('composeRiskScoresInputHealth', () => {
   });
 
   it('one dead input with its family still fed is COVERAGE_PARTIAL', () => {
-    const entry = riskScoresHealth(meta({ ...allLive(), fires: { state: 'missing' } }));
+    const entry = riskScoresHealth(meta({ ...allLive(), earthquakes: { state: 'missing' } }));
     assert.equal(entry.status, 'COVERAGE_PARTIAL');
     assert.deepEqual(entry.ciiInputs.unfedFamilies, []);
   });
@@ -420,7 +421,7 @@ describe('composeRiskScoresInputHealth', () => {
     // Containment means "served, just old"; scores missing a signal are wrong, not old.
     for (const [inputs, recordCount] of [
       [{ ...allLive(), acled: { state: 'not_configured' }, gdeltCountryEvents: { state: 'missing' } }, 3],
-      [{ ...allLive(), fires: { state: 'missing' } }, 2],
+      [{ ...allLive(), earthquakes: { state: 'missing' } }, 2],
     ] as const) {
       const raw = JSON.stringify(meta(inputs, { recordCount }));
       const ctx = {
@@ -459,9 +460,9 @@ describe('composeRiskScoresInputHealth', () => {
   });
 
   it('never softens a stronger verdict the seed-meta already earned', () => {
-    const entry = riskScoresHealth(meta({ ...allLive(), fires: { state: 'missing' } }, { fetchedAt: NOW - 120 * MIN }));
+    const entry = riskScoresHealth(meta({ ...allLive(), earthquakes: { state: 'missing' } }, { fetchedAt: NOW - 120 * MIN }));
     assert.equal(entry.status, 'STALE_SEED');
-    assert.deepEqual(entry.ciiInputs.dead.map((input: { id: string }) => input.id), ['fires']);
+    assert.deepEqual(entry.ciiInputs.dead.map((input: { id: string }) => input.id), ['earthquakes']);
   });
 
   it('a stale report with an unfed family is not contained either', () => {
