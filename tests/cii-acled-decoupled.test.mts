@@ -20,6 +20,8 @@ import { loadCiiFixtures, scoreCiiFixture } from '../scripts/lib/cii-fixtures.mt
 import {
   assessCiiInputAvailability,
   computeCIIScores,
+  gdeltCountryEventsFromSeed,
+  gdeltStrikeDays,
   scoreCiiAuxiliarySources,
 } from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
 import { TIER1_COUNTRIES } from '../server/worldmonitor/intelligence/v1/_shared.ts';
@@ -141,8 +143,58 @@ describe('CII ACLED is per country: an optional source that never gates another 
       assert.equal(after.components.conflict, Math.min(100, after.parts.orefBoost + Math.max(acled, after.parts.gdeltConflict)), code);
       assert.equal(after.parts.gdeltConflict, before.parts.gdeltConflict, `${code} GDELT conflict term must not depend on ACLED`);
       assert.equal(after.parts.gdeltUnrest, before.parts.gdeltUnrest, `${code} GDELT unrest term must not depend on ACLED`);
-      assert.equal(after.strikePressure, before.strikePressure, `${code} strike pressure must not depend on ACLED`);
+      assert.equal(after.strikePressure, before.strikePressure, `${code} strike pressure must not depend on ACLED battles`);
     }
+  });
+
+  it('an airstrike reported by ACLED and by GDELT counts once: strike days take the larger, never the sum (P6)', () => {
+    // ACLED "Explosions/Remote violence" and GDELT CAMEO 194/195 strikes report
+    // the same incidents. Each ACLED explosion row reaches one term only (strike
+    // pressure), so the same days from both sources score as the larger source.
+    const NOW = Date.parse('2026-10-19T12:00:00Z');
+    const DAY = 86_400_000;
+    const date = (n: number) => new Date(NOW - n * DAY).toISOString().slice(0, 10);
+    const background = (code: string | null, share: [number, number]) => ({
+      ...scoreCiiFixture(FIXTURES[0]!).aux,
+      ucdpEvents: [], outages: [], climate: [], fires: {}, gpsHexes: [], iranEvents: [], orefData: null,
+      advisories: { byCountry: {} }, displacedByIso3: {}, newsTopStories: [], threatSummaryByCountry: null,
+      aviationAlerts: [], earthquakes: [], sanctionsCountries: [], sanctionsCountryCounts: null, militaryCii: null,
+      confirmedStrikes: null, crossBorderSurgeCountries: [],
+      gdeltCountryEvents: code ? gdeltCountryEventsFromSeed({
+        byCountry: { [code]: { conflict: null, protest: null, week: null, strikes: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [date(i), share])) } },
+        baselineReady: false, currentComplete: false, weekReady: false,
+        strikeDays: Object.fromEntries(Array.from({ length: 21 }, (_, i) => [date(i), 96])), updatedAt: NOW - 600_000,
+      }, NOW) : null,
+    });
+    // ACLED rows on exactly the days GDELT counts as strike days, so every day
+    // has both reporters and the merge must equal the larger source.
+    const explosions = (code: string, share: [number, number], perDay: number, deaths: number) => {
+      const gdelt = (background(code, share).gdeltCountryEvents as any);
+      const days = Object.keys(gdeltStrikeDays(gdelt.byCountry[code].strikes, gdelt.strikeDays, NOW));
+      assert.ok(days.length > 0, 'the GDELT campaign counts');
+      return days.flatMap((d) => {
+        const ago = Math.round((NOW - Date.parse(`${d}T12:00:00Z`)) / DAY);
+        return Array.from({ length: perDay }, () => row(code, 'Explosions/Remote violence', deaths, ago));
+      });
+    };
+    const worst: string[] = [];
+    for (const code of CODES) {
+      for (const share of [[3, 359], [20, 359], [150, 400]] as Array<[number, number]>) {
+        for (const [perDay, deaths] of [[1, 0], [3, 2], [10, 20]]) {
+          const terms = (rows: AcledRow[], withGdelt: boolean) => {
+            const out: Record<string, any> = {};
+            computeCIIScores(rows, background(withGdelt ? code : null, share) as any, { nowMs: NOW }, out);
+            return out[code];
+          };
+          const acledOnly = terms(explosions(code, share, perDay, deaths), false);
+          const gdeltOnly = terms([], true);
+          const both = terms(explosions(code, share, perDay, deaths), true);
+          const excess = both.blended - Math.max(acledOnly.blended, gdeltOnly.blended);
+          if (excess > 1e-9) worst.push(`${code} share=${share} ${perDay}/day deaths=${deaths}: +${excess.toFixed(2)} blend`);
+        }
+      }
+    }
+    assert.deepEqual(worst.slice(0, 5), [], `${worst.length} double-counted cases`);
   });
 
   for (const fixture of FIXTURES) {

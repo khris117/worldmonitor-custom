@@ -418,7 +418,6 @@ interface CountrySignals {
   protests: number;
   riots: number;
   battles: number;
-  explosions: number;
   civilianViolence: number;
   fatalities: number;
   protestFatalities: number;
@@ -472,7 +471,7 @@ interface CountrySignals {
 
 function emptySignals(): CountrySignals {
   return {
-    protests: 0, riots: 0, battles: 0, explosions: 0, civilianViolence: 0,
+    protests: 0, riots: 0, battles: 0, civilianViolence: 0,
     fatalities: 0, protestFatalities: 0, conflictFatalities: 0,
     gdeltConflictEscalation: 0,
     gdeltUnrestEscalation: 0,
@@ -1383,6 +1382,10 @@ export function computeCIIScores(
   // --- ACLED ingestion with fatality split and time decay ---
   // Events 0-7 days old: weight 1.0 (full impact)
   // Events 8-30 days old: weight 0.4 (partial — captures post-ceasefire/post-conflict tail)
+  // Explosions/remote violence are strikes: they go to the country's strike
+  // days (below), where they merge with the strike feed and GDELT strikes by
+  // the larger per day, and nowhere else, so one airstrike counts once.
+  const acledStrikes: Record<string, StrikeDays> = {};
   for (const ev of acled) {
     const code = normalizeCountryName(ev.country);
     if (!code || !data[code]) continue;
@@ -1404,8 +1407,10 @@ export function computeCIIScores(
       data[code].battles += weight;
       data[code].conflictFatalities += fat;
     } else if (type.includes('explosion') || type.includes('remote')) {
-      data[code].explosions += weight;
-      data[code].conflictFatalities += fat;
+      // Dated by the UTC day it happened; an event that killed someone weighs as
+      // a high-severity strike, any other as elevated (the strike feed's scale).
+      const date = strikeUtcDay(computedAt - Math.max(0, ev.daysAgo ?? 0) * DAY_MS);
+      addStrikeDay(acledStrikes, code, date, fatalities > 0 ? CII_STRIKE_SEVERITY_WEIGHTS.high : CII_STRIKE_SEVERITY_WEIGHTS.elevated);
     } else if (type.includes('violence')) {
       data[code].civilianViolence += weight;
       data[code].conflictFatalities += fat;
@@ -1555,7 +1560,8 @@ export function computeCIIScores(
 
   // --- Strike pressure (v12): confirmed feed and GDELT, per day the larger, decayed ---
   // The 72h window and the 30-day tally carry the same events (max per day).
-  // GDELT strikes count for every country; ACLED does not gate them.
+  // GDELT strikes count for every country; ACLED does not gate them. A
+  // country's ACLED explosion rows join the same per-day max, never the sum.
   const confirmedStrikes = Object.entries(confirmedStrikeDaysFromEvents(aux.iranEvents, computedAt))
     .reduce<Record<string, StrikeDays>>((out, [code, days]) => {
       out[code] = maxStrikeDays(out[code], days);
@@ -1564,7 +1570,10 @@ export function computeCIIScores(
   const gdeltStrikes = aux.gdeltCountryEvents;
   for (const code of Object.keys(data)) {
     const gdelt = gdeltStrikeDays(gdeltStrikes?.byCountry?.[code]?.strikes, gdeltStrikes?.strikeDays, computedAt);
-    data[code]!.strikePressure = strikePressure(maxStrikeDays(confirmedStrikes[code], gdelt), computedAt);
+    data[code]!.strikePressure = strikePressure(
+      maxStrikeDays(maxStrikeDays(confirmedStrikes[code], gdelt), acledStrikes[code]),
+      computedAt,
+    );
   }
 
   // --- OREF (IL only) ---
@@ -1622,7 +1631,8 @@ export function computeCIIScores(
     ));
 
     // --- Conflict score: max(ACLED conflict, GDELT conflict term) + OREF ---
-    const conflictActivityRaw = d.battles * 3 + d.explosions * 4 + d.civilianViolence * 5;
+    // Explosions/remote violence score as strike pressure, not here.
+    const conflictActivityRaw = d.battles * 3 + d.civilianViolence * 5;
     const acledScore = Math.round(logScaledScore(
       conflictActivityRaw,
       CII_CONFLICT_ACTIVITY_CAP,
