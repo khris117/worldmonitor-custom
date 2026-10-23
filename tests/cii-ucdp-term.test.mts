@@ -155,6 +155,20 @@ describe('CII UCDP read-time window check (P9)', () => {
     }
   });
 
+  it('rejects a window the writers flagged incomplete, even when its rows look dense enough', () => {
+    // A failed second page of one monthly release leaves ~1,000 of ~1,800 rows:
+    // the month clears the density check, but the writers know it is short.
+    const payload = { events: [], countryDays: { Mexico: [[Math.floor(NOW / DAY_MS) - 30, 2, 5]] }, dailyTotals: Object.entries(totals(340, 23)).map(([d, n]) => [Number(d), n]), window: { complete: false } };
+    const parsed = parseUcdpCache(payload);
+    assert.equal(parsed.writerComplete, false);
+    const aux = parse({ ucdp: payload }, NOW);
+    const w = assessCiiInputWindows(aux, NOW).ucdp!;
+    assert.equal(w.writerComplete, false);
+    assert.equal(w.honest, false, 'a writer-reported incomplete window must not read honest');
+    const complete = parse({ ucdp: { ...payload, window: { complete: true } } }, NOW);
+    assert.equal(assessCiiInputWindows(complete, NOW).ucdp!.honest, true);
+  });
+
   it('rejects a missing month, a short span and a stale frontier', () => {
     const missingApril = totals(340, 23, (d) => new Date(d * DAY_MS).toISOString().startsWith('2026-04'));
     assert.deepEqual(assessUcdpWindow([], missingApril, NOW).gapMonths, ['2026-04']);

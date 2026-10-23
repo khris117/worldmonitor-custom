@@ -380,13 +380,20 @@ const UCDP_KERNEL_YEARS = (CII_UCDP_HALF_LIFE_DAYS / Math.LN2)
 /** One UCDP row as the term reads it: an event, or one country-day of the writers' aggregate. */
 export interface CiiUcdpRow { country?: string; location?: string; dateStart: number; deathsBest: number; events?: number }
 
-/** Rows and global day totals from the cached payload, in either shape. */
-export function parseUcdpCache(raw: unknown): { rows: CiiUcdpRow[]; dailyTotals: Record<string, number> | null } {
+/**
+ * Rows and global day totals from the cached payload, in either shape, and
+ * whether the writers fetched the whole window (`window.complete`; null for a
+ * payload without it). A release with a failed page can leave a month dense
+ * enough to pass the read-time check while the writers know it is short.
+ */
+export function parseUcdpCache(raw: unknown): { rows: CiiUcdpRow[]; dailyTotals: Record<string, number> | null; writerComplete: boolean | null } {
   const payload = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
   const countryDays = payload?.countryDays;
+  const window = payload?.window && typeof payload.window === 'object' ? payload.window as Record<string, unknown> : null;
+  const writerComplete = typeof window?.complete === 'boolean' ? window.complete : null;
   if (!countryDays || typeof countryDays !== 'object' || Array.isArray(countryDays)) {
     const events = Array.isArray(raw) ? raw : Array.isArray(payload?.events) ? payload.events : [];
-    return { rows: (events as CiiUcdpRow[]).slice(0, 10000), dailyTotals: null };
+    return { rows: (events as CiiUcdpRow[]).slice(0, 10000), dailyTotals: null, writerComplete };
   }
   const rows: CiiUcdpRow[] = [];
   for (const [country, days] of Object.entries(countryDays as Record<string, unknown>)) {
@@ -403,7 +410,7 @@ export function parseUcdpCache(raw: unknown): { rows: CiiUcdpRow[]; dailyTotals:
     const dayIndex = Array.isArray(entry) ? finiteNumber(entry[0]) : null;
     if (dayIndex !== null) dailyTotals[String(dayIndex)] = safeNonNegativeNum(entry[1]);
   }
-  return { rows, dailyTotals: Object.keys(dailyTotals).length ? dailyTotals : null };
+  return { rows, dailyTotals: Object.keys(dailyTotals).length ? dailyTotals : null, writerComplete };
 }
 
 /** Age in days, or null when the row is undated, in the future or outside the window. */
@@ -458,6 +465,8 @@ export interface CiiUcdpWindow {
   newestAgeDays: number | null;
   /** Calendar months (UTC) between those rows holding under CII_UCDP_MIN_MONTH_SHARE of the median non-empty month's daily events. */
   gapMonths: string[];
+  /** The writers' own verdict on their fetch (`window.complete`), null when the payload has none. */
+  writerComplete: boolean | null;
   honest: boolean;
 }
 
@@ -470,6 +479,7 @@ export function assessUcdpWindow(
   rows: CiiUcdpRow[] | null | undefined,
   dailyTotals: Record<string, number> | null | undefined,
   nowMs: number,
+  writerComplete: boolean | null = null,
 ): CiiUcdpWindow {
   const perDay = new Map<number, number>();
   const add = (day: number, events: number) => perDay.set(day, (perDay.get(day) ?? 0) + events);
@@ -486,7 +496,7 @@ export function assessUcdpWindow(
   }
   const days = [...perDay.keys()].sort((a, b) => a - b);
   const nowDay = Math.floor(nowMs / CII_DAY_MS);
-  if (!days.length) return { assumedDays: CII_UCDP_WINDOW_DAYS, oldestAgeDays: null, newestAgeDays: null, gapMonths: [], honest: false };
+  if (!days.length) return { assumedDays: CII_UCDP_WINDOW_DAYS, oldestAgeDays: null, newestAgeDays: null, gapMonths: [], writerComplete, honest: false };
   const first = days[0]!;
   const last = days[days.length - 1]!;
   // Events per covered day for each calendar month between the first and last day.
@@ -511,7 +521,9 @@ export function assessUcdpWindow(
     oldestAgeDays,
     newestAgeDays,
     gapMonths,
+    writerComplete,
     honest: gapMonths.length === 0
+      && writerComplete !== false
       && newestAgeDays <= CII_UCDP_MAX_LAG_DAYS
       && oldestAgeDays >= CII_UCDP_WINDOW_DAYS - 31,
   };
@@ -938,6 +950,8 @@ export interface AuxiliarySources {
   ucdpEvents: CiiUcdpRow[];
   /** Events per UTC day across every country, from the UCDP writers; null for a payload without them. */
   ucdpDailyTotals?: Record<string, number> | null;
+  /** The UCDP writers' `window.complete`; null for a payload without it. */
+  ucdpWriterComplete?: boolean | null;
   outages: any[];
   climate: any[];
   // Detections inside each Tier-1 country, from wildfire:fires-summary:v1
@@ -1299,6 +1313,7 @@ export function buildCiiAuxiliarySources(
   return {
     ucdpEvents: ucdp.rows,
     ucdpDailyTotals: ucdp.dailyTotals,
+    ucdpWriterComplete: ucdp.writerComplete,
     outages: arr(outagesRaw, 'outages'),
     climate: arr(climateRaw, 'anomalies'),
     fires: parseWildfireFiresSummary(firesRaw)?.byCountry ?? null,
@@ -1359,7 +1374,7 @@ export type CiiInputWindows = Partial<Record<CiiInputId, CiiUcdpWindow>>;
 
 export function assessCiiInputWindows(aux: AuxiliarySources, nowMs: number): CiiInputWindows {
   return aux.inputReads?.ucdp === 'present'
-    ? { ucdp: assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, nowMs) }
+    ? { ucdp: assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, nowMs, aux.ucdpWriterComplete ?? null) }
     : {};
 }
 

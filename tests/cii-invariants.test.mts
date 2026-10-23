@@ -388,7 +388,7 @@ function measureP9(): Measurement {
   // between their oldest and newest rows is near-empty, and the newest is fresh.
   const cases = FIXTURES.map((f) => {
     const aux = parse(f);
-    return { label: f.label, ...assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, f.nowMs) };
+    return { label: f.label, ...assessUcdpWindow(aux.ucdpEvents, aux.ucdpDailyTotals, f.nowMs, aux.ucdpWriterComplete ?? null) };
   });
   const c = cases.find((x) => !x.honest) ?? cases[0]!;
   return {

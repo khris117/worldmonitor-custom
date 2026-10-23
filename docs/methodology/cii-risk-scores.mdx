@@ -270,8 +270,9 @@ Component details that are easy to miss:
   January-August 2026 missing). The scorer checks the window at read time
   (property P9): the rows must reach back to within a month of the window
   start, no month between the oldest and newest rows may hold under a quarter
-  of the median month's daily events, and the newest row may be at most 90 days
-  old. The result is reported as `inputs.ucdp.window` on
+  of the median month's daily events, the newest row may be at most 90 days
+  old, and the writers must not have flagged their own fetch incomplete
+  (`window.complete`, false after a failed page or a missing release). The result is reported as `inputs.ucdp.window` on
   `seed-meta:intelligence:risk-scores`, and `/api/health` reads a failed check
   as `short_window`. A short cache still scores, as a lower bound.
 

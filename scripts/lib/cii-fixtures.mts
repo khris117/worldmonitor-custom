@@ -241,6 +241,7 @@ export function trimCiiRawInputs(raw: CiiRawInputs): CiiRawInputs {
       ? {
         countryDays: Object.fromEntries(Object.entries(v.countryDays).filter(([name]) => nameCode(name))),
         dailyTotals: Array.isArray(v.dailyTotals) ? v.dailyTotals : [],
+        ...(isObj(v.window) && typeof v.window.complete === 'boolean' ? { window: { complete: v.window.complete } } : {}),
       }
       : {
         events: rows(v, 'events')
