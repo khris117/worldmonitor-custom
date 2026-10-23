@@ -24,7 +24,7 @@ delete process.env.ACLED_ACCESS_TOKEN;
 delete process.env.ACLED_EMAIL;
 delete process.env.ACLED_PASSWORD;
 
-const { getRiskScores, CII_HEALTH_INPUT_IDS } = await import('../server/worldmonitor/intelligence/v1/get-risk-scores');
+const { getRiskScores, CII_HEALTH_INPUT_IDS, CII_ADVISORY_LAST_GOOD_KEY } = await import('../server/worldmonitor/intelligence/v1/get-risk-scores');
 const { __clearLocalUnavailableBackoffForTests } = await import('../server/_shared/redis');
 const { __testing__ } = await import('../api/health.js');
 const { assessCiiInputs, CII_INPUT_POLICY } = await import('../api/_cii-input-health.js');
@@ -211,6 +211,52 @@ describe('CII input health, producer to verdict', () => {
     assert.deepEqual(entry.ciiInputs.unfedFamilies, []);
   });
 
+  it('a live advisory read is kept as the last good snapshot, with the seeder clock, and the snapshot is not read', async () => {
+    const fetchedAt = new Date(NOW - 20 * MIN).toISOString();
+    const meta = await buildSeedMeta({
+      ...liveFeedsWithoutRealtimeConflict(),
+      'intelligence:advisories:v1': JSON.stringify({
+        _seed: { fetchedAt: NOW - 20 * MIN, recordCount: 3, sourceVersion: 'rss-feeds', schemaVersion: 1, state: 'OK' },
+        data: { byCountry: { QA: 'reconsider', UA: 'do-not-travel', FJ: 'caution', TW: 'normal' }, advisories: [{ title: 'x' }], fetchedAt },
+      }),
+    });
+    assert.equal(meta.inputs.advisories.state, 'live');
+    assert.equal(reads.includes(CII_ADVISORY_LAST_GOOD_KEY), false);
+    const kept = writes.filter((write) => write.key === CII_ADVISORY_LAST_GOOD_KEY);
+    assert.equal(kept.length, 1);
+    assert.deepEqual(JSON.parse(kept[0]!.value), { byCountry: { QA: 'reconsider', UA: 'do-not-travel' }, fetchedAt: Date.parse(fetchedAt) });
+  });
+
+  it('a missing advisory read scores the last good snapshot, reports the flip with its age, and keeps the snapshot as it was', async () => {
+    stubRedis({
+      ...liveFeedsWithoutRealtimeConflict(),
+      [CII_ADVISORY_LAST_GOOD_KEY]: JSON.stringify({ byCountry: { QA: 'reconsider' }, fetchedAt: NOW - 3 * 60 * MIN }),
+    });
+    const response = await getRiskScores({} as never, {} as never);
+    const qa = response.ciiScores.find((score) => score.region === 'QA')!;
+    assert.equal(`${qa.advisoryLevel}/${qa.advisoryProvenance}`, 'reconsider/fallback');
+    assert.ok(qa.combinedScore >= 50, 'the reconsider floor still holds');
+    assert.ok(reads.includes(CII_ADVISORY_LAST_GOOD_KEY));
+    assert.equal(writes.some((write) => write.key === CII_ADVISORY_LAST_GOOD_KEY), false, 'a fallback build must not refresh the snapshot');
+    const meta = JSON.parse(writes.filter((write) => write.key === SEED_META_KEY).at(-1)!.value);
+    assert.deepEqual(meta.inputs.advisories, { state: 'fallback', snapshotAt: NOW - 3 * 60 * MIN });
+    const entry = riskScoresHealth(meta);
+    assert.ok(entry.ciiInputs.dead.some((input: { id: string; state: string; ageMin?: number }) => (
+      input.id === 'advisories' && input.state === 'fallback' && input.ageMin! >= 180
+    )));
+  });
+
+  it('a missing advisory read with no usable snapshot leaves every advisory term absent', async () => {
+    stubRedis({
+      ...liveFeedsWithoutRealtimeConflict(),
+      [CII_ADVISORY_LAST_GOOD_KEY]: JSON.stringify({ byCountry: { QA: 'reconsider' }, fetchedAt: NOW - 73 * 60 * MIN }),
+    });
+    const response = await getRiskScores({} as never, {} as never);
+    assert.ok(response.ciiScores.every((score) => score.advisoryLevel === '' && score.advisoryProvenance === 'absent'));
+    const meta = JSON.parse(writes.filter((write) => write.key === SEED_META_KEY).at(-1)!.value);
+    assert.deepEqual(meta.inputs.advisories, { state: 'missing' });
+  });
+
   it('reports every input the policy grades, and nothing else', () => {
     assert.deepEqual([...CII_HEALTH_INPUT_IDS].sort(), Object.keys(CII_INPUT_POLICY.inputs).sort());
     for (const members of Object.values(CII_INPUT_POLICY.families)) {
@@ -270,6 +316,13 @@ describe('assessCiiInputs', () => {
     assert.deepEqual(result.dead.map((input: { id: string; state: string }) => `${input.id}:${input.state}`).sort(), ['fires:unusable', 'oref:unreported', 'ucdp:missing']);
     assert.deepEqual(result.notConfigured, ['acled']);
     assert.deepEqual(result.unfedFamilies, []);
+  });
+
+  it('an input scored from its last good snapshot is dead, with the snapshot age', () => {
+    const inputs = { ...allLive(), advisories: { state: 'fallback', snapshotAt: NOW - 95 * MIN } };
+    assert.deepEqual(assessCiiInputs({ inputs }, NOW).dead, [{ id: 'advisories', state: 'fallback', ageMin: 95 }]);
+    const unclocked = { ...allLive(), advisories: { state: 'fallback' } };
+    assert.deepEqual(assessCiiInputs({ inputs: unclocked }, NOW).dead, [{ id: 'advisories', state: 'fallback' }]);
   });
 
   it('a source check past its own staleness budget makes the input stale', () => {

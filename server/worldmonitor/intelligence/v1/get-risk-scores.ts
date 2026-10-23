@@ -24,6 +24,7 @@ import { TIER1_COUNTRIES } from './_shared';
 import { fetchAcledCached } from '../../../_shared/acled';
 import { isAcledConfigured } from '../../../_shared/acled-auth';
 import {
+  CII_ADVISORY_MAX_AGE_MS,
   CII_CONFLICT_ACTIVITY_CAP,
   CII_CONFLICT_ACTIVITY_PIVOT,
   CII_FORMULA_VERSION,
@@ -126,15 +127,12 @@ const COUNTRY_KEYWORDS: Record<string, string[]> = {
   QA: ['qatar', 'qatari', 'doha', 'al jazeera'],
 };
 
-const ADVISORY_LEVELS_FALLBACK: Record<string, 'do-not-travel' | 'reconsider' | 'caution'> = {
-  // These floors are score-affecting methodology inputs; new country additions
-  // must go through a formula-version/docs changelog batch.
-  UA: 'do-not-travel', SY: 'do-not-travel', YE: 'do-not-travel', MM: 'do-not-travel',
-  IL: 'reconsider', IR: 'reconsider', PK: 'reconsider', VE: 'reconsider', CU: 'reconsider', MX: 'reconsider',
-  RU: 'caution', TR: 'caution', IQ: 'reconsider', AF: 'do-not-travel', LB: 'reconsider',
-};
-
 type AdvisoryLevel = 'do-not-travel' | 'reconsider' | 'caution';
+/**
+ * `live`: this build's advisory read. `fallback`: the last good live snapshot,
+ * read because this build's read was missing or stale (see
+ * CII_ADVISORY_MAX_AGE_MS). `absent`: no advisory level reached the score.
+ */
 type AdvisoryProvenance = 'live' | 'fallback' | 'absent';
 
 function isAdvisoryLevel(value: unknown): value is AdvisoryLevel {
@@ -149,9 +147,40 @@ function isAdvisoryProvenance(value: unknown): value is AdvisoryProvenance {
   return value === 'live' || value === 'fallback' || value === 'absent';
 }
 
-function advisoryFallbackLevel(region: string | undefined | null): AdvisoryLevel | null {
-  const code = String(region || '').trim().toUpperCase();
-  return ADVISORY_LEVELS_FALLBACK[code] ?? null;
+/**
+ * App-owned copy of the last advisory levels a build read live, with the
+ * seeder's clock. Read only when the live read is missing or stale.
+ */
+export const CII_ADVISORY_LAST_GOOD_KEY = 'intelligence:advisories:cii-last-good:v1';
+
+interface AdvisorySnapshot {
+  byCountry: Record<string, AdvisoryLevel>;
+  /** The seeder's `fetchedAt`; null for a live payload written before it carried one. */
+  fetchedAtMs: number | null;
+}
+
+function advisoryClockMs(value: unknown): number | null {
+  const ms = typeof value === 'number' ? value : typeof value === 'string' ? Date.parse(value) : NaN;
+  return Number.isFinite(ms) && ms > 0 ? ms : null;
+}
+
+/**
+ * An advisory payload the scorer may use at `nowMs`, or null. A payload past
+ * CII_ADVISORY_MAX_AGE_MS, or dated in the future, is unknown. `requireClock`
+ * is for the last-good copy, which is only ever written with the seeder clock;
+ * a live payload without one is dated by its producer key's 3-hour TTL.
+ */
+function advisorySnapshotFromSeed(raw: unknown, nowMs: number, requireClock: boolean): AdvisorySnapshot | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const byCountry = (raw as { byCountry?: unknown }).byCountry;
+  if (!byCountry || typeof byCountry !== 'object' || Array.isArray(byCountry)) return null;
+  const fetchedAtMs = advisoryClockMs((raw as { fetchedAt?: unknown }).fetchedAt);
+  if (fetchedAtMs === null) {
+    if (requireClock || (raw as { fetchedAt?: unknown }).fetchedAt != null) return null;
+  } else if (fetchedAtMs > nowMs || nowMs - fetchedAtMs > CII_ADVISORY_MAX_AGE_MS) {
+    return null;
+  }
+  return { byCountry: byCountry as Record<string, AdvisoryLevel>, fetchedAtMs };
 }
 
 // ========================================================================
@@ -845,7 +874,9 @@ export interface AuxiliarySources {
   gpsHexes: any[];
   iranEvents: any[];
   orefData: { activeAlertCount: number; historyCount24h: number } | null;
-  advisories: { byCountry: Record<string, 'do-not-travel' | 'reconsider' | 'caution'> } | null;
+  // `provenance` 'fallback' marks the last good live snapshot standing in for a
+  // missing or stale read; `fetchedAtMs` is the seeder clock when known.
+  advisories: { byCountry: Record<string, 'do-not-travel' | 'reconsider' | 'caution'>; provenance?: 'live' | 'fallback'; fetchedAtMs?: number | null } | null;
   // Per-country displaced population by ISO3 code (UNHCR — persists after ceasefires)
   displacedByIso3: Record<string, number>;
   crossBorderSurgeCountries?: string[];
@@ -1025,6 +1056,12 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     : null;
   const firesRaw = firesSummaryRaw
     ?? (firesCanonicalRaw == null ? null : summarizeWildfireDetections(firesCanonicalRaw) ?? firesCanonicalRaw);
+  // The last good advisory snapshot is read only when the live read cannot be
+  // scored. An errored read rejects the build like any other input.
+  const nowMs = Date.now();
+  const advisoriesLastGoodRaw = advisorySnapshotFromSeed(advisoriesRaw, nowMs, false) == null
+    ? (await readRiskInputs([{ key: CII_ADVISORY_LAST_GOOD_KEY, raw: false }]))[0]
+    : null;
   const borderSnapshots = await readRiskInputs(CROSS_BORDER_SOURCES.map(source => ({ key: source.key, raw: true, envelope: true })));
   return buildCiiAuxiliarySources({
     ucdp: ucdpRaw,
@@ -1035,6 +1072,7 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     iranEvents: iranRaw,
     oref: orefRaw,
     advisories: advisoriesRaw,
+    advisoriesLastGood: advisoriesLastGoodRaw,
     displacement: displacementRaw,
     newsInsights: insightsRaw,
     threatSummary: threatSummaryRaw,
@@ -1047,7 +1085,7 @@ async function fetchAuxiliarySources(): Promise<AuxiliarySources> {
     gdeltCountryEvents: countryEventsRaw,
     strikePressure: strikePressureRaw,
     crossBorder: Object.fromEntries(CROSS_BORDER_SOURCES.map((source, i) => [source.id, borderSnapshots[i]])),
-  }, Date.now(), { iranEventsEnabled: IRAN_EVENTS_ENABLED });
+  }, nowMs, { iranEventsEnabled: IRAN_EVENTS_ENABLED });
 }
 
 /**
@@ -1067,6 +1105,8 @@ export interface CiiRawInputs {
   iranEvents?: unknown;
   oref?: unknown;
   advisories?: unknown;
+  /** CII_ADVISORY_LAST_GOOD_KEY; the build reads it only when `advisories` cannot be scored. */
+  advisoriesLastGood?: unknown;
   displacement?: unknown;
   newsInsights?: unknown;
   threatSummary?: unknown;
@@ -1104,6 +1144,8 @@ export function buildCiiAuxiliarySources(
   const iranRaw = iranEventsEnabled ? raw.iranEvents ?? null : null;
   const orefRaw = raw.oref ?? null;
   const advisoriesRaw = raw.advisories ?? null;
+  const advisoriesLive = advisorySnapshotFromSeed(advisoriesRaw, nowMs, false);
+  const advisoriesLastGood = advisoriesLive ? null : advisorySnapshotFromSeed(raw.advisoriesLastGood, nowMs, true);
   const displacementRaw = raw.displacement ?? null;
   const insightsRaw = raw.newsInsights ?? null;
   const threatSummaryRaw = raw.threatSummary ?? null;
@@ -1201,9 +1243,9 @@ export function buildCiiAuxiliarySources(
     gpsHexes: arr(gpsRaw, 'hexes'),
     iranEvents: arr(iranRaw, 'events'),
     orefData,
-    advisories: advisoriesRaw && typeof advisoriesRaw === 'object' && (advisoriesRaw as any).byCountry
-      ? { byCountry: (advisoriesRaw as any).byCountry }
-      : null,
+    advisories: advisoriesLive
+      ? { ...advisoriesLive, provenance: 'live' }
+      : advisoriesLastGood ? { ...advisoriesLastGood, provenance: 'fallback' } : null,
     displacedByIso3,
     crossBorderSurgeCountries: borderMovements
       .filter(m => m.kind === 'arrival' && m.surge && !m.stale)
@@ -1243,8 +1285,10 @@ export const CII_HEALTH_INPUT_IDS = [
 ] as const;
 export type CiiInputId = typeof CII_HEALTH_INPUT_IDS[number];
 type CiiInputRead = 'present' | 'missing' | 'not_configured';
-export type CiiInputState = 'live' | 'quiet' | 'missing' | 'unusable' | 'not_configured';
-export interface CiiInputReport { state: CiiInputState; quietSince?: number }
+/** `fallback`: this build's read was missing or stale and the last good snapshot was scored. */
+export type CiiInputState = 'live' | 'quiet' | 'missing' | 'unusable' | 'not_configured' | 'fallback';
+/** `snapshotAt`: for `fallback`, the producer clock of the snapshot scored instead. */
+export interface CiiInputReport { state: CiiInputState; quietSince?: number; snapshotAt?: number }
 
 const CII_INPUT_AUX_FIELD: Record<Exclude<CiiInputId, 'acled'>, keyof AuxiliarySources> = {
   ucdp: 'ucdpEvents',
@@ -1298,7 +1342,9 @@ export function assessCiiInputAvailability(
   } as Record<CiiInputId, CiiInputState>;
   for (const [id, field] of Object.entries(CII_INPUT_AUX_FIELD) as Array<[Exclude<CiiInputId, 'acled'>, keyof AuxiliarySources]>) {
     const read = aux.inputReads?.[id] ?? 'missing';
-    if (read !== 'present') {
+    if (id === 'advisories' && aux.advisories?.provenance === 'fallback') {
+      states[id] = 'fallback';
+    } else if (read !== 'present') {
       states[id] = read;
     } else if (aux[field] == null && CII_INPUT_REJECTED_AS_NULL.has(id)) {
       states[id] = 'unusable';
@@ -1309,11 +1355,21 @@ export function assessCiiInputAvailability(
   return states;
 }
 
-/** Attaches `quietSince`, carried from the previous report while the input stays quiet. */
+/** The producer clock of every snapshot scored in place of a failed read (`fallback`). */
+export function ciiInputSnapshotTimes(aux: AuxiliarySources): Partial<Record<CiiInputId, number>> {
+  const at = aux.advisories?.provenance === 'fallback' ? aux.advisories.fetchedAtMs : null;
+  return typeof at === 'number' ? { advisories: at } : {};
+}
+
+/**
+ * Attaches `quietSince`, carried from the previous report while the input
+ * stays quiet, and `snapshotAt` to a `fallback` input.
+ */
 export function withCiiInputQuietClocks(
   states: Record<CiiInputId, CiiInputState>,
   previousInputs: unknown,
   nowMs: number,
+  snapshotTimes: Partial<Record<CiiInputId, number>> = {},
 ): Record<CiiInputId, CiiInputReport> {
   const previous = previousInputs && typeof previousInputs === 'object'
     ? previousInputs as Record<string, Partial<CiiInputReport> | undefined>
@@ -1321,6 +1377,11 @@ export function withCiiInputQuietClocks(
   const reports = {} as Record<CiiInputId, CiiInputReport>;
   for (const id of CII_HEALTH_INPUT_IDS) {
     const state = states[id];
+    if (state === 'fallback') {
+      const snapshotAt = snapshotTimes[id];
+      reports[id] = typeof snapshotAt === 'number' ? { state, snapshotAt } : { state };
+      continue;
+    }
     if (state !== 'quiet') {
       reports[id] = { state };
       continue;
@@ -1368,12 +1429,10 @@ export function computeCIIScores(
   const data: Record<string, CountrySignals> = {};
   for (const code of Object.keys(TIER1_COUNTRIES)) {
     data[code] = emptySignals();
-    const liveLevel = isAdvisoryLevel(aux.advisories?.byCountry?.[code])
-      ? aux.advisories.byCountry[code]
-      : null;
-    const fallbackLevel = advisoryFallbackLevel(code);
-    data[code].advisoryLevel = liveLevel || fallbackLevel;
-    data[code].advisoryProvenance = liveLevel ? 'live' : fallbackLevel ? 'fallback' : 'absent';
+    // Only the advisory feed sets a level; a country it does not list is absent.
+    const level = aux.advisories?.byCountry?.[code];
+    data[code].advisoryLevel = isAdvisoryLevel(level) ? level : null;
+    data[code].advisoryProvenance = isAdvisoryLevel(level) ? aux.advisories!.provenance ?? 'live' : 'absent';
   }
 
   // --- Displacement ingestion (UNHCR — persists after ceasefires) ---
@@ -1989,12 +2048,8 @@ export function normalizeRiskScoreAdvisoryDisclosure(response: GetRiskScoresResp
         return score;
       }
 
-      const fallbackLevel = advisoryFallbackLevel(score.region);
-      return {
-        ...score,
-        advisoryLevel: fallbackLevel ?? '',
-        advisoryProvenance: fallbackLevel ? 'fallback' : 'absent',
-      };
+      // The level this score used is not recorded, so none is claimed.
+      return { ...score, advisoryLevel: '', advisoryProvenance: 'absent' };
     }),
   };
 }
@@ -2212,11 +2267,28 @@ async function recordRejectedRiskScoresBuild(err: RiskInputsUnavailableError): P
   ).catch(() => undefined);
 }
 
-async function buildRiskScoresPayload(): Promise<{
-  response: GetRiskScoresResponse;
+/** What a build hands to persistence besides the response. */
+interface RiskScoresBuildSide {
   realtimeSignalDensityCoverageCount: number;
-  ciiInputs: Record<CiiInputId, CiiInputState>;
-}> {
+  ciiInputs: Record<CiiInputId, CiiInputState> | null;
+  ciiInputSnapshotAt: Partial<Record<CiiInputId, number>>;
+  /** This build's live advisory levels with the seeder clock, kept as the next last-good snapshot. */
+  advisoriesLastGood: { byCountry: Record<string, AdvisoryLevel>; fetchedAt: number } | null;
+}
+
+/** Tier-1 levels only: the scorer reads nothing else from the snapshot. */
+export function ciiAdvisoryLastGoodSnapshot(aux: AuxiliarySources): RiskScoresBuildSide['advisoriesLastGood'] {
+  const advisories = aux.advisories;
+  if (!advisories || advisories.provenance === 'fallback' || typeof advisories.fetchedAtMs !== 'number') return null;
+  const byCountry: Record<string, AdvisoryLevel> = {};
+  for (const code of Object.keys(TIER1_COUNTRIES)) {
+    const level = advisories.byCountry[code];
+    if (isAdvisoryLevel(level)) byCountry[code] = level;
+  }
+  return { byCountry, fetchedAt: advisories.fetchedAtMs };
+}
+
+async function buildRiskScoresPayload(): Promise<RiskScoresBuildSide & { response: GetRiskScoresResponse }> {
   const nowMs = Date.now();
   const [acled, aux, priorCiiScores] = await Promise.all([
     fetchACLEDEvents(),
@@ -2234,6 +2306,8 @@ async function buildRiskScoresPayload(): Promise<{
     response: { ciiScores, strategicRisks, degraded: false, stale: false },
     realtimeSignalDensityCoverageCount,
     ciiInputs: assessCiiInputAvailability(acled, aux, nowMs),
+    ciiInputSnapshotAt: ciiInputSnapshotTimes(aux),
+    advisoriesLastGood: ciiAdvisoryLastGoodSnapshot(aux),
   };
 }
 
@@ -2241,16 +2315,16 @@ const RISK_SEED_META_KEY = 'seed-meta:intelligence:risk-scores';
 
 async function persistFreshRiskScorePayload(
   freshResult: GetRiskScoresResponse,
-  realtimeSignalDensityCoverageCount: number,
-  ciiInputs: Record<CiiInputId, CiiInputState> | null,
+  side: RiskScoresBuildSide,
   options: { liveCache?: boolean } = {},
 ): Promise<void> {
+  const { realtimeSignalDensityCoverageCount, ciiInputs, advisoriesLastGood } = side;
   const fetchedAt = Date.now();
   // The previous report carries each quiet input's clock. An unreadable one
   // restarts the clocks, which can only delay a quiet-too-long verdict.
   const previousMeta = ciiInputs ? await getCachedJson(RISK_SEED_META_KEY).catch(() => null) : null;
   const inputs = ciiInputs
-    ? withCiiInputQuietClocks(ciiInputs, (previousMeta as { inputs?: unknown } | null)?.inputs, fetchedAt)
+    ? withCiiInputQuietClocks(ciiInputs, (previousMeta as { inputs?: unknown } | null)?.inputs, fetchedAt, side.ciiInputSnapshotAt)
     : undefined;
   const writes: Array<Promise<unknown>> = [
     setCachedJson(RISK_STALE_CACHE_KEY, freshResult, RISK_STALE_TTL),
@@ -2262,6 +2336,10 @@ async function persistFreshRiskScorePayload(
       604800,
     ),
   ];
+  // Expires when it could no longer be scored; the reader re-checks the age.
+  if (advisoriesLastGood) {
+    writes.push(setCachedJson(CII_ADVISORY_LAST_GOOD_KEY, advisoriesLastGood, Math.ceil(CII_ADVISORY_MAX_AGE_MS / 1000)));
+  }
 
   if (options.liveCache) writes.unshift(setCachedJson(RISK_CACHE_KEY, freshResult, RISK_CACHE_TTL));
   await Promise.all(writes.map((write) => write.catch(() => undefined)));
@@ -2276,16 +2354,16 @@ export async function getRiskScores(
   req: GetRiskScoresRequest,
 ): Promise<GetRiskScoresResponse> {
   try {
-    let realtimeSignalDensityCoverageCount = 0;
-    let ciiInputs: Record<CiiInputId, CiiInputState> | null = null;
+    let side: RiskScoresBuildSide = {
+      realtimeSignalDensityCoverageCount: 0, ciiInputs: null, ciiInputSnapshotAt: {}, advisoriesLastGood: null,
+    };
     const { data: result, source, leader } = await cachedFetchJsonWithMeta<GetRiskScoresResponse>(
       RISK_CACHE_KEY,
       RISK_CACHE_TTL,
       async () => {
-        const built = await buildRiskScoresPayload();
-        realtimeSignalDensityCoverageCount = built.realtimeSignalDensityCoverageCount;
-        ciiInputs = built.ciiInputs;
-        return built.response;
+        const { response, ...built } = await buildRiskScoresPayload();
+        side = built;
+        return response;
       },
       undefined,
       // A rejected build must leave RISK_CACHE_KEY untouched: no NEG_SENTINEL,
@@ -2297,10 +2375,9 @@ export async function getRiskScores(
       let liveCacheBackfill = false;
       if (!hasCompleteRiskScoreAdvisoryDisclosure(freshResult)) {
         try {
-          const built = await buildRiskScoresPayload();
-          realtimeSignalDensityCoverageCount = built.realtimeSignalDensityCoverageCount;
-          ciiInputs = built.ciiInputs;
-          freshResult = withRiskScoreRuntimeState(built.response, { degraded: false, stale: false });
+          const { response, ...built } = await buildRiskScoresPayload();
+          side = built;
+          freshResult = withRiskScoreRuntimeState(response, { degraded: false, stale: false });
           liveCacheBackfill = true;
         } catch {
           freshResult = withRiskScoreRuntimeState(normalizeRiskScoreAdvisoryDisclosure(freshResult), {
@@ -2334,9 +2411,7 @@ export async function getRiskScores(
       // 7-day TTL matches the warm-ping write so health.maxStaleMin (30min)
       // logic is unchanged.
       if ((source === 'fresh' && leader) || liveCacheBackfill) {
-        await persistFreshRiskScorePayload(freshResult, realtimeSignalDensityCoverageCount, ciiInputs, {
-          liveCache: liveCacheBackfill,
-        });
+        await persistFreshRiskScorePayload(freshResult, side, { liveCache: liveCacheBackfill });
       }
       return filterRiskScoresResponse(freshResult, req.region);
     }

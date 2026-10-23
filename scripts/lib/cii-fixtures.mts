@@ -231,6 +231,12 @@ function trimStrikeTally(raw: unknown): unknown {
   return { version: raw.version, updatedAt: raw.updatedAt, days };
 }
 
+/** Tier-1 levels plus `fetchedAt`, the producer clock the advisory age gate reads. */
+function trimAdvisories(v: any): Obj {
+  if (!isObj(v.byCountry)) return {};
+  return { byCountry: tier1Entries(v.byCountry), ...(v.fetchedAt != null ? { fetchedAt: v.fetchedAt } : {}) };
+}
+
 export function trimCiiRawInputs(raw: CiiRawInputs): CiiRawInputs {
   const nullable = <T,>(v: unknown, fn: (v: any) => T): T | null => (v == null ? null : fn(v));
   return {
@@ -264,7 +270,9 @@ export function trimCiiRawInputs(raw: CiiRawInputs): CiiRawInputs {
       }),
     })),
     oref: nullable(raw.oref, (v) => pick(v, ['activeAlertCount', 'historyCount24h'])),
-    advisories: nullable(raw.advisories, (v) => (isObj(v.byCountry) ? { byCountry: tier1Entries(v.byCountry) } : {})),
+    advisories: nullable(raw.advisories, trimAdvisories),
+    // Read by production only when the live advisory read cannot be scored.
+    ...(raw.advisoriesLastGood != null ? { advisoriesLastGood: trimAdvisories(raw.advisoriesLastGood) } : {}),
     displacement: trimDisplacement(raw.displacement),
     newsInsights: nullable(raw.newsInsights, (v) => ({
       topStories: (Array.isArray(v.topStories) ? v.topStories : []).map(trimNewsStory),

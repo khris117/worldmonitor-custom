@@ -14,10 +14,15 @@ import { after, describe, it } from 'node:test';
 
 import iso3ToIso2 from '../shared/iso3-to-iso2.json' with { type: 'json' };
 import { ciiScoredVersion, loadCiiFixtures, pairsOrderedAgainstBlend, readCiiVersionClaim, type CiiFixture } from '../scripts/lib/cii-fixtures.mts';
+import { assessCiiInputs } from '../api/_cii-input-health.js';
 import {
   assessCiiInputAvailability,
   buildCiiAuxiliarySources,
+  ciiInputSnapshotTimes,
+  computeCiiScoreTable,
+  type CiiRawInputs,
   scoreCiiAuxiliarySources,
+  withCiiInputQuietClocks,
   type AuxiliarySources,
   type CiiScoreTableRow,
 } from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
@@ -38,8 +43,10 @@ const KNOWN_GAPS: Record<string, ReadonlySet<string>> = {
     'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P7b', 'P8', 'P9', 'P10',
     'P11a', 'P12a', 'P12b', 'P14', 'P15b', 'P15e',
   ]),
+  // B2 split P8: P8a (no country moves > K) is still a gap, P8b (an alarm on
+  // an advisory provenance flip) now holds.
   v15: new Set([
-    'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P7b', 'P8', 'P9', 'P10',
+    'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P7b', 'P8a', 'P9', 'P10',
     'P11a', 'P12a', 'P12b', 'P14', 'P15b', 'P15e',
   ]),
 };
@@ -334,28 +341,69 @@ function measureP7b(): Measurement {
   return { pass: bad.length === 0, value: `outages: ${c.mapped} of ${c.records} records map to a country, health reads ${c.state} (want unusable)` };
 }
 
-const FAILED_INPUT: Record<string, Partial<AuxiliarySources>> = {
+// A failed advisory read scores the last good snapshot (here: the fixture's own
+// live levels) for up to CII_ADVISORY_MAX_AGE_MS; measureP8a also reports the
+// move once that snapshot has expired.
+const FAILED_INPUT: Record<string, Partial<AuxiliarySources> | ((aux: AuxiliarySources) => Partial<AuxiliarySources>)> = {
   ucdp: { ucdpEvents: [] }, outages: { outages: [] }, climate: { climate: [] }, fires: { fires: null },
-  gpsjam: { gpsHexes: [] }, iranEvents: { iranEvents: [] }, oref: { orefData: null }, advisories: { advisories: null },
+  gpsjam: { gpsHexes: [] }, iranEvents: { iranEvents: [] }, oref: { orefData: null },
+  advisories: (aux) => ({ advisories: aux.advisories ? { ...aux.advisories, provenance: 'fallback' } : null }),
   displacement: { displacedByIso3: {} }, crossBorder: { crossBorderSurgeCountries: [] }, newsInsights: { newsTopStories: [] },
   threatSummary: { threatSummaryByCountry: null }, aviation: { aviationAlerts: [] }, earthquakes: { earthquakes: [] },
   sanctions: { sanctionsCountries: [], sanctionsCountryCounts: null }, militaryCii: { militaryCii: null },
   gdeltCountryEvents: { gdeltCountryEvents: null }, strikePressure: { confirmedStrikes: null },
 };
 
-function measureP8(): Measurement {
+function measureP8a(): Measurement {
   const moves: Array<{ input: string; code: string; label: string; delta: number }> = [];
+  const expired: number[] = [];
   for (const { f, table } of fixtureTables) {
     const aux = parse(f);
     for (const [input, failed] of Object.entries(FAILED_INPUT)) {
-      const next = score({ ...aux, ...failed }, f.nowMs);
+      const next = score({ ...aux, ...(typeof failed === 'function' ? failed(aux) : failed) }, f.nowMs);
       for (const code of CODES) moves.push({ input, code, label: f.label, delta: S(next, code) - S(table, code) });
     }
+    const unknown = score({ ...aux, advisories: null }, f.nowMs);
+    for (const code of CODES) expired.push(S(unknown, code) - S(table, code));
   }
   const top = worst(moves, (m) => Math.abs(m.delta), 3);
+  const advisory = worst(moves.filter((m) => m.input === 'advisories'), (m) => Math.abs(m.delta), 1)[0]!;
+  const lost = worst(expired, (d) => Math.abs(d), 1)[0]!;
   return {
     pass: top.every((m) => Math.abs(m.delta) <= 10),
-    value: `one failed input moves a country by up to ${top.map((m) => `${m.code} ${m.delta > 0 ? '+' : ''}${m.delta} (${m.input})`).join(', ')}; limit K = 10; no provenance-flip alarm exists`,
+    value: `one failed input moves a country by up to ${top.map((m) => `${m.code} ${m.delta > 0 ? '+' : ''}${m.delta} (${m.input})`).join(', ')}; limit K = 10; a failed advisory read moves at most ${Math.abs(advisory.delta)} while its snapshot lasts, ${lost} once it has expired`,
+  };
+}
+
+/** P8b: no score discloses an advisory level other than this build's live read without an input-health alarm. */
+function measureP8b(): Measurement {
+  const silent: string[] = [];
+  let flips = 0;
+  for (const f of FIXTURES) {
+    const live = f.inputs.advisories as { byCountry?: Record<string, string> } | null;
+    const snapshot = live?.byCountry ? { byCountry: live.byCountry, fetchedAt: f.nowMs - HOUR_MS } : null;
+    const cases: Record<string, CiiRawInputs> = {
+      live: f.inputs,
+      'partial live map': { ...f.inputs, advisories: { byCountry: Object.fromEntries(Object.entries(live?.byCountry ?? {}).slice(0, 5)) } },
+      'failed read with snapshot': { ...f.inputs, advisories: null, advisoriesLastGood: snapshot },
+      'failed read': { ...f.inputs, advisories: null },
+    };
+    for (const [name, inputs] of Object.entries(cases)) {
+      const t = computeCiiScoreTable(inputs, { nowMs: f.nowMs, iranEventsEnabled: f.iranEventsEnabled });
+      const flipped = t.scores.filter((s) => s.advisoryProvenance !== 'live' && s.advisoryProvenance !== 'absent');
+      if (flipped.length === 0) continue;
+      flips += 1;
+      const states = assessCiiInputAvailability([], t.aux, f.nowMs, false);
+      const reports = withCiiInputQuietClocks(states, null, f.nowMs, ciiInputSnapshotTimes(t.aux));
+      const alarmed = assessCiiInputs({ inputs: reports }, f.nowMs).dead.some((d: { id: string }) => d.id === 'advisories');
+      if (!alarmed) silent.push(`${f.label}/${name}: ${flipped.map((s) => s.region).join(' ')}`);
+    }
+  }
+  return {
+    pass: silent.length === 0,
+    value: silent.length
+      ? `${silent.length} case(s) disclose a non-live advisory level with no alarm, e.g. ${silent[0]}`
+      : `${flips} non-live provenance case(s), each raised as an advisories input alarm`,
   };
 }
 
@@ -592,7 +640,8 @@ const PROPERTIES: Array<{ id: string; title: string; measure: () => Measurement 
   { id: 'P5c', title: 'preserves information: 0 pairs ordered against the evidence', measure: measureP5c },
   { id: 'P7a', title: 'unknown ≠ calm: a nulled input sets coverage < 1', measure: measureP7a },
   { id: 'P7b', title: 'unknown ≠ calm: a reader mapping 0 of N records is unusable, not quiet', measure: measureP7b },
-  { id: 'P8', title: 'robust to a failed input: no country moves by > 10', measure: measureP8 },
+  { id: 'P8a', title: 'robust to a failed input: no country moves by > 10', measure: measureP8a },
+  { id: 'P8b', title: 'robust to a failed input: an alarm fires on an advisory provenance flip', measure: measureP8b },
   { id: 'P9', title: 'window honesty: the cached window equals the calibrated window', measure: measureP9 },
   { id: 'P10', title: 'normalisation: more infrastructure never raises S', measure: measureP10 },
   { id: 'P11a', title: "exclusion: A's strikes on B leave A unchanged", measure: measureP11a },

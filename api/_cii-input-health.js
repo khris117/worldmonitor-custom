@@ -10,6 +10,9 @@
 //                   (`quietSince` is when that started)
 //   missing         the Redis key was absent
 //   unusable        present, but the scorer rejected it (too old or malformed)
+//   fallback        missing or rejected, so the scorer used the last good
+//                   snapshot (`snapshotAt` is its producer clock). Scores hold
+//                   steady, but the input is not being refreshed: a dead input.
 //   not_configured  disabled by deployment design (no ACLED credentials,
 //                   IRAN_EVENTS_ENABLED off)
 // An unreadable key rejects the whole build, so it surfaces as a stale
@@ -63,7 +66,7 @@ export const CII_INPUT_POLICY = Object.freeze({
   families: Object.freeze(Object.fromEntries(Object.entries(FAMILIES).map(([id, members]) => [id, Object.freeze(members)]))),
 });
 
-const PRODUCER_STATES = new Set(['live', 'quiet', 'missing', 'unusable', 'not_configured']);
+const PRODUCER_STATES = new Set(['live', 'quiet', 'missing', 'unusable', 'not_configured', 'fallback']);
 // Only "past its own staleness budget" marks an input stale here. Every other
 // source-check fault is either reported by the producer (missing key) or
 // leaves usable retained data behind (SEED_ERROR).
@@ -95,6 +98,12 @@ export function assessCiiInputs(meta, now, sourceStatuses = {}) {
       notConfigured.push(id);
     } else if (state === 'missing' && cfg.missingIsQuiet) {
       healthy.add(id);
+    } else if (state === 'fallback') {
+      // A provenance flip: the scores still stand on an older snapshot.
+      const snapshotAt = Number(report.snapshotAt);
+      dead.push(Number.isFinite(snapshotAt) && snapshotAt > 0 && snapshotAt <= now + QUIET_CLOCK_SKEW_MS
+        ? { id, state, ageMin: Math.max(0, Math.floor((now - snapshotAt) / 60_000)) }
+        : { id, state });
     } else if (state === 'missing' || state === 'unusable' || state === 'unreported') {
       dead.push({ id, state });
     } else if (sourceCheck) {
