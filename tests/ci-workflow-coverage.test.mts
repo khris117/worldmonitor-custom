@@ -1136,6 +1136,8 @@ describe('CI workflow coverage', () => {
     // download() runs before ||, so without errexit: a failed dependency
     // download must fail the function, or the stale-index refresh is skipped.
     assert.match(download.run, /redis-server redis-tools \\\n\s*&& \(cd ~\/\.cache\/wm-redis-debs && sudo apt-get download redis-server redis-tools\)/);
+    // ...and a failed download refreshes the stale index, then retries once.
+    assert.match(download.run, /\ndownload \|\| \{ sudo apt-get update -qq && download; \}\n/);
     const install = steps.find((step: { name?: string }) => step.name === 'Install Redis packages');
     assert.match(install.run, /sudo dpkg -i "\$\{debs\[@\]\}"/);
     assert.doesNotMatch(install.run, /apt-get install[^\n]*\.deb/, 'apt-get must not install the cached .deb paths');
