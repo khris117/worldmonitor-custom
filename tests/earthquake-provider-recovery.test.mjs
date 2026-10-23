@@ -116,6 +116,22 @@ test('failure onset survives expired coverage and repeated failures until recove
   assert.equal(recovered._providerSnapshots.usgs.consecutiveFailures, 1);
 });
 
+test('invalid failure onsets are replaced without granting expired coverage grace', async () => {
+  const nowMs = NOW + 40 * MIN;
+  for (const firstFailureAt of [undefined, null, 0, -1, 'invalid', nowMs + MIN]) {
+    const data = await fetchMergedEarthquakes({
+      fetchUsgs: async () => feed('usgs', nowMs), fetchNrcan: fail,
+      previousSources: { nrcan: { consecutiveFailures: 3, firstFailureAt } }, nowMs,
+    });
+    assert.equal(data._providerSnapshots.nrcan.firstFailureAt, nowMs);
+    assert.equal(data._providerSnapshots.nrcan.consecutiveFailures, 4);
+    assert.deepEqual(data.earthquakes.map(e => e.source), ['usgs']);
+    const failed = verdict(data, nowMs);
+    assert.equal(health.healthStatusBucket(failed, nowMs), 'warn');
+    assert.equal(failed.sourceFailurePendingUntil, undefined);
+  }
+});
+
 test('missing, malformed, future, or expired provider coverage never gets pending', async () => {
   const good = await firstRun();
   for (const previousSources of [
