@@ -66,6 +66,12 @@ const INCIDENT_MS = 3 * HOUR_MS;
 // GDELT article) joins an incident at the same place this long after its
 // first report, instead of counting as a new attack.
 const LATE_REPORT_MS = 24 * HOUR_MS;
+// Reports stay in the store this long after the 72h window as incident
+// anchors: an incident keeps its first report, and so its date and id, until
+// every report that could join it has left the window. Without them a strike
+// reported before midnight and updated the next day was re-dated to the
+// update when its first report aged out, and counted on both days.
+const ANCHOR_MS = WINDOW_MS + LATE_REPORT_MS;
 const CORROBORATION_WINDOW_MS = 2 * HOUR_MS;
 const GDELT_FOLD_KM = 50;
 const GDELT_FOLD_WINDOW_MS = 3 * HOUR_MS;
@@ -321,6 +327,10 @@ function inWindow(ts, now) {
   return Number.isFinite(ts) && ts <= now + FUTURE_SKEW_MS && now - ts <= WINDOW_MS;
 }
 
+function inAnchorHorizon(ts, now) {
+  return Number.isFinite(ts) && ts <= now + FUTURE_SKEW_MS && now - ts <= ANCHOR_MS;
+}
+
 // A report the gazetteer could only place at a country centroid keeps the
 // classifier's own place name in its key, so strikes on two unlisted villages
 // stay two incidents instead of merging under the country.
@@ -549,8 +559,10 @@ function normalizeStore(store) {
   };
 }
 
+// A ship hit off a town and a strike on the town are two incidents: one
+// scores no country, the other scores the country hit.
 function placeKeyOf(c) {
-  return `${c.iso2}|${c.placeKey}`;
+  return `${c.iso2}|${c.placeKey}${c.sea ? '|sea' : ''}`;
 }
 
 function groupByPlace(cands) {
@@ -590,7 +602,7 @@ function mergeCandidateStore(previous, additions, now) {
   const store = normalizeStore(previous);
   const byId = new Map();
   for (const c of [...store.candidates, ...(additions || [])]) {
-    if (isValidCandidate(c) && inWindow(c.ts, now)) byId.set(c.id, c);
+    if (isValidCandidate(c) && inAnchorHorizon(c.ts, now)) byId.set(c.id, c);
   }
   // Drop GDELT rows that never reached the source gate once late coverage has
   // had time to arrive. Keep, using the same sessions deriveStrikeEvents
@@ -677,8 +689,16 @@ function incidentKind(telegram, rep) {
   return (trusted.length ? trusted : telegram).some((c) => c.kind === 'strike') ? 'strike' : rep.kind;
 }
 
+// An incident has an attack time only when a report says the attack is new
+// (or gives no recency signal, and is corroborated). One made only of updates
+// is a late report of an attack this window never saw: publishing it at the
+// update's time would count an older attack today.
+function hasAttackTime(telegram) {
+  return telegram.some((c) => c.when !== 'update');
+}
+
 function deriveStrikeEvents(candidates, now) {
-  const valid = (candidates || []).filter((c) => isValidCandidate(c) && inWindow(c.ts, now));
+  const valid = (candidates || []).filter((c) => isValidCandidate(c) && inAnchorHorizon(c.ts, now));
   const byPlace = groupByPlace(valid);
   const incidents = [];
   for (const members of byPlace.values()) {
@@ -690,10 +710,13 @@ function deriveStrikeEvents(candidates, now) {
 
   const events = [];
   const published = [];
+  // An anchor incident (first report past the window) still covers and folds
+  // later reports, as it did while it was in the window; it is not emitted.
   const publish = (rep, telegram, start) => {
-    published.push({ iso2: rep.iso2, placeKey: rep.placeKey, lat: rep.lat, lon: rep.lon, ts: start });
+    published.push({ iso2: rep.iso2, placeKey: rep.placeKey, sea: rep.sea === true, lat: rep.lat, lon: rep.lon, ts: start });
+    if (!inWindow(start, now)) return;
     events.push({
-      id: `tg:${rep.iso2}:${rep.placeKey}:${bucketOf(start) * BUCKET_MS}`,
+      id: `tg:${rep.iso2}:${rep.placeKey}${rep.sea ? ':sea' : ''}:${bucketOf(start) * BUCKET_MS}`,
       title: rep.title,
       category: KIND_CATEGORY[incidentKind(telegram, rep)],
       sourceUrl: rep.url,
@@ -707,7 +730,7 @@ function deriveStrikeEvents(candidates, now) {
       severity: incidentSeverity(telegram),
     });
   };
-  const telegramIncidents = incidents.filter((i) => i.src === 'telegram');
+  const telegramIncidents = incidents.filter((i) => i.src === 'telegram' && hasAttackTime(i.members));
   // Pass 1: incidents carried by their own stand-alone report.
   const pending = [];
   for (const incident of telegramIncidents) {
@@ -722,7 +745,7 @@ function deriveStrikeEvents(candidates, now) {
     const support = byPlace.get(placeKeyOf(first)).filter((c) => Math.abs(c.ts - incident.start) <= CORROBORATION_WINDOW_MS);
     if (!isCorroborated(support)) continue;
     const covered = published.some((p) => p.iso2 === first.iso2 && p.placeKey === first.placeKey
-      && Math.abs(p.ts - incident.start) <= CORROBORATION_WINDOW_MS);
+      && p.sea === (first.sea === true) && Math.abs(p.ts - incident.start) <= CORROBORATION_WINDOW_MS);
     if (covered) continue;
     publish(representative(incident.members), incident.members, incident.start);
   }
@@ -737,7 +760,7 @@ function deriveStrikeEvents(candidates, now) {
     const folded = published.some((p) => p.iso2 === first.iso2
       && first.ts - p.ts >= -GDELT_FOLD_WINDOW_MS && first.ts - p.ts <= LATE_REPORT_MS
       && gazetteer.distanceKm(p.lat, p.lon, first.lat, first.lon) <= GDELT_FOLD_KM);
-    if (folded) continue;
+    if (folded || !inWindow(first.ts, now)) continue;
     events.push({
       id: `gdelt:${first.iso2}:${first.placeKey}:${bucketOf(first.ts) * BUCKET_MS}`,
       title: `GDELT: ${first.label || 'Military force'} reported near ${first.place}, ${gazetteer.COUNTRY_NAMES[first.iso2]} (${support.urls} articles)`,
@@ -837,12 +860,9 @@ function mergeStrikePressure(previous, events, now) {
     if (!ISO2_RE.test(iso2 ?? '') || !PRESSURE_SEVERITIES.includes(severity)) continue;
     if (event.category === KIND_CATEGORY.intercept) continue;
     if (!Number.isFinite(ts) || ts > now + FUTURE_SKEW_MS) continue;
-    // At the window's old edge an incident loses its first report and is
-    // re-dated to a later one, at most LATE_REPORT_MS later, which can be the
-    // next UTC day. Earlier cycles counted it whole, so the edge is skipped
-    // rather than counted again on another day. Each day is still wholly in
-    // view for a day after it ends, so late reports of it are counted.
-    if (ts < now - WINDOW_MS + LATE_REPORT_MS) continue;
+    // No old-edge skip: the store keeps incident anchors past the window
+    // (ANCHOR_MS), so an incident is never re-dated when its first report
+    // ages out; it simply stops being published.
     const day = utcDay(ts);
     if (day < oldest) continue;
     const tally = ((windowDays[day] ??= {})[iso2] ??= PRESSURE_SEVERITIES.map(() => 0));

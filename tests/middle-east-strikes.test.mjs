@@ -296,10 +296,14 @@ describe('dedupe and window', () => {
     assert.equal(strikes.deriveStrikeEvents([aging], NOW).length, 1);
     assert.equal(strikes.deriveStrikeEvents([aging], NOW + 2 * HOUR).length, 0, 'ages out after 72h');
     assert.equal(strikes.buildTelegramCandidate(post('SaudiDCD', 'x', -2 * HOUR), cls(), NOW), null);
-    const expired = { ...candidate('SaudiDCD', cls()), id: 'tg:saudidcd:1', ts: NOW - 80 * HOUR };
-    const store = strikes.mergeCandidateStore({ candidates: [expired] }, [candidate('SaudiDCD', cls())], NOW);
-    assert.equal(store.candidates.length, 1);
-    assert.notEqual(store.candidates[0].id, expired.id, 'the stored candidate past 72h is pruned');
+    // Past the window a report stays one more day as an incident anchor, then goes.
+    const anchor = { ...candidate('SaudiDCD', cls()), id: 'tg:saudidcd:1', ts: NOW - 80 * HOUR };
+    const expired = { ...candidate('SaudiDCD', cls()), id: 'tg:saudidcd:2', ts: NOW - 100 * HOUR };
+    const store = strikes.mergeCandidateStore({ candidates: [anchor, expired] }, [candidate('SaudiDCD', cls())], NOW);
+    assert.equal(store.candidates.length, 2);
+    assert.ok(store.candidates.some((c) => c.id === anchor.id), 'a report past the window stays as an anchor');
+    assert.ok(!store.candidates.some((c) => c.id === expired.id), 'a report 24h past the window is pruned');
+    assert.equal(strikes.deriveStrikeEvents([anchor], NOW).length, 0, 'an anchor is never published');
   });
 
   it('drops out-of-theater and non-strike classifications', () => {
@@ -561,6 +565,41 @@ describe('precision: one incident, once, on the country hit, when it happened', 
     const again = candidate('wfwitness', cls({ place: 'Riyadh', severity: 'high' }), 20 * HOUR);
     const second = candidate('wfwitness', cls({ place: 'Riyadh', severity: 'high' }), 11 * HOUR);
     assert.equal(events([again, second]).length, 2, 'a new attack on the same city 9h later is a second incident');
+  });
+
+  it('does not publish a late update of an attack the window never saw', () => {
+    // An official toll update about yesterday's attack, with no earlier report.
+    const toll = candidate('SaudiDCD', cls({ place: 'Najran', when: 'update', severity: 'critical' }), 2 * HOUR);
+    assert.deepEqual(events([toll]), []);
+    const first = candidate('wfwitness', cls({ place: 'Najran', severity: 'high' }), 20 * HOUR);
+    const out = events([first, toll]);
+    assert.deepEqual(out.map((e) => [e.timestamp, e.severity]), [[first.ts, 'critical']], 'an update joins its strike and dates to it');
+  });
+
+  it('never re-dates an incident when its first report leaves the window', () => {
+    // A strike at 23:55 and its update the next morning: once the 23:55 report
+    // passes 72h, the update must not become a new event on the next day.
+    const midnight = Date.parse('2026-10-16T00:00:00Z');
+    const strike = { ...candidate('SaudiDCD', cls({ place: 'Abha' })), id: 'tg:saudidcd:a', ts: midnight - 5 * MIN };
+    const update = { ...candidate('SaudiDCD', cls({ place: 'Abha', when: 'update' })), id: 'tg:saudidcd:b', ts: midnight + 9 * HOUR };
+    let store = null;
+    for (const now of [midnight + 10 * HOUR, midnight - 5 * MIN + 72 * HOUR + MIN, midnight + 9 * HOUR + 71 * HOUR]) {
+      store = strikes.mergeCandidateStore(store, [strike, update], now);
+      const out = strikes.deriveStrikeEvents(store.candidates, now);
+      for (const e of out) assert.equal(e.timestamp, strike.ts, `${new Date(now).toISOString()}: dated to the strike, not the update`);
+    }
+    assert.equal(strikes.deriveStrikeEvents(store.candidates, midnight + 9 * HOUR + 71 * HOUR).length, 0);
+  });
+
+  it('keeps a ship hit off a town and a strike on the town as two incidents', () => {
+    const ship = candidate('wfwitness', cls({ place: 'Duqm', countryIso2: 'OM', atSea: true, severity: 'elevated' }), 2 * HOUR);
+    const port = candidate('OSINTdefender', cls({ place: 'Duqm', countryIso2: 'OM', severity: 'high' }), 90 * MIN);
+    for (const order of [[ship, port], [port, ship]]) {
+      const out = events(order);
+      assert.deepEqual(out.map((e) => e.countryCode).sort(), ['', 'OM']);
+      assert.equal(new Set(out.map((e) => e.id)).size, 2);
+      assert.deepEqual(tally(out), { '2026-10-19': { OM: [0, 1, 0, 0] } });
+    }
   });
 
   it('keeps strikes on two unlisted villages of one country apart', () => {
