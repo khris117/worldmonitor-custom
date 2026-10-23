@@ -43,6 +43,7 @@ function readWorkbookStream(bytes) {
   }
 
   const readChain = (start, size) => {
+    if (size > bytes.length) return null; // a stream cannot be larger than the file holding it
     const out = new Uint8Array(size);
     let written = 0;
     for (let sec = start, guard = 0; sec < CFB_END_OF_CHAIN && written < size && guard <= fat.length; sec = fat[sec], guard++) {
@@ -273,11 +274,16 @@ export function extractSentimentData(rows) {
     let date;
     if (typeof rawDate === 'number' && rawDate > 30000) {
       date = excelDateToISO(rawDate);
-    } else if (typeof rawDate === 'string' && /^(\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}\/\d{4})$/.test(rawDate.trim())) {
+    } else if (typeof rawDate === 'string') {
       // Strict formats only: footer rows like "Max '01" or "Count '25" parse as dates in V8.
-      const parsed = new Date(rawDate.trim());
-      if (!Number.isNaN(parsed.getTime())) {
-        date = parsed.toISOString().slice(0, 10);
+      // Build the date in UTC; new Date('1/2/2026') is local midnight and shifts east of UTC.
+      const t = rawDate.trim();
+      const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const mdy = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+      const [y, m, d] = iso ? [+iso[1], +iso[2], +iso[3]] : mdy ? [+mdy[3], +mdy[1], +mdy[2]] : [];
+      if (y) {
+        const parsed = new Date(Date.UTC(y, m - 1, d));
+        if (parsed.getUTCMonth() === m - 1 && parsed.getUTCDate() === d) date = parsed.toISOString().slice(0, 10);
       }
     }
     if (!date) continue;

@@ -62,6 +62,14 @@ describe('AAII Sentiment seed parsing', () => {
       assert.equal(result[0].neutral, 30);
     });
 
+    it('reads M/D/YYYY strings as UTC calendar dates in any process time zone', () => {
+      const rows = [
+        ['Date', 'Bullish', 'Neutral', 'Bearish'],
+        ['1/2/2026', 40, 30, 30],
+      ];
+      assert.equal(extractSentimentData(rows)[0].date, '2026-01-02');
+    });
+
     it('returns empty array when no header found', () => {
       const rows = [
         ['foo', 'bar', 'baz'],
@@ -188,9 +196,25 @@ describe('AAII Sentiment seed parsing', () => {
     });
 
     it('skips footer summary rows', () => {
+      // The fixture's footer is "Count '25" with counts of 52, which V8 parses as a 2001 date.
       const data = extractSentimentData(parseXlsRows(buildAaiiXlsFixture()));
-      assert.ok(data.length > 0);
-      assert.ok(data.every((w) => w.bullish <= 100 && w.bearish <= 100), 'footer counts leaked in as a week');
+      assert.equal(data.length, FIXTURE_WEEKS);
+      assert.ok(!data.some((w) => w.bullish === 52 && w.bearish === 52), 'footer counts leaked in as a week');
+    });
+
+    it('decodes cached FORMULA results', () => {
+      const rows = parseXlsRows(buildAaiiXlsFixture());
+      const w = 10;
+      assert.equal(rows[3 + w][6], ((20 + (w % 40)) - (15 + (w % 30))) / 100);
+    });
+
+    it('rejects a Workbook stream larger than the file', () => {
+      const buf = buildAaiiXlsFixture();
+      const bytes = new Uint8Array(buf);
+      const dv = new DataView(buf);
+      const dirOff = (dv.getUint32(0x30, true) + 1) * 512;
+      dv.setUint32(dirOff + 128 + 0x78, 0xFFFFFFF0, true); // Workbook entry size
+      assert.deepEqual(parseXlsRows(bytes.buffer), []);
     });
 
     it('returns empty array for non-XLS data', () => {
