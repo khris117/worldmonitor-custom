@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AppContext } from '@/app/app-context';
 import type { AirportDelayAlert } from '@/services/aviation';
 import { initTestI18n } from './helpers/i18n.mts';
@@ -9,7 +9,6 @@ vi.mock('@/app/lazy-services', () => ({
   getSignalAggregator: async () => ({ getCountryClusters: () => [] }),
 }));
 import { CountryIntelManager } from '@/app/country-intel';
-import { formatAirportDisruptionLine } from '@/services/country-aviation-context';
 
 function alert(overrides: Partial<AirportDelayAlert>): AirportDelayAlert {
   return {
@@ -31,8 +30,9 @@ beforeAll(async () => {
   await initTestI18n();
 });
 
-describe('Country Brief airport disruptions', () => {
+describe('Country Brief airport disruption signal', () => {
   beforeEach(() => { aviation.fetchFlightDelays.mockReset(); });
+  afterEach(() => { vi.useRealTimers(); });
 
   it('counts a NOTAM closure while the Aviation layer is off', async () => {
     // The layer being off leaves intelligenceCache.flightDelays unset.
@@ -53,32 +53,11 @@ describe('Country Brief airport disruptions', () => {
     expect((await manager().getCountrySignals('SA', 'Saudi Arabia')).aviationDisruptions).toBe(0);
   });
 
-  it('names the closed airport and its NOTAM reason in the brief context', async () => {
-    aviation.fetchFlightDelays.mockResolvedValue([RUH_MINOR, JED_CLOSED, CDG_CLOSED]);
-    const intel = manager();
-    const disruptions = await Reflect.get(intel, 'countryAviationDisruptions').call(intel, 'SA', 'Saudi Arabia');
-    const signals = await intel.getCountrySignals('SA', 'Saudi Arabia');
-    const prompt = Reflect.get(intel, 'buildBriefContextSnapshot').call(
-      intel, 'Saudi Arabia', 'SA', null, signals, { airportDisruptions: formatAirportDisruptionLine(disruptions) },
-    );
-    expect(prompt).toContain('Airport disruptions: JED King Abdulaziz: closed (AD CLSD DUE TO MIL ACT)');
-    expect(prompt).not.toContain('RUH');
-    expect(prompt).not.toContain('CDG');
-  });
-});
-
-describe('formatAirportDisruptionLine', () => {
-  it('lists closures first, caps the list, and keeps upstream text on one short line', () => {
-    const many = Array.from({ length: 7 }, (_, i) => alert({ id: `m${i}`, iata: `M${i}`, delayType: 'general', severity: 'major', reason: `line one\nline two ${'x'.repeat(200)}` }));
-    const line = formatAirportDisruptionLine([...many, JED_CLOSED]);
-    expect(line.startsWith('Airport disruptions: JED King Abdulaziz: closed')).toBe(true);
-    expect(line).toContain('; +3 more');
-    expect(line).not.toContain('\n');
-    expect(line).toContain('major disruption (line one line two');
-    expect(line).toContain('…');
-  });
-
-  it('is empty when nothing is disrupted', () => {
-    expect(formatAirportDisruptionLine([])).toBe('');
+  it('does not hold the brief open on a hung aviation request', async () => {
+    vi.useFakeTimers();
+    aviation.fetchFlightDelays.mockReturnValue(new Promise(() => {}));
+    const pending = manager().getCountrySignals('SA', 'Saudi Arabia');
+    await vi.advanceTimersByTimeAsync(2500);
+    expect((await pending).aviationDisruptions).toBe(0);
   });
 });

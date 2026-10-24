@@ -16,7 +16,7 @@ const bundled = await build({
   stdin: { contents: `
 import { buildImfEconomicIndicators } from './src/services/imf-country-data';
 import { CountryBriefController } from './src/components/CountryBriefController';
-import { formatAirportDisruptionLine, isBriefAviationDisruption } from './src/services/country-aviation-context';
+import { isBriefAviationDisruption } from './src/services/country-aviation-context';
 const fixture = globalThis.__ciiPresentationTest;
 const createWebsiteCountryBriefSource = () => ({ mode: 'website', clearLoadedData() {} });
 const COUNTRY_ACTIVITY_BOUNDS = {}, COUNTRY_ALIASES = {};
@@ -35,7 +35,6 @@ const t = key => key;
 const yieldToMain = async () => {};
 const effectivePubDateMs = () => 0;
 const getCountryCentroid = () => null;
-const hasCountryGeometry = () => false;
 const ME_STRIKE_BOUNDS = {};
 const preloadCountryGeometry = async () => {};
 const preloadMilitaryBases = async () => [];

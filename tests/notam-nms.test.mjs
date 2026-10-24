@@ -72,7 +72,7 @@ describe('classifyNotam', () => {
   // Texts below are live FAA NMS production aerodrome NOTAMs (2026-10-24).
   const aerodrome = (text) => classifyNotam({ ...notamOf(FIXTURE.airport_partial), text });
 
-  it('ignores standing restrictions that only limit GA or one traffic class', () => {
+  it('ignores standing restrictions that only limit GA, training, parking or one aircraft type', () => {
     // The KLAX fixture: airline traffic is unaffected.
     assert.equal(classifyNotam(notamOf(FIXTURE.airport_partial)), null);
     for (const text of [
@@ -82,7 +82,6 @@ describe('classifyNotam', () => {
       'AD AP CLSD TO NON SKED ACFT OPS MORE THAN 30 PAX SEATS EXC 24HR PPR',
       'AD AP CLSD TO COMMERCIAL AIR CARRIER DIVERTS EXC EMERG ACFT',
       'AD AP CLSD TO F-35 VTOL',
-      'AD AP CLSD TO ACFT WINGSPAN MORE THAN 60FT EXC 24HR PPR 334-844-4597 EXT 1',
       'AD AP CLSD FOR PRKG TO ACFT WINGSPAN MORE THAN 60FT EXC PPR 864-364-5653',
       'AD CLSD TO VISITING FIXED-WING ACFT',
       'AD CLSD TO CIV TRG FLTS.',
@@ -98,6 +97,11 @@ describe('classifyNotam', () => {
       'AD CLOSED TO ALL CIVIL VFR TFC EXC STATE ACFT, MIL FLIGHTS, AMBULANCE',
       'AD CLSD TO FLT OPS, EXC IN CASES WHERE FLIGHT OPS ARE PERMITTED',
       'AD AP CLSD EXC 24HR PPR 704-433-4024',
+      // Unlisted traffic classes stay restrictions: only known narrow classes drop.
+      'AD CLSD TO CIVIL ACFT EXC MIL',
+      'AD CLSD TO COMMERCIAL FLIGHTS',
+      'AD AP CLSD TO ACFT WINGSPAN MORE THAN 60FT EXC 24HR PPR 334-844-4597 EXT 1',
+      'AD AP CLSD TO FIXED WING EXC 4HR PPR DLY 0400-1000',
       'AD CLSD FOR ARR/DEP OF ALL AIRPLANE TYPES DUE TO RWY REPAIR WIP, EXC: - SAR ACFT',
     ]) assert.deepEqual(aerodrome(text), { airport: 'restricted' }, text);
   });
@@ -251,6 +255,15 @@ describe('buildClosures / buildAirspace', () => {
     const merged = buildClosures(both, NOW);
     assert.deepEqual(merged.closedIcaos.includes('KLAX') && merged.restrictedIcaos.includes('KLAX'), false);
     assert.ok(merged.closedIcaos.includes('KLAX'));
+  });
+
+  it('drops narrow restrictions stored before the classifier excluded them', () => {
+    // Delta runs keep stored records as they were classified; a full load is
+    // at most daily. A KLAX record saved as restricted must not wait for it.
+    const legacy = { ...items[notamOf(FEATURES.airport_partial).id], id: 'legacy', a: 'restricted', loc: 'KLAS', txt: 'AD AP CLSD TO NON SKED TRANSIENT GA ACFT EXC 24 HR PPR 702-261-7775' };
+    const c = buildClosures({ ...items, legacy }, NOW);
+    assert.ok(!c.restrictedIcaos.includes('KLAS'));
+    assert.deepEqual(c.restrictedIcaos, ['KLAX']);
   });
 
   it('lists active airspace and flags NOTAMs starting within 24h as upcoming', () => {

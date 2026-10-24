@@ -76,7 +76,7 @@ export default async function ({ page, base, shot, log }) {
     if (!mobile) { await page.locator('.layer-toggle[data-layer="flights"]').click(); return; }
     await page.locator('[data-mobile-tab="search"]').click();
     await page.locator('.search-overlay .search-input').fill('NOTAM');
-    await page.locator('.search-result-item[data-index]').filter({ hasText: /aviation/i }).first().click();
+    await page.locator('.search-result-item[data-command="layer:flights"]').first().click();
     await page.locator('[data-mobile-tab="map"]').click();
   };
   assert.equal(await page.locator('.layer-toggle[data-layer="notamAirspace"]').count(), 0, 'no separate NOTAM toggle');

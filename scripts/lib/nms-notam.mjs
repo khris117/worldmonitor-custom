@@ -35,12 +35,12 @@ const PARTIAL_CLOSURE_TEXT = /\b(?:CLSD|CLOSED) TO\b|\bEXC(?:EPT)?\b|\bPPR\b/;
 const EXCEPTION_TEXT = /\bEXC(?:EPT)?\b|\bPPR\b/;
 // "CLSD TO ALL TFC" with no exception closes the aerodrome outright.
 const CLOSED_TO_ALL_TEXT = /\b(?:CLSD|CLOSED) TO ALL (?:TFC|TRAFFIC|ACFT|FLIGHTS|FLTS?)\b/;
-// A closure to one traffic class leaves airline service running, e.g. KLAX's
-// standing "CLSD TO NON SKED TRANSIENT GA ACFT EXC 24HR PPR" or "CLSD TO ACFT
-// WINGSPAN MORE THAN 60FT". Treating these as restrictions flagged major US
-// hubs as disrupted. Closures to all, IFR, night, civil or flight traffic still
-// count.
-const NARROW_CLOSURE_TEXT = /\b(?:CLSD|CLOSED) (?:FOR (?:TRG|TRAINING|PRKG|PARKING)\b|TO (?!(?:ALL|IFR|VFR|NIGHT|PUBLIC|TFC|TRAFFIC|FLT|FLTS|FLIGHT|FLIGHTS|ARR|DEP|LDG|TKOF)\b|CIV(?:IL)? (?:IFR|VFR|FLT|FLTS|FLIGHTS|TFC|TRAFFIC|AIR)\b|ACFT\b(?! (?:MORE|LESS|OVER|UNDER|ABOVE|WITH|WINGSPAN)\b)))/;
+// A closure to one narrow traffic class leaves airline service running, e.g.
+// KLAX's standing "CLSD TO NON SKED TRANSIENT GA ACFT EXC 24HR PPR". Counting
+// these flagged major US hubs as disrupted. Only the classes listed here drop;
+// any other "CLSD TO <class>" (civil, commercial, IFR, size limits) still
+// counts as a restriction.
+const NARROW_CLOSURE_TEXT = /\b(?:CLSD|CLOSED) (?:TO|FOR) (?:NON[- ]?SKED|TRANSIENT|VISITING|GA|ULTRALIGHT|STUDENT|TRG|TRAINING|CIV(?:IL)? TRG|PRKG|PARKING|MIL(?:ITARY)? ACFT|[A-Z]{1,3}-\d{1,3}[A-Z]?|COMMERCIAL AIR CARRIER DIVERTS)\b/;
 const AIRPORT_RESTRICTION_SUBJECTS = new Set(['RA', 'RO', 'RT', 'RR', 'RP']);
 
 // Written by seed-notam-nms.mjs, read by seed-aviation.mjs's NOTAM side-car.
@@ -253,6 +253,10 @@ export function buildClosures(items, nowMs) {
   const restricted = new Map();
   for (const rec of Object.values(items)) {
     if (!rec.a || !rec.loc || !isActive(rec, nowMs)) continue;
+    // State carries records classified before NARROW_CLOSURE_TEXT existed, and
+    // delta runs never reclassify them. The phrase sits near the start of an
+    // aerodrome NOTAM, well inside the 280 characters the record keeps.
+    if (NARROW_CLOSURE_TEXT.test(rec.txt || '')) continue;
     const target = rec.a === 'closed' ? closed : restricted;
     if (!target.has(rec.loc)) target.set(rec.loc, rec.txt || (rec.a === 'closed' ? 'Airport closure (NOTAM)' : 'Airspace restriction (NOTAM)'));
   }
