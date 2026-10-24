@@ -1237,7 +1237,8 @@
       "skipToEnd": "Preskoči na kraj"
     },
     "pizzint": {
-      "indexSource": "Indeks: World Monitor · podaci o objektima:",
+      "indexSource": "Indeks: World Monitor",
+      "venueSource": "podaci o objektima:",
       "statusNormal": "NORMALNO",
       "statusNoData": "NEMA PODATAKA",
       "statusNoBaseline": "NEMA OSNOVE",
