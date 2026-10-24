@@ -122,6 +122,18 @@ describe('shared page canonical helper', () => {
     assert.equal(declaredHtmlCanonical(null), null);
   });
 
+  it('matches canonical as an exact rel token', () => {
+    assert.equal(declaredHtmlCanonical('<link rel="alternate canonical" href="/current/">'), '/current/');
+    assert.equal(declaredHtmlCanonical('<link rel="CANONICAL alternate" href="/current/">'), '/current/');
+    assert.equal(declaredHtmlCanonical('<link rel="canonicalized" href="/wrong/"><link rel="canonical" href="/current/">'), '/current/');
+    assert.equal(declaredHtmlCanonical('<link data-rel="canonical" href="/wrong/">'), null);
+  });
+
+  it('reads href as an attribute rather than data-href or quoted text', () => {
+    assert.equal(declaredHtmlCanonical('<link rel="canonical" data-href="/old/" href="/current/">'), '/current/');
+    assert.equal(declaredHtmlCanonical('<link title="href=\'/old/\'" rel="canonical" href="/current/">'), '/current/');
+  });
+
   it('honours a first-party declaration and falls back to the page URL otherwise', () => {
     assert.equal(pageCanonicalUrl(`${ORIGIN}/blog/x?utm_source=a`, `${ORIGIN}/blog/x/`), `${ORIGIN}/blog/x/`);
     assert.equal(pageCanonicalUrl(`${ORIGIN}/blog/x?a=1`, null), `${ORIGIN}/blog/x`);
