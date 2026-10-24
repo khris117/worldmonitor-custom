@@ -20,8 +20,12 @@ import {
 } from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
 import { CII_OUTAGE_ASN_NATIONAL_SHARE } from '../server/worldmonitor/intelligence/v1/_risk-config.ts';
 import {
+  ASN_IMPACT_BUDGET_MS,
+  ASN_IMPACT_DEADLINE_MARGIN_MS,
   ASN_IMPACT_MEASURE,
   asnCountryGroups,
+  asnImpactBudgetMs,
+  measureAsnImpactsWithinBudget,
   measureAsnNationalImpact,
   trafficDrop,
 } from '../scripts/lib/radar-asn-impact.mjs';
@@ -95,8 +99,8 @@ describe('CII ASN outages: scored only above the national share', () => {
   });
 });
 
-/** A MIN0_MAX hourly series over [from, to): `level(t)` gives each value. */
-function series(from: number, to: number, level: (t: number) => number, step = HOUR) {
+/** A MIN0_MAX series over [from, to) in 15-minute buckets (what a short outage is read in): `level(t)` gives each value. */
+function series(from: number, to: number, level: (t: number) => number, step = 15 * 60 * 1000) {
   const timestamps: string[] = []; const values: string[] = [];
   for (let t = from; t < to; t += step) { timestamps.push(new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z')); values.push(String(level(t))); }
   return { serie_0: { timestamps, values }, meta: { normalization: 'MIN0_MAX' } };
@@ -123,8 +127,8 @@ describe('radar-asn-impact: the national impact measure', () => {
 
   it('measures a traffic drop against the same hours one week earlier', () => {
     const s = series(start - WEEK, end + HOUR, (t) => (t >= start && t < end ? 0.2 : 0.8));
-    assert.ok(Math.abs(trafficDrop(s, start, end, HOUR)! - 0.75) < 1e-9);
-    assert.equal(trafficDrop(series(start, end, () => 0.5), start, end, HOUR), null, 'no baseline week, no measure');
+    assert.ok(Math.abs(trafficDrop(s, start, end, HOUR).drop! - 0.75) < 1e-9);
+    assert.equal(trafficDrop(series(start, end, () => 0.5), start, end, HOUR).drop, null, 'no baseline week, no measure');
   });
 
   it('multiplies the ASNs\' traffic share by their drop: 60% share, fully down, is 60% national', async () => {
@@ -149,6 +153,54 @@ describe('radar-asn-impact: the national impact measure', () => {
     assert.equal(m.impactIsUpperBound, true);
   });
 
+  // Greptile on 864152495: missing data must never read as a measured drop or share.
+  const fullDown = (t: number) => (t >= start && t < end ? 0 : 1);
+  const withSeries = (seriesFor: () => unknown, top: unknown = { top_0: [{ clientASN: 41039, value: '60' }, { clientASN: 2, value: '40' }] }) =>
+    async (path: string) => (path.startsWith('/radar/netflows/top/ases') ? top : seriesFor());
+  const measure = (get: (path: string) => Promise<unknown>) =>
+    measureAsnNationalImpact({ get, countryCode: 'RU', asns: [41039], startMs: start, endMs: end, nowMs: NOW });
+  /** The series with `nullAt(t)` buckets set to null. */
+  const holed = (nullAt: (t: number) => boolean) => () => {
+    const s = series(start - WEEK, end + HOUR, fullDown);
+    s.serie_0.values = s.serie_0.values.map((v, i) => (nullAt(Date.parse(s.serie_0.timestamps[i]!)) ? null : v)) as string[];
+    return s;
+  };
+
+  it('reads null outage samples as unknown, never as a full drop', async () => {
+    const m = await measure(withSeries(holed((t) => t >= start && t < end)));
+    assert.equal(m.nationalImpact, null, JSON.stringify(m));
+    assert.match(String(m.unknownReason), /missing outage sample/);
+    const one = await measure(withSeries(holed((t) => t === start + HOUR)));
+    assert.equal(one.nationalImpact, null, 'one null bucket inside the window is enough');
+  });
+
+  it('reads null baseline samples as unknown', async () => {
+    const m = await measure(withSeries(holed((t) => t >= start - WEEK && t < end - WEEK)));
+    assert.equal(m.nationalImpact, null, JSON.stringify(m));
+    assert.match(String(m.unknownReason), /missing baseline sample/);
+  });
+
+  it('reads a missing top_0 as unknown, not as a zero share', async () => {
+    for (const top of [{}, { top_0: null }, null]) {
+      const m = await measure(withSeries(() => series(start - WEEK, end + HOUR, fullDown), top));
+      assert.equal(m.nationalImpact, null, JSON.stringify(top));
+      assert.match(String(m.unknownReason), /top ASes missing/);
+    }
+  });
+
+  it('reads a null share for the ASN as unknown', async () => {
+    for (const value of [null, '', 'n/a', undefined]) {
+      const m = await measure(withSeries(() => series(start - WEEK, end + HOUR, fullDown), { top_0: [{ clientASN: 41039, value }, { clientASN: 2, value: '40' }] }));
+      assert.equal(m.nationalImpact, null, String(value));
+      assert.match(String(m.unknownReason), /share missing/);
+    }
+  });
+
+  it('never scores an ASN outage built from missing samples', () => {
+    // End to end: whatever the measure returns for missing data, the scorer sees null.
+    assert.equal(boost([asnOutage(null, { impactUnknownReason: 'AS41039: missing outage sample' })]), 0);
+  });
+
   it('returns an unknown impact when Radar fails or has no baseline', async () => {
     const failing = async () => { throw new Error('HTTP 503'); };
     const m1 = await measureAsnNationalImpact({ get: failing, countryCode: 'RU', asns: [41039], startMs: start, endMs: end, nowMs: NOW });
@@ -159,5 +211,52 @@ describe('radar-asn-impact: the national impact measure', () => {
       : series(start, end, () => 0));
     const m2 = await measureAsnNationalImpact({ get: noBaseline, countryCode: 'RU', asns: [41039], startMs: start, endMs: end, nowMs: NOW });
     assert.equal(m2.nationalImpact, null);
+  });
+});
+
+describe('radar-asn-impact: one time budget for the whole impact pass', () => {
+  const start = Date.parse('2026-10-20T07:00:00Z');
+  const end = Date.parse('2026-10-20T10:00:00Z');
+  const job = { countryCode: 'RU', asns: [41039], startMs: start, endMs: end };
+
+  it('derives the budget from runSeed\'s fetch deadline, leaving the margin', () => {
+    assert.equal(asnImpactBudgetMs(undefined, NOW), ASN_IMPACT_BUDGET_MS);
+    assert.equal(asnImpactBudgetMs(NOW + 20_000, NOW), 20_000 - ASN_IMPACT_DEADLINE_MARGIN_MS);
+    assert.equal(asnImpactBudgetMs(NOW + 1_000, NOW), 0);
+    assert.equal(asnImpactBudgetMs(NOW + 600_000, NOW), ASN_IMPACT_BUDGET_MS);
+  });
+
+  it('settles on time with slow Radar, marking every unfinished ASN unknown: budget', async () => {
+    const never = () => new Promise<never>(() => {});
+    const began = Date.now();
+    const results = await measureAsnImpactsWithinBudget([job, job, job, job, job, job], {
+      getWithTimeout: never, budgetMs: 200, nowMs: NOW, concurrency: 2,
+    });
+    const took = Date.now() - began;
+    assert.ok(took < 1_000, `took ${took} ms against a 200 ms budget`);
+    assert.equal(results.length, 6);
+    for (const r of results) assert.deepEqual([r.nationalImpact, r.unknownReason], [null, 'budget']);
+  });
+
+  it('keeps what finished inside the budget and marks only the rest', async () => {
+    const fast = async (path: string) => (path.startsWith('/radar/netflows/top/ases')
+      ? { top_0: [{ clientASN: 41039, value: '60' }] }
+      : series(start - WEEK, end + HOUR, (t) => (t >= start && t < end ? 0 : 1)));
+    let calls = 0;
+    const firstFastThenStall = (path: string) => (calls++ < 2 ? fast(path) : new Promise<never>(() => {}));
+    const results = await measureAsnImpactsWithinBudget([job, job], {
+      getWithTimeout: firstFastThenStall, budgetMs: 200, nowMs: NOW, concurrency: 1,
+    });
+    assert.ok(Math.abs(results[0]!.nationalImpact! - 0.6) < 1e-9);
+    assert.equal(results[1]!.unknownReason, 'budget');
+  });
+
+  it('skips the pass when no budget is left', async () => {
+    let called = false;
+    const results = await measureAsnImpactsWithinBudget([job], {
+      getWithTimeout: async () => { called = true; return {}; }, budgetMs: 0, nowMs: NOW,
+    });
+    assert.equal(called, false);
+    assert.equal(results[0]!.unknownReason, 'budget');
   });
 });

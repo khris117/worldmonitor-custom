@@ -148,6 +148,8 @@ async function seedFixture(entries, plan, now, redisOrigin) {
   const bodyFor = (leg) => (plan.payload === 'asn' ? ASN[leg] : plan.payload === 'full' ? FULL[leg] : EMPTY[leg]);
   const netflows = (url) => {
     if (plan.netflows === 'http-503') return new Response('upstream down', { status: 503 });
+    // A NetFlows API that never answers (and ignores the abort signal).
+    if (plan.netflows === 'stall') return new Promise(() => {});
     if (url.pathname.endsWith('/netflows/top/ases')) {
       return Response.json({ success: true, result: { top_0: [{ clientASN: 41039, value: '60' }, { clientASN: 12389, value: '40' }] } });
     }
@@ -221,7 +223,7 @@ const DEFAULT_PLAN = {
   redisRejectAttempts: null,
 };
 
-function runSeeder({ entries = [], plan = {}, now = NOW } = {}) {
+function runSeeder({ entries = [], plan = {}, now = NOW, env = {} } = {}) {
   const merged = { ...DEFAULT_PLAN, ...plan };
   const args = [entries, merged, now, REDIS_ORIGIN].map((value) => JSON.stringify(value)).join(', ');
   const result = spawnSync(
@@ -243,6 +245,7 @@ function runSeeder({ entries = [], plan = {}, now = NOW } = {}) {
         TEST_SEED_URL: new URL('../scripts/seed-internet-outages.mjs', import.meta.url).href,
         UPSTASH_REDIS_REST_URL: REDIS_ORIGIN,
         UPSTASH_REDIS_REST_TOKEN: 'fixture-token',
+        ...env,
       },
     },
   );
@@ -697,4 +700,20 @@ test('an ASN outage whose impact Radar cannot supply is kept with an unknown imp
   const [asn] = JSON.parse(run.store.get(OUTAGES_KEY)).data.asnOutages;
   assert.equal(asn.nationalImpact, null);
   assert.match(asn.impactUnknownReason, /503/);
+});
+
+test('a stalled NetFlows API cannot hold back the outage publish: the impact pass has its own budget', () => {
+  // Greptile on 864152495: the ASN requests ran one after another with no
+  // deadline. A 48 s bundle section leaves runSeed an 8 s fetch deadline, so
+  // the impact budget is about 3 s; the run must publish well inside it.
+  const began = Date.now();
+  const run = runSeeder({ entries: lastGoodEntries(), plan: { payload: 'asn', netflows: 'stall' }, env: { BUNDLE_SECTION_TIMEOUT_MS: '48000' } });
+  const took = Date.now() - began;
+  assert.equal(run.exitCode, 0, run.output);
+  assert.ok(took < 15_000, `the run took ${took} ms`);
+  const payload = JSON.parse(run.store.get(OUTAGES_KEY)).data;
+  assert.deepEqual(payload.outages.map((o) => o.id), ['cf-ann-1'], 'the fresh located outage is published');
+  const [asn] = payload.asnOutages;
+  assert.equal(asn.nationalImpact, null);
+  assert.equal(asn.impactUnknownReason, 'budget');
 });

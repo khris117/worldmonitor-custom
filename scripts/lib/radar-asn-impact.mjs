@@ -46,28 +46,50 @@ export function asnCountryGroups(annotation) {
   return [...groups.values()];
 }
 
+/** A Radar number: a finite number or numeric string. null, '', undefined and text are missing, never 0. */
+export function radarNumber(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value !== 'string' || value.trim() === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
 /**
  * 1 - traffic during [startMs, endMs) / traffic in the same buckets one week
- * earlier, from one Radar timeseries spanning both; null without a baseline.
- * Clamped to [0, 1]: traffic above the baseline is no disruption.
+ * earlier, from one Radar timeseries spanning both. Clamped to [0, 1]:
+ * traffic above the baseline is no disruption.
+ *
+ * Returns `{ drop }`, or `{ drop: null, reason }` when the measure cannot be
+ * taken: every bucket of the window, and its baseline a week earlier, must
+ * hold a number. The window stops at the series' last published bucket, so an
+ * ongoing outage is read up to the data Radar has; a gap before that is
+ * missing data, not a drop.
  */
 export function trafficDrop(result, startMs, endMs, stepMs) {
-  const timestamps = result?.serie_0?.timestamps ?? [];
-  const values = result?.serie_0?.values ?? [];
-  const at = new Map(timestamps.map((t, i) => [Date.parse(t), Number(values[i])]));
+  const timestamps = result?.serie_0?.timestamps;
+  const values = result?.serie_0?.values;
+  if (!Array.isArray(timestamps) || !Array.isArray(values) || timestamps.length !== values.length) {
+    return { drop: null, reason: 'timeseries missing or malformed' };
+  }
+  const at = new Map();
+  for (let i = 0; i < timestamps.length; i++) at.set(Date.parse(timestamps[i]), radarNumber(values[i]));
+  const published = Math.max(-Infinity, ...at.keys()) + stepMs;
+  const windowEnd = Math.min(endMs, published);
   let during = 0;
   let before = 0;
   let buckets = 0;
-  for (let t = Math.floor(startMs / stepMs) * stepMs; t < endMs; t += stepMs) {
-    const now = at.get(t);
-    const then = at.get(t - WEEK_MS);
-    if (!Number.isFinite(now) || !Number.isFinite(then)) continue;
+  for (let t = Math.floor(startMs / stepMs) * stepMs; t < windowEnd; t += stepMs) {
+    const now = at.has(t) ? at.get(t) : null;
+    const then = at.has(t - WEEK_MS) ? at.get(t - WEEK_MS) : null;
+    if (now == null) return { drop: null, reason: `missing outage sample at ${new Date(t).toISOString()}` };
+    if (then == null) return { drop: null, reason: `missing baseline sample at ${new Date(t - WEEK_MS).toISOString()}` };
     during += now;
     before += then;
     buckets++;
   }
-  if (buckets === 0 || before <= 0) return null;
-  return Math.min(1, Math.max(0, 1 - during / before));
+  if (buckets === 0) return { drop: null, reason: 'no samples in the outage window' };
+  if (before <= 0) return { drop: null, reason: 'zero baseline traffic' };
+  return { drop: Math.min(1, Math.max(0, 1 - during / before)) };
 }
 
 /**
@@ -84,23 +106,34 @@ export async function measureAsnNationalImpact({ get, countryCode, asns, startMs
   const to = Math.ceil(end / step) * step;
   try {
     const top = await get(`/radar/netflows/top/ases?location=${countryCode}&dateStart=${iso(from - WEEK_MS)}&dateEnd=${iso(from)}&limit=${TOP_ASES_LIMIT}&format=json`);
-    const listed = Array.isArray(top?.top_0) ? top.top_0 : [];
-    const shareOf = new Map(listed.map((row) => [Number(row.clientASN), Number(row.value) / 100]));
-    const smallest = listed.length ? Math.min(...listed.map((row) => Number(row.value) / 100)) : 0;
+    if (!Array.isArray(top?.top_0)) return unknown('top ASes missing');
+    const shareOf = new Map();
+    let smallest = Infinity;
+    for (const row of top.top_0) {
+      const asn = Number(row?.clientASN);
+      const value = radarNumber(row?.value);
+      if (!Number.isInteger(asn)) continue;
+      shareOf.set(asn, value == null ? null : value / 100);
+      if (value != null) smallest = Math.min(smallest, value / 100);
+    }
     let impact = 0;
     let upperBound = false;
     const parts = [];
     for (const asn of asns) {
-      let share = shareOf.get(asn);
-      if (!Number.isFinite(share)) {
-        // Not among the listed ASes: its share is at most the smallest listed.
-        share = listed.length >= TOP_ASES_LIMIT ? smallest : 0;
-        upperBound = upperBound || listed.length >= TOP_ASES_LIMIT;
+      let share;
+      if (shareOf.has(asn)) {
+        share = shareOf.get(asn);
+        if (share == null) return unknown(`share missing for AS${asn}`);
+      } else {
+        // Not among the listed ASes: its share is at most the smallest listed one.
+        if (!Number.isFinite(smallest)) return unknown(`AS${asn} not listed and no listed share to bound it`);
+        share = smallest;
+        upperBound = true;
       }
       const agg = step === QUARTER_MS ? '15m' : '1h';
       const series = await get(`/radar/netflows/timeseries?asn=${asn}&dateStart=${iso(from - WEEK_MS)}&dateEnd=${iso(to)}&aggInterval=${agg}&format=json`);
-      const drop = trafficDrop(series, startMs, end, step);
-      if (drop == null) return unknown(`no baseline week for AS${asn}`);
+      const { drop, reason } = trafficDrop(series, startMs, end, step);
+      if (drop == null) return unknown(`AS${asn}: ${reason}`);
       impact += share * drop;
       parts.push({ asn, share, drop });
     }
@@ -108,4 +141,58 @@ export async function measureAsnNationalImpact({ get, countryCode, asns, startMs
   } catch (err) {
     return unknown(String(err?.message || err).slice(0, 120));
   }
+}
+
+// ------------------------------------------------------------------------
+// The impact measure is optional work inside the seeder's fetch phase: it
+// must never cost the outage publish. All of it shares one wall-clock budget,
+// cut to what runSeed's fetch deadline leaves minus a margin; an ASN still
+// unmeasured when the budget runs out is published with impact unknown
+// (`impactUnknownReason: 'budget'`).
+// ------------------------------------------------------------------------
+
+export const ASN_IMPACT_BUDGET_MS = 60_000;
+/** Left between the end of the impact pass and runSeed's fetch deadline. */
+export const ASN_IMPACT_DEADLINE_MARGIN_MS = 5_000;
+export const ASN_IMPACT_REQUEST_TIMEOUT_MS = 15_000;
+export const ASN_IMPACT_CONCURRENCY = 4;
+
+/** The impact budget: ASN_IMPACT_BUDGET_MS, cut to what the fetch deadline leaves minus the margin. 0 skips the pass. */
+export function asnImpactBudgetMs(fetchDeadlineAtMs, nowMs = Date.now()) {
+  if (!Number.isFinite(fetchDeadlineAtMs)) return ASN_IMPACT_BUDGET_MS;
+  return Math.max(0, Math.min(ASN_IMPACT_BUDGET_MS, fetchDeadlineAtMs - nowMs - ASN_IMPACT_DEADLINE_MARGIN_MS));
+}
+
+/**
+ * Measures each job ({ countryCode, asns, startMs, endMs }) with at most
+ * `concurrency` in flight, inside one `budgetMs` wall clock. `getWithTimeout(path, ms)`
+ * performs one Radar GET bounded by `ms`. Settles within the budget even when
+ * a request ignores its timeout; every job still running then, or never
+ * started, resolves as unknown with reason 'budget'. Results keep job order.
+ */
+export async function measureAsnImpactsWithinBudget(jobs, { getWithTimeout, budgetMs, nowMs, concurrency = ASN_IMPACT_CONCURRENCY }) {
+  const budgetUnknown = { measure: ASN_IMPACT_MEASURE, nationalImpact: null, impactIsUpperBound: false, unknownReason: 'budget' };
+  const results = jobs.map(() => budgetUnknown);
+  if (jobs.length === 0 || !(budgetMs > 0)) return results;
+  const deadline = Date.now() + budgetMs;
+  const remaining = () => deadline - Date.now();
+  let next = 0;
+  const worker = async () => {
+    while (next < jobs.length && remaining() > 0) {
+      const i = next++;
+      const get = (path) => {
+        const ms = Math.min(ASN_IMPACT_REQUEST_TIMEOUT_MS, remaining());
+        if (ms <= 0) return Promise.reject(new Error('budget'));
+        return getWithTimeout(path, ms);
+      };
+      results[i] = await measureAsnNationalImpact({ get, ...jobs[i], nowMs });
+      if (results[i].unknownReason && remaining() <= 0) results[i] = budgetUnknown;
+    }
+  };
+  let timer;
+  const expiry = new Promise((resolve) => { timer = setTimeout(resolve, budgetMs); });
+  const pool = Promise.all(Array.from({ length: Math.min(concurrency, jobs.length) }, worker));
+  await Promise.race([pool, expiry]).finally(() => clearTimeout(timer));
+  // Snapshot: a job that finishes after the budget is not published.
+  return results.slice();
 }
