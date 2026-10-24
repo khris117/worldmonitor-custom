@@ -33,7 +33,7 @@ export function declaredHtmlCanonical(html) {
  * `declaredHref` is the page's own declared canonical. It is honoured when it
  * resolves to a first-party http(s) URL; otherwise (no tag, off-site, junk)
  * the page's own query-less URL is used. The result is always query-less and
- * fragment-less, on the page's origin.
+ * fragment-less, preserving the accepted declaration's origin.
  */
 export function pageCanonicalUrl(pageUrl, declaredHref = null) {
   const page = new URL(pageUrl);
@@ -41,7 +41,7 @@ export function pageCanonicalUrl(pageUrl, declaredHref = null) {
     try {
       const declared = new URL(declaredHref, page);
       if ((declared.protocol === 'https:' || declared.protocol === 'http:') && FIRST_PARTY_HOST.test(declared.hostname)) {
-        return `${page.origin}${declared.pathname}`;
+        return `${declared.origin}${declared.pathname}`;
       }
     } catch {
       // fall through to the page's own URL
