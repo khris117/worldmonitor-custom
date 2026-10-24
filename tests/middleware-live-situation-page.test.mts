@@ -4,13 +4,15 @@ import assert from 'node:assert/strict';
 import middleware from '../middleware';
 import { isPublicSharedRpcRequest } from '../src/shared/public-rpc-cache.ts';
 import {
-  SITUATION_SECTIONS,
-  chokepointsSection,
   headlinesSection,
   outagesSection,
   situationMarkers,
+  situationSections,
 } from '../scripts/situation-page/sections.mjs';
 import { CHOKEPOINT_REGISTRY } from '../src/config/chokepoint-registry.ts';
+
+const SITUATION_SECTIONS = situationSections(CHOKEPOINT_REGISTRY);
+const chokepointsSection = SITUATION_SECTIONS[1];
 
 const PAGE_URL = 'https://www.worldmonitor.app/monitor-the-situation/';
 const BUILT_URL = `${PAGE_URL}?wm-built=1`;

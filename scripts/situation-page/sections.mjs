@@ -5,7 +5,6 @@
 //
 // Pure module: no Node or DOM APIs, so middleware.ts can bundle it.
 
-import { CHOKEPOINT_REGISTRY } from '../../src/config/chokepoint-registry.ts';
 import { dedupeByArticleUrl } from '../../shared/article-identity.js';
 import { isVerifiableArticleUrl } from '../../shared/article-url.js';
 import { chokepointStatusViewModel } from '../crawlable-live-tools.mjs';
@@ -137,11 +136,13 @@ export const headlinesSection = Object.freeze({
 // ---------------------------------------------------------------------------
 // Chokepoints
 
-const CHOKEPOINT_TARGETS = Object.freeze(CHOKEPOINT_REGISTRY.map((entry) => ({
-  id: entry.id,
-  displayName: entry.displayName,
-  slug: slugify(entry.displayName),
-})));
+function chokepointTargets(chokepointRegistry) {
+  return Object.freeze(chokepointRegistry.map((entry) => ({
+    id: entry.id,
+    displayName: entry.displayName,
+    slug: slugify(entry.displayName),
+  })));
+}
 
 function chokepointRow(target, { score, status, congestion, asOf }) {
   return { ...target, score, status, congestion, asOf };
@@ -158,8 +159,8 @@ function chokepointsReading(rows) {
  * anything it cannot vouch for (missing row, stale capture, out-of-range
  * score); a board that cannot show every waterway shows the published one.
  */
-export function chokepointsRecord(payload, now = Date.now()) {
-  const rows = CHOKEPOINT_TARGETS.map((target) => {
+export function chokepointsRecord(payload, now, targets) {
+  const rows = targets.map((target) => {
     let view;
     try {
       view = chokepointStatusViewModel(payload, target.id, now);
@@ -215,26 +216,35 @@ ${rows}
         </div>`;
 }
 
-export const chokepointsSection = Object.freeze({
-  slug: 'chokepoints',
-  title: 'Shipping chokepoints now',
-  statusPath: '/api/supply-chain/v1/get-chokepoint-status?public=1',
-  record: chokepointsRecord,
-  published: chokepointsPublished,
-  renderSection(reading, { live }) {
-    return renderLiveSection({
-      slug: situationMarker(this),
-      question: this.title,
-      record: reading,
-      live,
-      answer: chokepointsAnswer(reading),
-      bodyHtml: chokepointsBody(reading),
-      asOf: reading?.asOf,
-      sourceHtml: 'Source: World Monitor chokepoint status (navigational warnings, AIS disruptions and congestion, IMF PortWatch transits). Scoring: <a href="/docs/methodology/chokepoints">chokepoint methodology</a>. Hub: <a href="/chokepoints/">all chokepoints</a>.',
-      faq: false,
-    });
-  },
-});
+/**
+ * The registry comes in from the caller because this module is bundled into
+ * the Edge middleware, which cannot follow a `.ts` import from JavaScript.
+ * middleware.ts imports it as TypeScript; the Node corpus build loads the
+ * `.ts` file through tsx.
+ */
+function chokepointsSection(chokepointRegistry) {
+  const targets = chokepointTargets(chokepointRegistry);
+  return Object.freeze({
+    slug: 'chokepoints',
+    title: 'Shipping chokepoints now',
+    statusPath: '/api/supply-chain/v1/get-chokepoint-status?public=1',
+    record: (payload, now = Date.now()) => chokepointsRecord(payload, now, targets),
+    published: chokepointsPublished,
+    renderSection(reading, { live }) {
+      return renderLiveSection({
+        slug: situationMarker(this),
+        question: this.title,
+        record: reading,
+        live,
+        answer: chokepointsAnswer(reading),
+        bodyHtml: chokepointsBody(reading),
+        asOf: reading?.asOf,
+        sourceHtml: 'Source: World Monitor chokepoint status (navigational warnings, AIS disruptions and congestion, IMF PortWatch transits). Scoring: <a href="/docs/methodology/chokepoints">chokepoint methodology</a>. Hub: <a href="/chokepoints/">all chokepoints</a>.',
+        faq: false,
+      });
+    },
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Internet outages
@@ -264,4 +274,7 @@ export const outagesSection = Object.freeze({
   },
 });
 
-export const SITUATION_SECTIONS = Object.freeze([headlinesSection, chokepointsSection, outagesSection]);
+/** The page's live sections in page order. */
+export function situationSections(chokepointRegistry) {
+  return Object.freeze([headlinesSection, chokepointsSection(chokepointRegistry), outagesSection]);
+}

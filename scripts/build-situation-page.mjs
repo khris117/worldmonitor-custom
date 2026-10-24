@@ -8,7 +8,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { SITUATION_PAGE_PATH, SITUATION_SECTIONS, chokepointsSection, headlinesSection, outagesSection } from './situation-page/sections.mjs';
+import { CHOKEPOINT_REGISTRY } from '../src/config/chokepoint-registry.ts';
+import { SITUATION_PAGE_PATH, situationSections } from './situation-page/sections.mjs';
+
+const SITUATION_SECTIONS = situationSections(CHOKEPOINT_REGISTRY);
 
 export { SITUATION_PAGE_PATH };
 
@@ -148,12 +151,12 @@ export function renderSituationPage({ baseUrl, lastmod, tpl, crises, livePulse, 
   const body = `      <p class="eyebrow">Live board</p>
       <h1>${escapeHtml(H1)}</h1>
       <p class="lede">World Monitor is a free live board of what is happening in the world now: conflicts, shipping chokepoints, internet outages and breaking headlines, with the time each reading was taken. The <a href="/dashboard">live map</a> shows the same data with event-level detail and needs no account.</p>
-${sections[headlinesSection.slug]}
+${sections.headlines}
       <h2 id="active-situations">Active situations</h2>
       <p>The ${crises.length} crisis trackers below have a fixed country scope and a dated monthly conflict summary from the UN OCHA <a href="https://data.humdata.org/hapi">Humanitarian API (HDX HAPI)</a>. Each links to its tracker page and to the same view on the live map. The figures are the ${escapeHtml(String(livePulse.capturedAt))} snapshot and are not forecasts.</p>
 ${renderActiveSituations({ crises, livePulse, escapeHtml })}
-${sections[chokepointsSection.slug]}
-${sections[outagesSection.slug]}
+${sections.chokepoints}
+${sections.outages}
       <h2 id="how-to">How to monitor the situation</h2>
       <ol class="routine">
         <li>Open the <a href="/dashboard">live map</a>. The map and its panels are free and need no account.</li>

@@ -21,12 +21,15 @@ import { liveTopicPageForPath, liveTopicReading } from './scripts/live-pages/ind
 import { replaceLiveSection } from './scripts/live-pages/common.mjs';
 import {
   SITUATION_PAGE_PATH,
-  SITUATION_SECTIONS,
   situationMarker,
   situationReading,
+  situationSections,
 } from './scripts/situation-page/sections.mjs';
+import { CHOKEPOINT_REGISTRY } from './src/config/chokepoint-registry';
 
 type LiveTopicPage = NonNullable<ReturnType<typeof liveTopicPageForPath>>;
+
+const SITUATION_SECTIONS = situationSections(CHOKEPOINT_REGISTRY);
 
 const AGENT_UA = new RegExp(`(?:^|[^a-z0-9-])(?:${agentRequestPolicy.userAgents.join('|')})(?:$|[^a-z0-9-])`, 'i');
 

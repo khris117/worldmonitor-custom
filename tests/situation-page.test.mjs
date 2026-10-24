@@ -13,9 +13,11 @@ import { fileURLToPath } from 'node:url';
 
 import { buildChokepointHubRows, buildCorpus, loadCorpusData } from '../scripts/build-crawlable-corpus.mjs';
 import { CRISIS_REGIONS, crisisFigure, renderSituationPage } from '../scripts/build-situation-page.mjs';
-import { SITUATION_SECTIONS, headlinesRecord, situationMarkers } from '../scripts/situation-page/sections.mjs';
+import { headlinesRecord, situationMarkers, situationSections } from '../scripts/situation-page/sections.mjs';
+import { CHOKEPOINT_REGISTRY } from '../src/config/chokepoint-registry.ts';
 import { UnpublishableReading } from '../scripts/live-pages/common.mjs';
 
+const SITUATION_SECTIONS = situationSections(CHOKEPOINT_REGISTRY);
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BASE_URL = 'https://www.worldmonitor.app';
 
