@@ -20,6 +20,7 @@ import {
   WILDFIRE_FIRES_SUMMARY_KEY,
   type WildfireFireIntensity,
 } from '../../../../scripts/shared/wildfire-fires-summary.mjs';
+import { missingAdvisoryRegisters } from '../../../../scripts/shared/advisory-registers.mjs';
 import { TIER1_COUNTRIES } from './_shared';
 import { fetchAcledCached } from '../../../_shared/acled';
 import { isAcledConfigured } from '../../../_shared/acled-auth';
@@ -153,21 +154,18 @@ function isAdvisoryProvenance(value: unknown): value is AdvisoryProvenance {
  */
 export const CII_ADVISORY_LAST_GOOD_KEY = 'intelligence:advisories:cii-last-good:v1';
 
-/**
- * The feeds that publish a level (scripts/seed-security-advisories.mjs, the
- * `levelParser` feeds), by `sourceCountry`. byCountry is the max over them, so
- * losing one still clears the seeder's coverage bound; the stored item list is
- * what shows which one is missing.
- */
-export const CII_ADVISORY_LEVEL_SOURCES = ['au', 'us'] as const;
 const ADVISORY_ITEM_LEVELS = new Set<unknown>(['do-not-travel', 'reconsider', 'caution', 'normal']);
 
 interface AdvisorySnapshot {
   byCountry: Record<string, AdvisoryLevel>;
   /** The seeder's `fetchedAt`; null for a live payload written before it carried one. */
   fetchedAtMs: number | null;
-  /** Level sources present in the payload's item list; null when it carries no list. */
-  sources: string[] | null;
+  /**
+   * Travel registers (scripts/shared/advisory-registers.mjs) with no levelled
+   * item in the payload's stored list, the seeder's own `failedSources` test;
+   * null when the payload carries no list.
+   */
+  missingRegisters: string[] | null;
 }
 
 function advisoryClockMs(value: unknown): number | null {
@@ -191,14 +189,11 @@ function advisorySnapshotFromSeed(raw: unknown, nowMs: number, requireClock: boo
   } else if (fetchedAtMs > nowMs || nowMs - fetchedAtMs > CII_ADVISORY_MAX_AGE_MS) {
     return null;
   }
+  // byCountry is the max over the US and Australian registers, so losing one
+  // still clears the seeder's coverage bound; the item list shows which.
   const items = (raw as { advisories?: unknown }).advisories;
-  const sources = Array.isArray(items)
-    ? [...new Set(items.flatMap((item) => (
-      item && typeof item === 'object' && ADVISORY_ITEM_LEVELS.has((item as { level?: unknown }).level)
-        ? [String((item as { sourceCountry?: unknown }).sourceCountry ?? '').toLowerCase()]
-        : [])))].filter(Boolean).sort()
-    : null;
-  return { byCountry: byCountry as Record<string, AdvisoryLevel>, fetchedAtMs, sources };
+  const missingRegisters = Array.isArray(items) ? missingAdvisoryRegisters(items) : null;
+  return { byCountry: byCountry as Record<string, AdvisoryLevel>, fetchedAtMs, missingRegisters };
 }
 
 /**
@@ -217,7 +212,7 @@ function ciiAdvisoriesFromReads(live: AdvisorySnapshot | null, lastGood: Advisor
   const filled = lastGood
     ? tier1.filter((code) => !lists(live.byCountry, code) && lists(lastGood.byCountry, code)).sort()
     : [];
-  const sourcesMissing = live.sources ? CII_ADVISORY_LEVEL_SOURCES.filter((source) => !live.sources!.includes(source)) : [];
+  const sourcesMissing = live.missingRegisters ?? [];
   return {
     byCountry: filled.length
       ? { ...live.byCountry, ...Object.fromEntries(filled.map((code) => [code, lastGood!.byCountry[code]!])) }

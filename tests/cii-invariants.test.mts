@@ -392,7 +392,7 @@ function measureP8b(): Measurement {
     const fresh = { byCountry: live, fetchedAt: f.nowMs - HOUR_MS };
     const expired = { byCountry: live, fetchedAt: f.nowMs - 4 * DAY_MS };
     const partial = Object.fromEntries(Object.entries(live).filter(([code]) => code !== 'QA' && code !== 'UA'));
-    const levelItems = (sources: string[]) => sources.map((sourceCountry) => ({ sourceCountry, level: 'caution' }));
+    const levelItems = (sources: string[]) => sources.map((sourceCountry) => ({ sourceCountry, country: 'QA', level: 'caution' }));
     const cases: Array<{ name: string; inputs: CiiRawInputs; alarm: boolean }> = [
       { name: 'live', inputs: f.inputs, alarm: false },
       { name: 'live with both level sources', inputs: { ...f.inputs, advisories: { byCountry: live, advisories: levelItems(['US', 'AU']) } }, alarm: false },

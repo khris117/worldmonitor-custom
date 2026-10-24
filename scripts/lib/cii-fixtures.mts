@@ -7,6 +7,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import iso3ToIso2 from '../../shared/iso3-to-iso2.json' with { type: 'json' };
+import { isLevelledAdvisoryItem } from '../shared/advisory-registers.mjs';
 import { ciiCountryForIso2 } from '../shared/cii-country-borders.mjs';
 import { parseWildfireFiresSummary, summarizeWildfireDetections } from '../shared/wildfire-fires-summary.mjs';
 import {
@@ -231,19 +232,17 @@ function trimStrikeTally(raw: unknown): unknown {
   return { version: raw.version, updatedAt: raw.updatedAt, days };
 }
 
-const ADVISORY_ITEM_LEVELS = new Set(['do-not-travel', 'reconsider', 'caution', 'normal']);
-
 /**
  * Tier-1 levels, `fetchedAt` (the producer clock the advisory age gate reads)
- * and, from the stored item list, one `{ sourceCountry, level }` per source
- * that published a level: the scorer reads which level sources are present.
+ * and, from the stored item list, one levelled `{ sourceCountry, country, level }`
+ * item per source: the scorer reads which travel registers are present.
  */
 function trimAdvisories(v: any): Obj {
   if (!isObj(v.byCountry)) return {};
   const items = Array.isArray(v.advisories)
     ? [...new Map(v.advisories
-      .filter((item: any) => isObj(item) && ADVISORY_ITEM_LEVELS.has(item.level))
-      .map((item: any) => [String(item.sourceCountry ?? ''), { sourceCountry: item.sourceCountry, level: item.level }])).values()]
+      .filter((item: any) => isLevelledAdvisoryItem(item))
+      .map((item: any) => [String(item.sourceCountry ?? ''), { sourceCountry: item.sourceCountry, country: item.country, level: item.level }])).values()]
     : null;
   return {
     byCountry: tier1Entries(v.byCountry),

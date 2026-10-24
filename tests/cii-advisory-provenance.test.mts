@@ -7,6 +7,7 @@
 // while it is younger than CII_ADVISORY_MAX_AGE_MS; past that the advisory
 // terms are absent. Health names the input either way.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 import { loadCiiFixtures, trimCiiRawInputs } from '../scripts/lib/cii-fixtures.mts';
@@ -14,10 +15,17 @@ import * as riskScores from '../server/worldmonitor/intelligence/v1/get-risk-sco
 import type { CiiRawInputs, CiiScoreTable } from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
 import * as riskConfig from '../server/worldmonitor/intelligence/v1/_risk-config.ts';
 import { assessCiiInputs } from '../api/_cii-input-health.js';
+import { ADVISORY_LEVEL_REGISTERS } from '../scripts/shared/advisory-registers.mjs';
+import {
+  ADVISORY_FEEDS,
+  advisoryAfterPublish,
+  advisoryPublishTransform,
+  fetchAll,
+} from '../scripts/seed-security-advisories.mjs';
 
 // Namespace imports so each case reports on its own against a scorer that
 // predates the snapshot path.
-const { assessCiiInputAvailability, ciiInputDetails, computeCiiScoreTable, withCiiInputQuietClocks, CII_ADVISORY_LEVEL_SOURCES } = riskScores;
+const { assessCiiInputAvailability, ciiInputDetails, computeCiiScoreTable, withCiiInputQuietClocks } = riskScores;
 const { CII_ADVISORY_MAX_AGE_MS } = riskConfig;
 const FIXTURES = loadCiiFixtures();
 const HOUR_MS = 60 * 60 * 1000;
@@ -109,24 +117,24 @@ describe('CII advisory provenance', () => {
     const f = FIXTURES[0]!;
     const fetchedAt = new Date(f.nowMs - HOUR_MS).toISOString();
     const items = [
-      { title: 'Qatar - Level 3', link: 'https://x.invalid', sourceCountry: 'US', level: 'reconsider' },
-      { title: 'Qatar - Level 1', link: 'https://x.invalid', sourceCountry: 'US', level: 'normal' },
-      { title: 'Embassy alert', link: 'https://x.invalid', sourceCountry: 'US', level: 'info' },
-      { title: 'Qatar', link: 'https://x.invalid', sourceCountry: 'AU', level: 'caution' },
+      { title: 'Qatar - Level 3', link: 'https://x.invalid', sourceCountry: 'US', country: 'QA', level: 'reconsider' },
+      { title: 'Japan - Level 1', link: 'https://x.invalid', sourceCountry: 'US', country: 'JP', level: 'normal' },
+      { title: 'Embassy alert', link: 'https://x.invalid', sourceCountry: 'US', country: 'UA', level: 'info' },
+      { title: 'Qatar', link: 'https://x.invalid', sourceCountry: 'AU', country: 'QA', level: 'caution' },
     ];
     const trimmed = trimCiiRawInputs({ advisories: { byCountry: liveLevels(f), fetchedAt, advisories: items } });
     assert.deepEqual(Object.keys(trimmed.advisories as object).sort(), ['advisories', 'byCountry', 'fetchedAt']);
     assert.equal((trimmed.advisories as { fetchedAt: string }).fetchedAt, fetchedAt);
     // One level-bearing item per source keeps which level sources were present, and nothing else.
     assert.deepEqual((trimmed.advisories as { advisories: unknown[] }).advisories, [
-      { sourceCountry: 'US', level: 'normal' },
-      { sourceCountry: 'AU', level: 'caution' },
+      { sourceCountry: 'US', country: 'JP', level: 'normal' },
+      { sourceCountry: 'AU', country: 'QA', level: 'caution' },
     ]);
     const auOnly = { ...f.inputs, advisories: { byCountry: liveLevels(f), advisories: items.filter((i) => i.sourceCountry === 'AU') } };
     const full = table(f, auOnly).aux.advisories?.sourcesMissing;
     const trimmedInputs = trimCiiRawInputs(auOnly);
     assert.deepEqual(table(f, trimmedInputs).aux.advisories?.sourcesMissing, full);
-    assert.deepEqual(full, ['us']);
+    assert.deepEqual(full, ['US']);
   });
 });
 
@@ -217,14 +225,14 @@ describe('CII advisory partial feed loss', () => {
     const f = FIXTURES[0]!;
     // The seeder's stored list: only the level-issuing feeds (us, au parsers) carry a level other than info.
     const items = (sources: string[]) => [
-      ...sources.map((sourceCountry) => ({ sourceCountry, level: 'caution', title: 't', source: sourceCountry })),
-      { sourceCountry: 'US', level: 'info', title: 'embassy alert', source: 'US Embassy Ukraine' },
+      ...sources.map((sourceCountry) => ({ sourceCountry, country: 'QA', level: 'caution', title: 't', source: sourceCountry })),
+      { sourceCountry: 'US', country: 'UA', level: 'info', title: 'embassy alert', source: 'US Embassy Ukraine' },
     ];
     const both = verdict(f, { ...f.inputs, advisories: { byCountry: liveLevels(f), advisories: items(['US', 'AU']) } });
     assert.equal(both.alarm, undefined);
     const auOnly = verdict(f, { ...f.inputs, advisories: { byCountry: liveLevels(f), advisories: items(['AU']) } });
-    assert.deepEqual(auOnly.reports.advisories.sourcesMissing, ['us']);
-    assert.deepEqual(auOnly.alarm, { id: 'advisories', state: 'live', sourcesMissing: ['us'] });
+    assert.deepEqual(auOnly.reports.advisories.sourcesMissing, ['US']);
+    assert.deepEqual(auOnly.alarm, { id: 'advisories', state: 'live', sourcesMissing: ['US'] });
   });
 
   it('a payload without its item list cannot say which source failed, and claims nothing', () => {
@@ -234,11 +242,10 @@ describe('CII advisory partial feed loss', () => {
     assert.equal(v.alarm, undefined);
   });
 
-  it('the level sources the scorer expects are the seeder feeds that parse a level', async () => {
-    const { ADVISORY_FEEDS } = await import('../scripts/seed-security-advisories.mjs');
+  it('the registers the scorer expects are the seeder feeds that parse a level', () => {
     const parsing = [...new Set((ADVISORY_FEEDS as Array<{ levelParser?: string; sourceCountry: string }>)
-      .filter((feed) => feed.levelParser).map((feed) => feed.sourceCountry.toLowerCase()))].sort();
-    assert.deepEqual([...CII_ADVISORY_LEVEL_SOURCES], parsing);
+      .filter((feed) => feed.levelParser).map((feed) => feed.sourceCountry))].sort();
+    assert.deepEqual([...ADVISORY_LEVEL_REGISTERS], parsing);
   });
 
   it('a failed snapshot read is unavailable, not a failed build, and health records it', () => {
@@ -269,5 +276,63 @@ describe('withCiiInputQuietClocks options', () => {
     assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, ciiInputDetails(t.aux) as never), /unknown option\(s\) advisories/);
     assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, ['fires'] as never), /unknown option/);
     assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, { details: {}, exclusions: {} } as never), /unknown option\(s\) exclusions/);
+  });
+});
+
+// One definition of a missing register. The seeder writes `failedSources` to
+// its seed-meta (#9596); the scorer derives `sourcesMissing` from the payload
+// that seeder run stored. Both use scripts/shared/advisory-registers.mjs, and
+// these runs of the real seeder pipeline prove they agree.
+describe('advisory register loss: seeder failedSources and scorer sourcesMissing agree', () => {
+  const STATE_DEPT = ADVISORY_FEEDS.find((feed: { name: string }) => feed.name === 'US State Dept');
+  const SMARTRAVELLER = ADVISORY_FEEDS.find((feed: { name: string }) => feed.name === 'Australia DFAT Smartraveller');
+  const CDC = ADVISORY_FEEDS.find((feed: { name: string }) => feed.name === 'CDC Travel Notices');
+  const SMARTRAVELLER_RSS = readFileSync(new URL('./fixtures/smartraveller-advisories-2026-10-23.rss', import.meta.url), 'utf8');
+  const COUNTRY_NAMES = Object.keys(JSON.parse(readFileSync(new URL('../scripts/shared/country-names.json', import.meta.url), 'utf8')));
+  const STATE_DEPT_RSS = `<rss><channel>${COUNTRY_NAMES.slice(0, 400).map((name, i) => (
+    `<item><title>${name} - Level ${(i % 4) + 1}: Advisory</title><link>https://travel.state.gov/${i}</link><pubDate>Mon, 20 Oct 2026 00:00:00 GMT</pubDate></item>`
+  )).join('')}</channel></rss>`;
+  const respond = (body: string, status = 200) => async () => new Response(body, { status });
+  const routed = (routes: Record<string, () => Promise<Response>>) => async (proxyUrl: string) => {
+    const handler = routes[new URL(proxyUrl).searchParams.get('url') ?? ''];
+    return handler ? handler() : new Response('', { status: 404 });
+  };
+
+  async function both(routes: Record<string, () => Promise<Response>>) {
+    const report = await fetchAll({ feeds: [STATE_DEPT, SMARTRAVELLER, CDC], doFetch: routed(routes) });
+    const { freshnessMetaPatch } = await advisoryAfterPublish(report);
+    const stored = advisoryPublishTransform(report);
+    const f = FIXTURES[0]!;
+    const nowMs = Date.parse(stored.fetchedAt) + 60_000;
+    const t = computeCiiScoreTable({ ...f.inputs, advisories: stored }, { nowMs, iranEventsEnabled: f.iranEventsEnabled });
+    // The fixture trim keeps what the scorer needs to say the same thing.
+    const trimmed = trimCiiRawInputs({ advisories: stored }).advisories;
+    const fromTrim = computeCiiScoreTable({ ...f.inputs, advisories: trimmed }, { nowMs, iranEventsEnabled: f.iranEventsEnabled });
+    return {
+      failedSources: freshnessMetaPatch.failedSources ?? [],
+      sourcesMissing: t.aux.advisories?.sourcesMissing ?? [],
+      fromTrim: fromTrim.aux.advisories?.sourcesMissing ?? [],
+    };
+  }
+
+  it('Smartraveller down (HTTP 503): both say AU', async () => {
+    const r = await both({ [STATE_DEPT.url]: respond(STATE_DEPT_RSS), [SMARTRAVELLER.url]: respond('{"error":"Feed in backoff"}', 503) });
+    assert.deepEqual(r.failedSources, ['AU']);
+    assert.deepEqual(r.sourcesMissing, r.failedSources);
+    assert.deepEqual(r.fromTrim, r.failedSources);
+  });
+
+  it('Smartraveller up but unlevelled: both say AU', async () => {
+    const unlevelled = SMARTRAVELLER_RSS.replace(/<ta:warnings>[\s\S]*?<\/ta:warnings>/g, '')
+      .replace(/<description>[\s\S]*?<\/description>/g, '<description>See the website.</description>');
+    const r = await both({ [STATE_DEPT.url]: respond(STATE_DEPT_RSS), [SMARTRAVELLER.url]: respond(unlevelled) });
+    assert.deepEqual(r.failedSources, ['AU']);
+    assert.deepEqual(r.sourcesMissing, r.failedSources);
+    assert.deepEqual(r.fromTrim, r.failedSources);
+  });
+
+  it('both registers up: neither names a source', async () => {
+    const r = await both({ [STATE_DEPT.url]: respond(STATE_DEPT_RSS), [SMARTRAVELLER.url]: respond(SMARTRAVELLER_RSS) });
+    assert.deepEqual(r, { failedSources: [], sourcesMissing: [], fromTrim: [] });
   });
 });

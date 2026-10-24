@@ -2,6 +2,7 @@
 
 import { loadEnvFile, loadSharedConfig, CHROME_UA, runSeed } from './_seed-utils.mjs';
 import { decodeHtmlEntities } from './_html-entities.mjs';
+import { isLevelledAdvisoryItem } from './shared/advisory-registers.mjs';
 
 loadEnvFile(import.meta.url);
 
@@ -326,7 +327,7 @@ function summarizeSourceHealth(feeds, itemsByFeed) {
   feeds.forEach((feed, i) => {
     const items = itemsByFeed[i];
     if (items.length === 0) emptyFeeds.push(feed.name);
-    if (feed.levelParser && !items.some((a) => a.country && a.level && a.level !== 'info')) {
+    if (feed.levelParser && !items.some(isLevelledAdvisoryItem)) {
       missingRegisters.push(feed.sourceCountry);
     }
   });

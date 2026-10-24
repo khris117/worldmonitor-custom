@@ -132,7 +132,9 @@ composite = baseline * 0.4
   评分器改用该快照，并标注 `advisoryProvenance: fallback`。
 - **部分丢失**：`byCountry` 取美国与澳大利亚等级中的较高者，因此丢失其中一个来源的读取仍可能通过
   种子器的覆盖检查。快照中有而实时读取中没有的 Tier-1 国家，会从快照补齐并标注为 `fallback`。
-- **来源丢失**：实时读取的条目列表缺少某个等级来源（`us`、`au`）时，以 `sourcesMissing` 报告。
+- **来源丢失**：实时读取存储的条目列表中没有某个旅行登记源（`US`、`AU`）的带等级条目时，以
+  `sourcesMissing` 报告；这与种子器在自身 seed-meta 上写 `failedSources` 所用的判断相同
+  （`scripts/shared/advisory-registers.mjs`）。
 - **过期**：超过 72 小时的快照不再使用，其本应覆盖的国家的警示加成与下限均不存在。
 - **健康检查**：risk-scores 的 seed-meta 把警示输入报告为 `fallback`（附 `snapshotAt` 与补齐的
   `filled` 国家）、`missing`，或带 `sourcesMissing` 的 `live`。每种情况都会自第一次受影响的构建起

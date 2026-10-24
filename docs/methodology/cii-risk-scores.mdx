@@ -297,8 +297,10 @@ snapshot is replaced only by a live read that lost no Tier-1 country.
   levels, so a read that lost one of them can still pass the seeder's coverage
   check. A Tier-1 country that the snapshot lists but the live read does not is
   filled from the snapshot and disclosed as `fallback`.
-- **A lost source.** A live read whose item list lacks one of the level
-  sources (`us`, `au`) is reported with `sourcesMissing`.
+- **A lost source.** A live read whose stored item list has no levelled
+  item from one of the travel registers (`US`, `AU`) is reported with
+  `sourcesMissing`. This is the same test the seeder uses for `failedSources`
+  on its own seed-meta (`scripts/shared/advisory-registers.mjs`).
 - **Expiry.** A snapshot more than 72 hours old is not used. The advisory boost
   and floor of the countries it would have covered are then absent.
 - **Health.** The risk-scores seed-meta reports the advisories input as

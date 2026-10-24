@@ -41,7 +41,10 @@ const {
 
 const SEED_META_KEY = 'seed-meta:intelligence:risk-scores';
 /** The seeder's stored list carries one level-bearing item per level source (US register, Smartraveller). */
-const levelItems = [{ title: 'Qatar - Level 3', sourceCountry: 'US', level: 'reconsider' }, { title: 'Qatar', sourceCountry: 'AU', level: 'reconsider' }];
+const levelItems = [
+  { title: 'Qatar - Level 3', sourceCountry: 'US', country: 'QA', level: 'reconsider' },
+  { title: 'Qatar', sourceCountry: 'AU', country: 'QA', level: 'reconsider' },
+];
 const NOW = Date.now();
 const MIN = 60_000;
 
@@ -358,8 +361,8 @@ describe('assessCiiInputs', () => {
   it('an input scored from its last good snapshot is dead, with the snapshot age', () => {
     const inputs = { ...allLive(), advisories: { state: 'fallback', snapshotAt: NOW - 95 * MIN, filled: ['QA'] } };
     assert.deepEqual(assessCiiInputs({ inputs }, NOW).dead, [{ id: 'advisories', state: 'fallback', ageMin: 95, filled: ['QA'] }]);
-    const sourceLost = { ...allLive(), advisories: { state: 'live', sourcesMissing: ['au'] } };
-    assert.deepEqual(assessCiiInputs({ inputs: sourceLost }, NOW).dead, [{ id: 'advisories', state: 'live', sourcesMissing: ['au'] }]);
+    const sourceLost = { ...allLive(), advisories: { state: 'live', sourcesMissing: ['AU'] } };
+    assert.deepEqual(assessCiiInputs({ inputs: sourceLost }, NOW).dead, [{ id: 'advisories', state: 'live', sourcesMissing: ['AU'] }]);
     const readFailedOnly = { ...allLive(), advisories: { state: 'live', snapshotReadFailed: true } };
     assert.deepEqual(assessCiiInputs({ inputs: readFailedOnly }, NOW).dead, []);
     const unclocked = { ...allLive(), advisories: { state: 'fallback' } };
