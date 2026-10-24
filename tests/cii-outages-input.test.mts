@@ -293,6 +293,61 @@ describe('CII internet outages: exam shutdowns are excluded', () => {
     }
   });
 
+  // Round-2 review of 26a5dbdf3: an unrest term that is negated is not unrest.
+  it('ignores negated unrest wording, so a routine exam shutdown stays excluded', () => {
+    const now = at('2026-06-15T09:00Z');
+    for (const description of [
+      'Exam season shutdown, no protests reported',
+      'Exam shutdown to prevent cheating; no conflict',
+      'Exam shutdown carried out without any violence',
+      'Exam shutdown; there was not a single protest',
+      'Exam shutdown amid a lack of unrest',
+      'Coupure pendant le baccalauréat, aucune manifestation signalée',
+      'Coupure pendant le baccalauréat, sans manifestations',
+      'قطع الإنترنت خلال الامتحانات دون احتجاجات',
+      'قطع الإنترنت خلال الامتحانات ولا توجد احتجاجات',
+      'بڕینی ئینتەرنێت لە کاتی تاقیکردنەوەکان بێ خۆپیشاندان',
+    ]) {
+      assert.equal(outageVerdict(shutdown(now, description), now), 'exam', description);
+    }
+  });
+
+  it('still keeps exam shutdowns with non-negated unrest, including after a negation elsewhere', () => {
+    const now = at('2026-06-15T09:00Z');
+    for (const description of [
+      'Exam shutdown as protests continue',
+      'No exam was held; protests spread across the capital',
+      'Exam shutdown, no reports of damage, but protests in the south',
+    ]) {
+      assert.equal(outageVerdict(shutdown(now, description), now), 'scored', description);
+    }
+  });
+
+  it('counts "protested", a labour strike, a rally, militants, violence and a security operation as unrest', () => {
+    const now = at('2026-06-15T09:00Z');
+    for (const description of [
+      'Exam shutdown after students protested the results',
+      'Exam shutdown during the teachers’ strike',
+      'Exam shutdown as unions call strikes',
+      'Exam shutdown ahead of an opposition rally',
+      'Exam shutdown after militants attacked a checkpoint',
+      'Exam shutdown following violence in the north',
+      'Exam shutdown during a security operation in the region',
+    ]) {
+      assert.equal(outageVerdict(shutdown(now, description), now), 'scored', description);
+    }
+  });
+
+  it('does not read "airstrike" or "rallying" as unrest', () => {
+    const now = at('2026-06-15T09:00Z');
+    for (const description of [
+      'Exam shutdown; airstrike coverage unrelated',
+      'Exam shutdown; operators rallying to restore service',
+    ]) {
+      assert.equal(outageVerdict(shutdown(now, description), now), 'exam', description);
+    }
+  });
+
   it('matches "bac" and "BEM" only as whole words', () => {
     const now = at('2026-06-15T09:00Z');
     for (const description of [

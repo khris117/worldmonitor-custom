@@ -39,6 +39,8 @@ import {
   CII_GDELT_LEVEL_PROTEST_SATURATION,
   CII_OUTAGE_EXAM_TERMS,
   CII_OUTAGE_FUTURE_SKEW_MS,
+  CII_OUTAGE_NEGATION_TERMS,
+  CII_OUTAGE_NEGATION_WINDOW_WORDS,
   CII_OUTAGE_SCORED_CAUSES,
   CII_OUTAGE_UNREST_TERMS,
   CII_OUTAGE_WINDOW_MS,
@@ -226,7 +228,43 @@ function outageTermMatcher(terms: readonly string[]): (text: string) => boolean 
   };
 }
 const namesExam = outageTermMatcher(CII_OUTAGE_EXAM_TERMS);
-const namesUnrest = outageTermMatcher(CII_OUTAGE_UNREST_TERMS);
+
+const outageWords = (text: string) => text.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+const UNREST_TERMS = CII_OUTAGE_UNREST_TERMS.map((term) => outageWords(foldOutageText(term)));
+const NEGATIONS = CII_OUTAGE_NEGATION_TERMS.map((term) => outageWords(foldOutageText(term)));
+
+/** Whether `term` (as words) sits at word `i`: Latin words exactly, Arabic-script words inside the word. */
+function termAt(words: string[], i: number, term: string[]): boolean {
+  return term.every((part, k) => {
+    const word = words[i + k];
+    if (word == null) return false;
+    return LATIN_TERM.test(part) ? word === part : word.includes(part);
+  });
+}
+
+/** Whether a negation ends within CII_OUTAGE_NEGATION_WINDOW_WORDS words before word `i`. */
+function negatedAt(words: string[], i: number): boolean {
+  for (let start = Math.max(0, i - CII_OUTAGE_NEGATION_WINDOW_WORDS); start < i; start++) {
+    for (const negation of NEGATIONS) {
+      if (start + negation.length > i) continue;
+      const hit = negation.every((part, k) => {
+        const word = words[start + k]!;
+        return word === part || (!LATIN_TERM.test(part) && word === `و${part}`);
+      });
+      if (hit) return true;
+    }
+  }
+  return false;
+}
+
+/** Whether the text carries an unrest term that no negation cancels (see CII_OUTAGE_NEGATION_TERMS). */
+function namesUnrest(text: string): boolean {
+  const words = outageWords(text);
+  for (let i = 0; i < words.length; i++) {
+    if (UNREST_TERMS.some((term) => termAt(words, i, term)) && !negatedAt(words, i)) return true;
+  }
+  return false;
+}
 
 /**
  * Whether the record is a routine exam shutdown: its description or title

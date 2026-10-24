@@ -248,10 +248,29 @@ export const CII_OUTAGE_UNREST_TERMS: readonly string[] = [
   'military', 'curfew', 'coup',
   'manifestation', 'manifestations', 'manifestants', 'emeute', 'emeutes', 'conflit', 'combats', 'militaire',
   'militaires', 'couvre feu',
+  // Round-2 review: a strike here is a labour action; whole words only, so "airstrike" does not match.
+  'protested', 'strike', 'strikes', 'rally', 'rallies', 'militant', 'militants', 'violence', 'security operation',
   'protesta', 'protestas', 'disturbios', 'elecciones', 'toque de queda', 'golpe de estado',
   'احتجاج', 'مظاهرات', 'تظاهرات', 'اضطرابات', 'انتخابات', 'اشتباكات', 'قتال', 'عسكري', 'حظر التجول', 'حظر تجول', 'انقلاب', 'نزاع',
   'خۆپیشاندان', 'ئاژاوە', 'هەڵبژاردن', 'شەڕ', 'سەربازی', 'کودەتا',
 ];
+/**
+ * A negation within the three words before an unrest term cancels it: "Exam
+ * season shutdown, no protests reported" is still a routine exam shutdown.
+ * Matched LEXICALLY like the terms above: Latin-script entries must equal a
+ * word (or run of words); Arabic-script entries must equal a word or follow
+ * the conjunction "و" attached to it ("ولا"). English, French, Spanish,
+ * Arabic and Kurdish (Sorani).
+ */
+export const CII_OUTAGE_NEGATION_TERMS: readonly string[] = [
+  'no', 'not', 'without', 'never', 'lack of', 'none',
+  'pas', 'sans', 'aucun', 'aucune', 'jamais', 'ni',
+  'sin', 'ningun', 'ninguna', 'nunca',
+  'لا', 'دون', 'بدون', 'بلا', 'لم', 'ليس', 'لن', 'عدم', 'غياب',
+  'بێ', 'بەبێ', 'نە', 'هیچ',
+];
+/** How many words before an unrest term a negation reaches. */
+export const CII_OUTAGE_NEGATION_WINDOW_WORDS = 3;
 
 /**
  * Strategic-risk top-N positional decay step. Weight for position `i` (0-based)

@@ -31,6 +31,8 @@ import {
   CII_GDELT_LEVEL_PROTEST_SATURATION,
   CII_OUTAGE_EXAM_TERMS,
   CII_OUTAGE_FUTURE_SKEW_MS,
+  CII_OUTAGE_NEGATION_TERMS,
+  CII_OUTAGE_NEGATION_WINDOW_WORDS,
   CII_OUTAGE_SCORED_CAUSES,
   CII_OUTAGE_UNREST_TERMS,
   CII_OUTAGE_WINDOW_MS,
@@ -132,7 +134,7 @@ const CII_PROTOCOL_SNAPSHOT_HASH_BY_VERSION: Record<string, string> = {
   // Each Stage B PR regenerates this entry, and only this one, with the command in
   // docs/methodology/cii-change-brief.md section 3, and says so in its PR body. It
   // is frozen as released when v15 ships.
-  v15: '26f312345d0dee3e22176b46b3c44e8cdd2fd9995d3751d9f19a791dc28b2875',
+  v15: '3a575ef73d7144020b2718edd25d585a1ba9d24d1b44d0f51734ff8aa44d1ff5',
 };
 
 // The released entries above are a record. This digest of every entry except
@@ -1920,6 +1922,8 @@ describe('CII scoring', () => {
         CII_GDELT_LEVEL_PROTEST_SATURATION,
         CII_OUTAGE_EXAM_TERMS,
         CII_OUTAGE_FUTURE_SKEW_MS,
+        CII_OUTAGE_NEGATION_TERMS,
+        CII_OUTAGE_NEGATION_WINDOW_WORDS,
         CII_OUTAGE_SCORED_CAUSES: [...CII_OUTAGE_SCORED_CAUSES].sort(),
         CII_OUTAGE_UNREST_TERMS,
         CII_OUTAGE_WINDOW_MS,
