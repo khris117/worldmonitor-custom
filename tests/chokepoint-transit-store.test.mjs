@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createDurableTransitTracker } from '../shared/chokepoint-transit-store.js';
+import { createTransitTracker } from '../shared/chokepoint-transit-tracker.js';
 import { readTransitWindow } from '../shared/chokepoint-transit-window.js';
 
 const HOUR = 3600000;
@@ -17,7 +18,7 @@ const cli = process.env.REDIS_CLI_BIN || 'redis-cli';
 const server = process.env.REDIS_SERVER_BIN || 'redis-server';
 const enabled = spawnSync(cli, ['--version']).status === 0 && spawnSync(server, ['--version']).status === 0;
 
-test('real Redis continues gates across restarts without renewing crossing clocks', { skip: !enabled && 'redis-server and redis-cli required' }, async () => {
+test('real Redis continues gates across restarts without renewing crossing clocks', { skip: !enabled && 'redis-server and redis-cli required' }, async t => {
   const dir = mkdtempSync(join(tmpdir(), 'transit-gates-'));
   const socket = join(dir, 'redis.sock');
   const started = spawnSync(server, ['--port', '0', '--unixsocket', socket, '--save', '', '--appendonly', 'no', '--daemonize', 'yes', '--pidfile', join(dir, 'pid'), '--logfile', join(dir, 'log')], { encoding: 'utf8' });
@@ -36,6 +37,57 @@ test('real Redis continues gates across restarts without renewing crossing clock
     assert.ok(ready);
     const evaluate = async (script, keys, args) => command('EVAL', script, keys.length, ...keys, ...args);
     const window = now => readTransitWindow(new Map(), now, evaluate);
+    await t.test('pairs the first gate even when another relay committed the second gate first', async () => {
+      command('FLUSHDB');
+      const first = make(evaluate);
+      const second = make(evaluate);
+      observe(first, 'a', at);
+      observe(second, 'b', at + HOUR);
+      await second.flush(at + HOUR);
+      await first.flush(at + HOUR + 1);
+      assert.deepEqual((await window(at + HOUR + 1)).get(name), [{ mmsi: '123456789', type: 'tanker', ts: at + HOUR }]);
+    });
+    await t.test('recovery pairs buffered reports by their gap, not their age at flush', async () => {
+      command('FLUSHDB');
+      let fail = true;
+      const tracker = make(async (...args) => fail ? null : evaluate(...args));
+      observe(tracker, 'a', at);
+      await assert.rejects(tracker.flush(at), /gate update failed/);
+      observe(tracker, 'b', at + 17 * HOUR);
+      await assert.rejects(tracker.flush(at + 18 * HOUR + 1), /gate update failed/);
+      fail = false;
+      await tracker.flush(at + 18 * HOUR + 2);
+      assert.deepEqual((await window(at + 18 * HOUR + 2)).get(name), [{ mmsi: '123456789', type: 'tanker', ts: at + 17 * HOUR }]);
+    });
+    await t.test('late observations correct completion clocks without keeping superseded events', async () => {
+      command('FLUSHDB');
+      const tracker = make(evaluate);
+      observe(tracker, 'a', at);
+      observe(tracker, 'b', at + 2 * HOUR);
+      await tracker.flush(at + 2 * HOUR);
+      const delayed = make(evaluate);
+      observe(delayed, 'b', at + HOUR);
+      await delayed.flush(at + 2 * HOUR + 1);
+      assert.deepEqual((await window(at + 2 * HOUR + 1)).get(name), [{ mmsi: '123456789', type: 'tanker', ts: at + HOUR }]);
+    });
+    await t.test('trimming journal history preserves the continuous tracker cooldown phase', async () => {
+      command('FLUSHDB');
+      const crossings = new Map();
+      const continuous = createTransitTracker({ gates, maxTransitMs: 18 * HOUR, cooldownMs: HOUR / 2, crossings });
+      const durable = make(evaluate);
+      for (let i = 0; i <= 240; i++) {
+        const ts = at + i * HOUR / 3;
+        const side = i % 2 ? 'b' : 'a';
+        observe(continuous, side, ts);
+        observe(durable, side, ts);
+        if (i % 3 === 0) await durable.flush(ts);
+      }
+      const now = at + 80 * HOUR;
+      const expected = crossings.get(name).filter(row => row.ts > now - 24 * HOUR)
+        .map(({ mmsi, type, ts }) => ({ mmsi, type, ts }));
+      assert.deepEqual((await window(now)).get(name), expected);
+    });
+    command('FLUSHDB');
     let tracker = make(evaluate);
     observe(tracker, 'a', at);
     await tracker.flush(at);
@@ -76,7 +128,7 @@ test('real Redis continues gates across restarts without renewing crossing clock
     observe(tracker, 'b', at + 18 * HOUR);
     await tracker.flush(at + 18 * HOUR);
     assert.equal((await window(at + 18 * HOUR)).get(name).length, 1, 'exact gap boundary is still accepted');
-    await tracker.flush(at + 37 * HOUR);
+    await tracker.flush(at + 61 * HOUR);
     assert.equal(command('HLEN', 'supply_chain:transit-gates:v1'), 0);
     assert.equal(command('ZCARD', 'supply_chain:transit-gate-times:v1'), 0);
 
@@ -102,7 +154,7 @@ test('concurrent flushes serialize and retain observations newer than the caller
   const batches = [];
   let release;
   const tracker = make(async (_script, _keys, args) => {
-    batches.push(JSON.parse(args[3]));
+    batches.push(JSON.parse(args[4]));
     if (batches.length === 1) await new Promise(resolve => { release = resolve; });
     return 1;
   });
@@ -122,7 +174,7 @@ test('failed writes keep observations and reject publication instead of acceptin
   let batch;
   const tracker = make(async (_script, _keys, args) => {
     if (fail) return null;
-    batch = JSON.parse(args[3]);
+    batch = JSON.parse(args[4]);
     return 1;
   });
   observe(tracker, 'a', at);
