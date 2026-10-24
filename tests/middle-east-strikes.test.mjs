@@ -536,6 +536,11 @@ describe('precision: one incident, once, on the country hit, when it happened', 
       // Context about the past is not a look back at an old attack.
       'Drone strike hits the Abqaiq plant, rebuilt years ago after the 2019 attack', 'Missiles struck Haifa port today, months ago it was hit too',
       'On the anniversary of the war, a drone struck Erbil airport',
+      // A release cue on a strike that is happening now: the time marker wins.
+      "Leaked footage shows today's drone strike on Riyadh",
+      "Previously unseen footage of this morning's missile strike on Jizan",
+      'Whistleblower: the drone strike on Najran an hour ago killed two',
+      'BREAKING: leaked video shows a missile hitting Dammam port',
     ]) {
       assert.equal(strikes.isRetrospectivePost(text), false, text);
       assert.equal(strikes.prefilterStrikeText(text), true, text);

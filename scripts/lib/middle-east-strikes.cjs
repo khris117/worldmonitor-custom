@@ -227,8 +227,10 @@ const STRIKE_STEM_RE = new RegExp(STRIKE_TERMS_STEMS.map(gazetteer.normalizePlac
 // normalized text (lowercase, punctuation as spaces). Every cue names a
 // release of old material; time words alone ("years ago", "anniversary of")
 // also describe context in a report of a new strike, so they stay with the
-// classifier. On the 326 stored posts of 2026-10-20..23 the list matched 13,
-// all retrospective.
+// classifier. A release cue can also front a strike happening now ("leaked
+// footage shows today's strike"), so a post that carries a current-time marker
+// is left to the classifier too. On the 326 stored posts of 2026-10-20..23 the
+// rule matched 13, all retrospective; none carried a current-time marker.
 const RETROSPECTIVE_CUES = [
   'previously unseen', 'never before seen', 'never seen before', 'newly obtained', 'newly circulating', 'newly surfaced',
   'leaked footage', 'leaked images', 'leaked video', 'leaked videos', 'leaked photos',
@@ -237,16 +239,29 @@ const RETROSPECTIVE_CUES = [
   'تصاویر دیده نشده', 'ویدیوی دیده نشده', 'لم تنشر من قبل', 'لم يسبق نشرها',
 ].map(gazetteer.normalizePlaceName);
 const RETROSPECTIVE_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${RETROSPECTIVE_CUES.join('|')})(?![\\p{L}\\p{N}])`, 'u');
+// Normalized, so "today's" reads "todays" and "this morning's" "this mornings".
+const CURRENT_TIME_TERMS = [
+  'today', 'todays', 'tonight', 'tonights', 'this morning', 'this mornings', 'this afternoon', 'this afternoons',
+  'this evening', 'this evenings', 'moments ago', 'minutes ago', 'an hour ago', 'hours ago', 'just now', 'right now',
+  'breaking', 'ongoing', 'underway',
+  // Persian "today", "moments ago"; Arabic "today", "now".
+  'امروز', 'لحظاتی پیش', 'اليوم', 'الآن',
+].map(gazetteer.normalizePlaceName);
+const CURRENT_TIME_RE = new RegExp(`(?<![\\p{L}\\p{N}])(?:${CURRENT_TIME_TERMS.join('|')})(?![\\p{L}\\p{N}])`, 'u');
+
+function isRetrospectiveNormalized(normalized) {
+  return RETROSPECTIVE_RE.test(normalized) && !CURRENT_TIME_RE.test(normalized);
+}
 
 function isRetrospectivePost(text) {
-  return RETROSPECTIVE_RE.test(gazetteer.normalizePlaceName(text));
+  return isRetrospectiveNormalized(gazetteer.normalizePlaceName(text));
 }
 
 function prefilterStrikeText(text) {
   const normalized = gazetteer.normalizePlaceName(text);
   if (!normalized) return false;
   if (!STRIKE_LATIN_RE.test(normalized) && !STRIKE_STEM_RE.test(normalized)) return false;
-  if (RETROSPECTIVE_RE.test(normalized)) return false;
+  if (isRetrospectiveNormalized(normalized)) return false;
   return gazetteer.mentionsTheater(text);
 }
 
