@@ -247,6 +247,7 @@ function trimAdvisories(v: any): Obj {
   return {
     byCountry: tier1Entries(v.byCountry),
     ...(v.fetchedAt != null ? { fetchedAt: v.fetchedAt } : {}),
+    ...(isObj(v.seenAt) ? { seenAt: tier1Entries(v.seenAt) } : {}),
     ...(items ? { advisories: items } : {}),
   };
 }

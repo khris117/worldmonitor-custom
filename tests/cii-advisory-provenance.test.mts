@@ -25,7 +25,7 @@ import {
 
 // Namespace imports so each case reports on its own against a scorer that
 // predates the snapshot path.
-const { assessCiiInputAvailability, ciiInputDetails, computeCiiScoreTable, withCiiInputQuietClocks } = riskScores;
+const { assessCiiInputAvailability, ciiAdvisoryLastGoodSnapshot, ciiInputDetails, computeCiiScoreTable, withCiiInputQuietClocks, CII_ADVISORY_DROPPED_RETENTION_MS } = riskScores;
 const { CII_ADVISORY_MAX_AGE_MS } = riskConfig;
 const FIXTURES = loadCiiFixtures();
 const HOUR_MS = 60 * 60 * 1000;
@@ -219,6 +219,46 @@ describe('CII advisory partial feed loss', () => {
     const f = FIXTURES[0]!;
     const v = verdict(f, { ...f.inputs, advisories: { byCountry: partial(f) }, advisoriesLastGood: snapshot(f, CII_ADVISORY_MAX_AGE_MS + 1) });
     for (const code of LOST) assert.equal(disclosure(v.t)[code], '/absent', code);
+  });
+
+  // The snapshot is refreshed by every live read and carries each country's
+  // last live sighting (`seenAt`). A country the feed stopped listing is filled
+  // while its sighting is younger than the maximum age, then reads absent and
+  // is reported as dropped, so it neither scores a stale level nor vanishes.
+  it('a country the live feed stopped listing more than the maximum age ago is absent and reported as dropped', () => {
+    for (const f of FIXTURES) {
+      const byCountry = { ...liveLevels(f) };
+      delete byCountry.LB;
+      delete byCountry.QA;
+      const seenAt = { ...Object.fromEntries(Object.keys(liveLevels(f)).map((code) => [code, f.nowMs - HOUR_MS])),
+        LB: f.nowMs - CII_ADVISORY_MAX_AGE_MS - HOUR_MS, QA: f.nowMs - CII_ADVISORY_MAX_AGE_MS + HOUR_MS };
+      const v = verdict(f, { ...f.inputs, advisories: { byCountry }, advisoriesLastGood: { byCountry: liveLevels(f), fetchedAt: f.nowMs - HOUR_MS, seenAt } });
+      const d = disclosure(v.t);
+      assert.equal(d.LB, '/absent', `${f.label}: LB last seen past the maximum age`);
+      assert.equal(d.QA, `${liveLevels(f).QA}/fallback`, `${f.label}: QA last seen inside it`);
+      assert.deepEqual(v.reports.advisories.droppedCountries, ['LB'], f.label);
+      assert.deepEqual(v.alarm, {
+        id: 'advisories', state: 'fallback', ageMin: Math.floor((CII_ADVISORY_MAX_AGE_MS - HOUR_MS) / 60_000), filled: ['QA'], droppedCountries: ['LB'],
+      }, f.label);
+    }
+  });
+
+  it('the next snapshot keeps a lost country at its last sighting and refreshes the rest', () => {
+    const f = FIXTURES[0]!;
+    const byCountry = { ...liveLevels(f) };
+    delete byCountry.QA;
+    const old = { byCountry: liveLevels(f), fetchedAt: f.nowMs - 2 * HOUR_MS, seenAt: { QA: f.nowMs - 5 * HOUR_MS } };
+    const fetchedAt = new Date(f.nowMs - 10 * 60_000).toISOString();
+    const t = table(f, { ...f.inputs, advisories: { byCountry, fetchedAt }, advisoriesLastGood: old });
+    const next = ciiAdvisoryLastGoodSnapshot(t.aux, f.nowMs)!;
+    assert.equal(next.fetchedAt, Date.parse(fetchedAt));
+    assert.equal(next.byCountry.QA, liveLevels(f).QA, 'the lost country is carried');
+    assert.equal(next.seenAt.QA, f.nowMs - 5 * HOUR_MS, 'at its last live sighting, not this read');
+    assert.equal(next.seenAt.IR, Date.parse(fetchedAt), 'a listed country is seen at this read');
+    // Carried for the reporting window, then purged.
+    const stale = { ...old, seenAt: { QA: f.nowMs - CII_ADVISORY_DROPPED_RETENTION_MS - 1 } };
+    const purged = ciiAdvisoryLastGoodSnapshot(table(f, { ...f.inputs, advisories: { byCountry, fetchedAt }, advisoriesLastGood: stale }).aux, f.nowMs)!;
+    assert.equal(Object.hasOwn(purged.byCountry, 'QA'), false);
   });
 
   it('a level source missing from the live read is reported and alarms', () => {

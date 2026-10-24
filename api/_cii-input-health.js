@@ -15,7 +15,9 @@
 //                   countries taken from it): the read was missing or stale, or
 //                   lost countries. Scores hold, but the input is dead.
 // A report may also carry `sourcesMissing` (a live read lacked one of its
-// sources: dead) and `snapshotReadFailed` (shown, not dead on its own).
+// sources: dead), `droppedCountries` (countries no read has listed for longer
+// than the snapshot may stand in, now absent: dead) and `snapshotReadFailed`
+// (shown, not dead on its own).
 //   not_configured  disabled by deployment design (no ACLED credentials,
 //                   IRAN_EVENTS_ENABLED off)
 // An unreadable key rejects the whole build, so it surfaces as a stale
@@ -86,6 +88,7 @@ function provenanceDetail(report) {
   const detail = {};
   if (Array.isArray(report?.filled) && report.filled.length) detail.filled = report.filled.map(String);
   if (Array.isArray(report?.sourcesMissing) && report.sourcesMissing.length) detail.sourcesMissing = report.sourcesMissing.map(String);
+  if (Array.isArray(report?.droppedCountries) && report.droppedCountries.length) detail.droppedCountries = report.droppedCountries.map(String);
   if (report?.snapshotReadFailed === true) detail.snapshotReadFailed = true;
   return detail;
 }
@@ -135,10 +138,10 @@ export function assessCiiInputs(meta, now, sourceStatuses = {}) {
         : null;
       if (quietMin === null) dead.push({ id, state, ...detail });
       else if (cfg.maxQuietMin != null && quietMin > cfg.maxQuietMin) dead.push({ id, state, quietMin, ...detail });
-      else if (detail.sourcesMissing) dead.push({ id, state, ...detail });
+      else if (detail.sourcesMissing || detail.droppedCountries) dead.push({ id, state, ...detail });
       else healthy.add(id);
-    } else if (detail.sourcesMissing) {
-      // Live, but one of the sources behind it is gone: part of the input is unknown.
+    } else if (detail.sourcesMissing || detail.droppedCountries) {
+      // Live, but a source or a country behind it is gone: part of the input is unknown.
       dead.push({ id, state, ...detail });
     } else {
       healthy.add(id);

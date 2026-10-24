@@ -230,10 +230,15 @@ describe('CII input health, producer to verdict', () => {
     const kept = writes.filter((write) => write.key === CII_ADVISORY_LAST_GOOD_KEY);
     assert.equal(kept.length, 1);
     // Tier-1 entries only, 'normal' included: presence is what a later read is compared against.
-    assert.deepEqual(JSON.parse(kept[0]!.value), { byCountry: { QA: 'reconsider', TW: 'normal', UA: 'do-not-travel' }, fetchedAt: Date.parse(fetchedAt) });
+    const clock = Date.parse(fetchedAt);
+    assert.deepEqual(JSON.parse(kept[0]!.value), {
+      byCountry: { UA: 'do-not-travel', TW: 'normal', QA: 'reconsider' },
+      fetchedAt: clock,
+      seenAt: { UA: clock, TW: clock, QA: clock },
+    });
   });
 
-  it('a live read that lost Tier-1 countries fills them from the snapshot, alarms, and keeps the snapshot as it was', async () => {
+  it('a live read that lost Tier-1 countries fills them from the snapshot, alarms, and carries them at their last sighting', async () => {
     const fetchedAt = new Date(NOW - 20 * MIN).toISOString();
     stubRedis({
       ...liveFeedsWithoutRealtimeConflict(),
@@ -245,7 +250,16 @@ describe('CII input health, producer to verdict', () => {
     const ua = response.ciiScores.find((score) => score.region === 'UA')!;
     assert.equal(`${qa.advisoryLevel}/${qa.advisoryProvenance}`, 'reconsider/fallback');
     assert.equal(`${ua.advisoryLevel}/${ua.advisoryProvenance}`, 'do-not-travel/live');
-    assert.equal(writes.some((write) => write.key === CII_ADVISORY_LAST_GOOD_KEY), false, 'a degraded read must not replace the snapshot');
+    // The snapshot is refreshed with what this read listed; QA keeps its old
+    // sighting, so it ages toward absent (and reported dropped) instead of
+    // being renewed by a read that no longer lists it.
+    const kept = writes.filter((write) => write.key === CII_ADVISORY_LAST_GOOD_KEY);
+    assert.equal(kept.length, 1);
+    assert.deepEqual(JSON.parse(kept[0]!.value), {
+      byCountry: { UA: 'do-not-travel', QA: 'reconsider' },
+      fetchedAt: Date.parse(fetchedAt),
+      seenAt: { UA: Date.parse(fetchedAt), QA: NOW - 2 * 60 * MIN },
+    });
     const meta = JSON.parse(writes.filter((write) => write.key === SEED_META_KEY).at(-1)!.value);
     assert.deepEqual(meta.inputs.advisories, { state: 'fallback', snapshotAt: NOW - 2 * 60 * MIN, filled: ['QA'] });
     assert.ok(riskScoresHealth(meta).ciiInputs.dead.some((input: { id: string; state: string }) => (
@@ -363,6 +377,8 @@ describe('assessCiiInputs', () => {
     assert.deepEqual(assessCiiInputs({ inputs }, NOW).dead, [{ id: 'advisories', state: 'fallback', ageMin: 95, filled: ['QA'] }]);
     const sourceLost = { ...allLive(), advisories: { state: 'live', sourcesMissing: ['AU'] } };
     assert.deepEqual(assessCiiInputs({ inputs: sourceLost }, NOW).dead, [{ id: 'advisories', state: 'live', sourcesMissing: ['AU'] }]);
+    const dropped = { ...allLive(), advisories: { state: 'live', droppedCountries: ['LB'] } };
+    assert.deepEqual(assessCiiInputs({ inputs: dropped }, NOW).dead, [{ id: 'advisories', state: 'live', droppedCountries: ['LB'] }]);
     const readFailedOnly = { ...allLive(), advisories: { state: 'live', snapshotReadFailed: true } };
     assert.deepEqual(assessCiiInputs({ inputs: readFailedOnly }, NOW).dead, []);
     const unclocked = { ...allLive(), advisories: { state: 'fallback' } };
