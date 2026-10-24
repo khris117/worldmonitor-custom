@@ -312,7 +312,7 @@ export const DOCS_PAGE_DATES: Record<string, { datePublished: string; dateModifi
   "mcp-jmespath": {"datePublished":"2026-05-23","dateModified":"2026-10-21"},
   "mcp-overview": {"datePublished":"2026-07-05","dateModified":"2026-10-23"},
   "mcp-quickstart": {"datePublished":"2026-05-23","dateModified":"2026-10-21"},
-  "mcp-tools-reference": {"datePublished":"2026-05-11","dateModified":"2026-10-21"},
+  "mcp-tools-reference": {"datePublished":"2026-05-11","dateModified":"2026-10-24"},
   "methodology/capital-flows": {"datePublished":"2026-10-19","dateModified":"2026-10-19"},
   "methodology/china-activity-nowcast": {"datePublished":"2026-07-26","dateModified":"2026-09-10"},
   "methodology/chokepoints": {"datePublished":"2026-04-22","dateModified":"2026-10-22"},
