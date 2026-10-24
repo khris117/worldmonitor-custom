@@ -3482,11 +3482,11 @@
       "ground": "Au sol",
       "airborne": "En vol"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Prévision à venir",
+    "currentForecast": "Prévision en cours",
+    "expiredForecast": "Prévision expirée",
+    "validFrom": "Valable à partir du",
+    "validUntil": "Valable jusqu’au"
   },
   "signals": {
     "context": {

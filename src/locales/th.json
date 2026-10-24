@@ -3442,11 +3442,11 @@
       "venezuela_crisis": "วิกฤตเวเนซุเอลา",
       "yemen_houthis": "เยเมน/ฮูตี"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "พยากรณ์ล่วงหน้า",
+    "currentForecast": "พยากรณ์ที่มีผลในขณะนี้",
+    "expiredForecast": "พยากรณ์ที่หมดอายุ",
+    "validFrom": "มีผลตั้งแต่",
+    "validUntil": "มีผลถึง"
   },
   "signals": {
     "context": {

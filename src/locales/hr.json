@@ -3562,11 +3562,11 @@
       "venezuela_crisis": "Venezuelanska Kriza",
       "yemen_houthis": "Jemen/Houthiji"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Nadolazeća prognoza",
+    "currentForecast": "Trenutačna prognoza",
+    "expiredForecast": "Istekla prognoza",
+    "validFrom": "Vrijedi od",
+    "validUntil": "Vrijedi do"
   },
   "signals": {
     "context": {

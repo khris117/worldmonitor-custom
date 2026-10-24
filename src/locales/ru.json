@@ -3502,11 +3502,11 @@
       "venezuela_crisis": "Кризис в Венесуэле",
       "yemen_houthis": "Йемен/Хуситы"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Предстоящий прогноз",
+    "currentForecast": "Действующий прогноз",
+    "expiredForecast": "Истёкший прогноз",
+    "validFrom": "Действует с",
+    "validUntil": "Действует до"
   },
   "signals": {
     "context": {

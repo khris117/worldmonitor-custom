@@ -3078,11 +3078,11 @@
       "ground": "På marken",
       "airborne": "I luften"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Kommande prognos",
+    "currentForecast": "Aktuell prognos",
+    "expiredForecast": "Utgången prognos",
+    "validFrom": "Giltig från",
+    "validUntil": "Giltig till"
   },
   "signals": {
     "context": {

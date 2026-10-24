@@ -3442,11 +3442,11 @@
       "venezuela_crisis": "ベネズエラ危機",
       "yemen_houthis": "イエメン/フーシ"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "今後の予報",
+    "currentForecast": "現在有効な予報",
+    "expiredForecast": "期限切れの予報",
+    "validFrom": "有効開始",
+    "validUntil": "有効期限"
   },
   "signals": {
     "context": {

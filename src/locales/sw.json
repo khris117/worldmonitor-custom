@@ -3531,11 +3531,11 @@
       "venezuela_crisis": "Mgogoro wa Venezuela",
       "yemen_houthis": "Yemen/Houthi"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Utabiri ujao",
+    "currentForecast": "Utabiri wa sasa",
+    "expiredForecast": "Utabiri uliopitwa na wakati",
+    "validFrom": "Halali kuanzia",
+    "validUntil": "Halali hadi"
   },
   "signals": {
     "context": {

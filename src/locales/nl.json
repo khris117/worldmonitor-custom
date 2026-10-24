@@ -3078,11 +3078,11 @@
       "ground": "Op de grond",
       "airborne": "In de lucht"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Komende verwachting",
+    "currentForecast": "Actuele verwachting",
+    "expiredForecast": "Verlopen verwachting",
+    "validFrom": "Geldig vanaf",
+    "validUntil": "Geldig tot"
   },
   "signals": {
     "context": {

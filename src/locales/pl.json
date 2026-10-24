@@ -3502,11 +3502,11 @@
       "ground": "Na ziemi",
       "airborne": "W powietrzu"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Nadchodząca prognoza",
+    "currentForecast": "Aktualna prognoza",
+    "expiredForecast": "Wygasła prognoza",
+    "validFrom": "Ważna od",
+    "validUntil": "Ważna do"
   },
   "signals": {
     "context": {

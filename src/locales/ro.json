@@ -3482,11 +3482,11 @@
       "venezuela_crisis": "Criza din Venezuela",
       "yemen_houthis": "Yemen/Houthi"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Prognoză viitoare",
+    "currentForecast": "Prognoză actuală",
+    "expiredForecast": "Prognoză expirată",
+    "validFrom": "Valabilă de la",
+    "validUntil": "Valabilă până la"
   },
   "signals": {
     "context": {

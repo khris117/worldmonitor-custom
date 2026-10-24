@@ -3096,11 +3096,11 @@
       "ground": "No solo",
       "airborne": "Em voo"
     },
-    "upcomingForecast": "Upcoming forecast",
-    "currentForecast": "Current forecast",
-    "expiredForecast": "Expired forecast",
-    "validFrom": "Valid from",
-    "validUntil": "Valid until"
+    "upcomingForecast": "Previsão futura",
+    "currentForecast": "Previsão vigente",
+    "expiredForecast": "Previsão expirada",
+    "validFrom": "Válida a partir de",
+    "validUntil": "Válida até"
   },
   "signals": {
     "context": {
