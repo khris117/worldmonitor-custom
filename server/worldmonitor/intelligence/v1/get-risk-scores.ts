@@ -37,6 +37,7 @@ import {
   CII_GDELT_LEVEL_MIN_ARTICLES,
   CII_GDELT_LEVEL_PROTEST_FLOOR,
   CII_GDELT_LEVEL_PROTEST_SATURATION,
+  CII_OUTAGE_ASN_NATIONAL_SHARE,
   CII_OUTAGE_EXAM_TERMS,
   CII_OUTAGE_FUTURE_SKEW_MS,
   CII_OUTAGE_NEGATION_TERMS,
@@ -276,21 +277,34 @@ export function isExamShutdown(outage: any): boolean {
   return namesExam(text) && !namesUnrest(text);
 }
 
+export type OutageVerdict = 'scored' | 'cause' | 'window' | 'exam' | 'asnBelowNationalShare' | 'asnImpactUnknown';
+
 /**
  * Why an outage does or does not score now. It scores when its cause is in
  * construct (CII_OUTAGE_SCORED_CAUSES), it was active at some point in the
  * last CII_OUTAGE_WINDOW_MS, and it is not an exam shutdown. `endedAt` 0
  * means ongoing. A record with no start time cannot be placed in the window,
  * and one starting more than CII_OUTAGE_FUTURE_SKEW_MS ahead has not begun.
+ * An ASN-attributed record (`attribution: 'asn'`, set by the parser from the
+ * payload's `asnOutages`) also needs a measured national impact above
+ * CII_OUTAGE_ASN_NATIONAL_SHARE; an unmeasured one, or an upper bound above
+ * it, is unknown and never scores.
  */
-export function outageVerdict(outage: any, nowMs: number): 'scored' | 'cause' | 'window' | 'exam' {
+export function outageVerdict(outage: any, nowMs: number): OutageVerdict {
   if (!CII_OUTAGE_SCORED_CAUSES.has(String(outage?.cause || '').toUpperCase())) return 'cause';
   const start = Number(outage?.detectedAt);
   if (!Number.isFinite(start) || start <= 0 || start > nowMs + CII_OUTAGE_FUTURE_SKEW_MS) return 'window';
   const end = Number(outage?.endedAt);
   const lastActive = Number.isFinite(end) && end > 0 ? Math.min(end, nowMs) : nowMs;
   if (lastActive < nowMs - CII_OUTAGE_WINDOW_MS) return 'window';
-  return isExamShutdown(outage) ? 'exam' : 'scored';
+  if (isExamShutdown(outage)) return 'exam';
+  if (outage?.attribution === 'asn') {
+    const impact = outage?.nationalImpact == null ? NaN : Number(outage.nationalImpact);
+    if (!Number.isFinite(impact)) return 'asnImpactUnknown';
+    if (impact > CII_OUTAGE_ASN_NATIONAL_SHARE) return outage?.impactIsUpperBound === true ? 'asnImpactUnknown' : 'scored';
+    return 'asnBelowNationalShare';
+  }
+  return 'scored';
 }
 
 export function isScoredOutage(outage: any, nowMs: number): boolean {
@@ -1260,7 +1274,12 @@ export function buildCiiAuxiliarySources(
   // Each outage record carries its resolved ISO2 code; one that resolves to no
   // country is dropped. A payload whose records all fail to map is unusable,
   // not quiet: that is how the countryCode/name mismatch hid for months (P7b).
-  const outageRecords = arr(outagesRaw, 'outages');
+  // ASN-attributed records arrive in `asnOutages`; the attribution comes from
+  // that placement, never from a field the record carries.
+  const outageRecords = [
+    ...arr(outagesRaw, 'outages').map((o) => ({ ...o, attribution: undefined })),
+    ...(Array.isArray((outagesRaw as any)?.asnOutages) ? arr(outagesRaw, 'asnOutages') : []).map((o) => ({ ...o, attribution: 'asn' })),
+  ];
   const outages = outageRecords.flatMap((o) => {
     const countryCode = outageCountryCode(o);
     return countryCode ? [{ ...o, countryCode }] : [];
@@ -1367,7 +1386,10 @@ export type CiiInputId = typeof CII_HEALTH_INPUT_IDS[number];
 type CiiInputRead = 'present' | 'missing' | 'unusable' | 'not_configured';
 export type CiiInputState = 'live' | 'quiet' | 'missing' | 'unusable' | 'not_configured';
 /** Records one construct rule removed from scoring: how many, and up to 5 to audit. */
-export interface CiiInputExclusion { count: number; samples: Array<{ id: string; title: string; description: string }> }
+export interface CiiInputExclusion {
+  count: number;
+  samples: Array<{ id: string; title: string; description: string; nationalImpact?: number | null }>;
+}
 /** `excluded`: records a construct rule removed from scoring, by rule (see ciiInputExclusions). */
 export interface CiiInputReport { state: CiiInputState; quietSince?: number; excluded?: Record<string, CiiInputExclusion> }
 export type CiiInputExclusions = Partial<Record<CiiInputId, Record<string, CiiInputExclusion>>>;
@@ -1439,16 +1461,36 @@ export function assessCiiInputAvailability(
 
 /**
  * Records a construct rule removed from scoring, reported on input health so
- * an exclusion is never silent. `examShutdown` counts outages that pass the
- * cause and window rules but are exam shutdowns (CII_OUTAGE_EXAM_TERMS).
+ * an exclusion is never silent. Each key counts outages that pass the cause
+ * and window rules but are removed by a later one: `examShutdown`
+ * (CII_OUTAGE_EXAM_TERMS), `asnBelowNationalShare` (an ASN outage at or
+ * below CII_OUTAGE_ASN_NATIONAL_SHARE) and `asnImpactUnknown` (an ASN
+ * outage whose national impact could not be measured).
  */
 export function ciiInputExclusions(aux: AuxiliarySources, nowMs: number): CiiInputExclusions {
-  const exams = aux.outages.filter((o) => outageVerdict(o, nowMs) === 'exam');
-  if (exams.length === 0) return {};
   const text = (v: unknown) => String(v ?? '').slice(0, CII_EXCLUSION_TEXT_MAX);
-  const samples = exams.slice(0, CII_EXCLUSION_SAMPLES).map((o) => ({ id: text(o.id), title: text(o.title), description: text(o.description) }));
-  return { outages: { examShutdown: { count: exams.length, samples } } };
+  const byRule: Record<string, CiiInputExclusion> = {};
+  for (const o of aux.outages) {
+    const verdict = outageVerdict(o, nowMs);
+    const rule = OUTAGE_EXCLUSION_RULES[verdict];
+    if (!rule) continue;
+    const entry = (byRule[rule] ??= { count: 0, samples: [] });
+    entry.count++;
+    if (entry.samples.length < CII_EXCLUSION_SAMPLES) {
+      const sample: CiiInputExclusion['samples'][number] = { id: text(o.id), title: text(o.title), description: text(o.description) };
+      if (o.attribution === 'asn') sample.nationalImpact = o.nationalImpact == null || !Number.isFinite(Number(o.nationalImpact)) ? null : Number(o.nationalImpact);
+      entry.samples.push(sample);
+    }
+  }
+  return Object.keys(byRule).length > 0 ? { outages: byRule } : {};
 }
+
+/** The exclusion key each construct rule reports under (see ciiInputExclusions). */
+const OUTAGE_EXCLUSION_RULES: Partial<Record<OutageVerdict, string>> = {
+  exam: 'examShutdown',
+  asnBelowNationalShare: 'asnBelowNationalShare',
+  asnImpactUnknown: 'asnImpactUnknown',
+};
 
 /**
  * Attaches `quietSince`, carried from the previous report while the input

@@ -1,0 +1,163 @@
+/**
+ * ASN-attributed internet outages (owner ruling, 2026-10-24).
+ *
+ * Cloudflare Radar files some outages against a network (an ASN) rather than a
+ * country: a regional ISP, a data centre, a cloud. The seeder used to drop
+ * them. The rule: an ASN outage counts for the country Radar places that ASN
+ * in only when it disrupted more than CII_OUTAGE_ASN_NATIONAL_SHARE (40%) of
+ * that country's Internet. The measure (scripts/lib/radar-asn-impact.mjs) is
+ * structured, never text: the ASNs' share of the country's traffic in the week
+ * before, times their own traffic drop during the outage. An impact that cannot
+ * be measured is excluded and reported, never treated as above the threshold.
+ */
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+
+import {
+  ciiInputExclusions,
+  computeCiiScoreTable,
+  outageVerdict,
+} from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
+import { CII_OUTAGE_ASN_NATIONAL_SHARE } from '../server/worldmonitor/intelligence/v1/_risk-config.ts';
+import {
+  ASN_IMPACT_MEASURE,
+  asnCountryGroups,
+  measureAsnNationalImpact,
+  trafficDrop,
+} from '../scripts/lib/radar-asn-impact.mjs';
+
+const HOUR = 60 * 60 * 1000;
+const DAY = 24 * HOUR;
+const WEEK = 7 * DAY;
+const NOW = Date.parse('2026-10-24T12:00:00Z');
+
+type Outage = Record<string, unknown>;
+const asnOutage = (nationalImpact: number | null, extra: Outage = {}): Outage => ({
+  id: 'cf-9000-RU', countryCode: 'RU', country: 'Russian Federation', cause: 'MILITARY_ACTION',
+  outageType: 'NETWORK', severity: 'OUTAGE_SEVERITY_PARTIAL', detectedAt: NOW - 2 * HOUR, endedAt: 0,
+  title: 'Internet disruption on AS41039 DON-FTTH (Russian Federation)', description: 'Data centre drone strike',
+  asns: [41039], asnNames: ['DON-FTTH'], nationalImpact, impactMeasure: ASN_IMPACT_MEASURE, ...extra,
+});
+const table = (asnOutages: Outage[]) =>
+  computeCiiScoreTable({ outages: { outages: [], asnOutages } }, { nowMs: NOW, iranEventsEnabled: true });
+const boost = (asnOutages: Outage[]) => table(asnOutages).rows.find((row) => row.region === 'RU')!.parts.outageBoost;
+
+describe('CII ASN outages: scored only above the national share', () => {
+  it('pins the threshold at 0.40', () => {
+    assert.equal(CII_OUTAGE_ASN_NATIONAL_SHARE, 0.4);
+  });
+
+  it('scores an ASN outage that disrupted 60% of the country', () => {
+    const a = { ...asnOutage(0.6), attribution: 'asn' };
+    assert.equal(outageVerdict(a, NOW), 'scored');
+    assert.equal(boost([asnOutage(0.6)]), 5);
+    assert.deepEqual(ciiInputExclusions(table([asnOutage(0.6)]).aux, NOW), {});
+  });
+
+  it('does not score one at 10%, and lists it in the exclusions', () => {
+    assert.equal(outageVerdict({ ...asnOutage(0.1), attribution: 'asn' }, NOW), 'asnBelowNationalShare');
+    assert.equal(boost([asnOutage(0.1)]), 0);
+    const ex = ciiInputExclusions(table([asnOutage(0.1)]).aux, NOW).outages!;
+    assert.equal(ex.asnBelowNationalShare!.count, 1);
+    assert.equal(ex.asnBelowNationalShare!.samples[0]!.id, 'cf-9000-RU');
+  });
+
+  it('excludes exactly 40%: the rule is "more than"', () => {
+    assert.equal(boost([asnOutage(0.4)]), 0);
+  });
+
+  it('never scores an unmeasured impact, and reports it as unknown', () => {
+    for (const impact of [null, Number.NaN]) {
+      assert.equal(boost([asnOutage(impact)]), 0);
+      assert.equal(ciiInputExclusions(table([asnOutage(impact)]).aux, NOW).outages!.asnImpactUnknown!.count, 1);
+    }
+    const missingField = asnOutage(null);
+    delete missingField.nationalImpact;
+    assert.equal(boost([missingField]), 0);
+  });
+
+  it('treats an upper bound above the threshold as unknown, and one below it as below', () => {
+    assert.equal(outageVerdict({ ...asnOutage(0.5, { impactIsUpperBound: true }), attribution: 'asn' }, NOW), 'asnImpactUnknown');
+    assert.equal(outageVerdict({ ...asnOutage(0.002, { impactIsUpperBound: true }), attribution: 'asn' }, NOW), 'asnBelowNationalShare');
+  });
+
+  it('applies the cause and window rules first: a below-share power outage is out of construct, not an ASN exclusion', () => {
+    const power = asnOutage(0.1, { cause: 'POWER_OUTAGE' });
+    assert.equal(outageVerdict({ ...power, attribution: 'asn' }, NOW), 'cause');
+    assert.deepEqual(ciiInputExclusions(table([power]).aux, NOW), {});
+  });
+
+  it('reads the attribution from where the record was published, not from a field on it', () => {
+    // A location record that happens to carry nationalImpact 0 is not an ASN record.
+    const located = { ...asnOutage(0), attribution: undefined };
+    const t = computeCiiScoreTable({ outages: { outages: [located] } }, { nowMs: NOW, iranEventsEnabled: true });
+    assert.equal(t.rows.find((row) => row.region === 'RU')!.parts.outageBoost, 5);
+  });
+});
+
+/** A MIN0_MAX hourly series over [from, to): `level(t)` gives each value. */
+function series(from: number, to: number, level: (t: number) => number, step = HOUR) {
+  const timestamps: string[] = []; const values: string[] = [];
+  for (let t = from; t < to; t += step) { timestamps.push(new Date(t).toISOString().replace(/\.\d{3}Z$/, 'Z')); values.push(String(level(t))); }
+  return { serie_0: { timestamps, values }, meta: { normalization: 'MIN0_MAX' } };
+}
+
+describe('radar-asn-impact: the national impact measure', () => {
+  const start = Date.parse('2026-10-20T07:00:00Z');
+  const end = Date.parse('2026-10-20T10:00:00Z');
+
+  it('groups an annotation\'s ASNs by Radar\'s country for each ASN', () => {
+    const groups = asnCountryGroups({
+      asnsDetails: [
+        { asn: '41039', name: 'DON-FTTH', location: { code: 'RU', name: 'Russian Federation' } },
+        { asn: '51004', name: 'SCTS-AS', location: { code: 'RU', name: 'Russian Federation' } },
+        { asn: '3215', name: 'Orange S.A.', location: { code: 'FR', name: 'France' } },
+        { asn: '1', name: 'no country' },
+      ],
+    });
+    assert.deepEqual(groups, [
+      { countryCode: 'RU', countryName: 'Russian Federation', asns: [41039, 51004], asnNames: ['DON-FTTH', 'SCTS-AS'] },
+      { countryCode: 'FR', countryName: 'France', asns: [3215], asnNames: ['Orange S.A.'] },
+    ]);
+  });
+
+  it('measures a traffic drop against the same hours one week earlier', () => {
+    const s = series(start - WEEK, end + HOUR, (t) => (t >= start && t < end ? 0.2 : 0.8));
+    assert.ok(Math.abs(trafficDrop(s, start, end, HOUR)! - 0.75) < 1e-9);
+    assert.equal(trafficDrop(series(start, end, () => 0.5), start, end, HOUR), null, 'no baseline week, no measure');
+  });
+
+  it('multiplies the ASNs\' traffic share by their drop: 60% share, fully down, is 60% national', async () => {
+    const get = async (path: string) => {
+      if (path.startsWith('/radar/netflows/top/ases')) return { top_0: [{ clientASN: 41039, value: '60' }, { clientASN: 2, value: '40' }] };
+      if (path.startsWith('/radar/netflows/timeseries')) return series(start - WEEK, end + HOUR, (t) => (t >= start && t < end ? 0 : 1));
+      throw new Error(`unexpected ${path}`);
+    };
+    const m = await measureAsnNationalImpact({ get, countryCode: 'RU', asns: [41039], startMs: start, endMs: end, nowMs: NOW });
+    assert.ok(Math.abs(m.nationalImpact! - 0.6) < 1e-9, JSON.stringify(m));
+    assert.equal(m.impactIsUpperBound, false);
+    assert.equal(m.measure, ASN_IMPACT_MEASURE);
+  });
+
+  it('bounds an ASN missing from the top-100 list by the smallest listed share', async () => {
+    const top = Array.from({ length: 100 }, (_, i) => ({ clientASN: 100 + i, value: i === 99 ? '0.2' : '1' }));
+    const get = async (path: string) => (path.startsWith('/radar/netflows/top/ases')
+      ? { top_0: top }
+      : series(start - WEEK, end + HOUR, (t) => (t >= start && t < end ? 0 : 1)));
+    const m = await measureAsnNationalImpact({ get, countryCode: 'RU', asns: [41039], startMs: start, endMs: end, nowMs: NOW });
+    assert.ok(Math.abs(m.nationalImpact! - 0.002) < 1e-9, JSON.stringify(m));
+    assert.equal(m.impactIsUpperBound, true);
+  });
+
+  it('returns an unknown impact when Radar fails or has no baseline', async () => {
+    const failing = async () => { throw new Error('HTTP 503'); };
+    const m1 = await measureAsnNationalImpact({ get: failing, countryCode: 'RU', asns: [41039], startMs: start, endMs: end, nowMs: NOW });
+    assert.equal(m1.nationalImpact, null);
+    assert.match(String(m1.unknownReason), /503/);
+    const noBaseline = async (path: string) => (path.startsWith('/radar/netflows/top/ases')
+      ? { top_0: [{ clientASN: 41039, value: '60' }] }
+      : series(start, end, () => 0));
+    const m2 = await measureAsnNationalImpact({ get: noBaseline, countryCode: 'RU', asns: [41039], startMs: start, endMs: end, nowMs: NOW });
+    assert.equal(m2.nationalImpact, null);
+  });
+});
