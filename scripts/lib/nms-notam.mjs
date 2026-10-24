@@ -256,7 +256,7 @@ export function buildClosures(items, nowMs) {
     // State carries records classified before NARROW_CLOSURE_TEXT existed, and
     // delta runs never reclassify them. The phrase sits near the start of an
     // aerodrome NOTAM, well inside the 280 characters the record keeps.
-    if (NARROW_CLOSURE_TEXT.test(rec.txt || '')) continue;
+    if (NARROW_CLOSURE_TEXT.test(upper(rec.txt))) continue;
     const target = rec.a === 'closed' ? closed : restricted;
     if (!target.has(rec.loc)) target.set(rec.loc, rec.txt || (rec.a === 'closed' ? 'Airport closure (NOTAM)' : 'Airspace restriction (NOTAM)'));
   }

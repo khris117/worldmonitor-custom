@@ -261,8 +261,10 @@ describe('buildClosures / buildAirspace', () => {
     // Delta runs keep stored records as they were classified; a full load is
     // at most daily. A KLAX record saved as restricted must not wait for it.
     const legacy = { ...items[notamOf(FEATURES.airport_partial).id], id: 'legacy', a: 'restricted', loc: 'KLAS', txt: 'AD AP CLSD TO NON SKED TRANSIENT GA ACFT EXC 24 HR PPR 702-261-7775' };
-    const c = buildClosures({ ...items, legacy }, NOW);
+    const mixed = { ...legacy, id: 'legacy-mixed', loc: 'KBOS', txt: 'Ad Ap Clsd To Non Sked Transient Ga Acft' };
+    const c = buildClosures({ ...items, legacy, mixed }, NOW);
     assert.ok(!c.restrictedIcaos.includes('KLAS'));
+    assert.ok(!c.restrictedIcaos.includes('KBOS'), 'stored text is matched case-insensitively, as classifyNotam does');
     assert.deepEqual(c.restrictedIcaos, ['KLAX']);
   });
 
