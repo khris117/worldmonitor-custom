@@ -12,19 +12,26 @@
  * directly.
  */
 
-const CANONICAL_LINK = /<link\b[^>]*\brel\s*=\s*["']?canonical["']?[^>]*>/i;
-const HREF_ATTR = /\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/i;
+const LINK_TAG = /<link\b(?:[^>"']|"[^"]*"|'[^']*')*>/gi;
+const LINK_ATTRIBUTE = /([^\s"'<>/=]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
 const FIRST_PARTY_HOST = /(^|\.)worldmonitor\.app$/i;
 
 /** The href of the first <link rel="canonical"> in an HTML document, or null. */
 export function declaredHtmlCanonical(html) {
   if (typeof html !== 'string') return null;
   const head = html.slice(0, 200_000);
-  const tag = head.match(CANONICAL_LINK);
-  if (!tag) return null;
-  const href = tag[0].match(HREF_ATTR);
-  const value = href ? (href[1] ?? href[2] ?? href[3] ?? '').trim() : '';
-  return value || null;
+  for (const [tag] of head.matchAll(LINK_TAG)) {
+    const attributes = new Map();
+    for (const [, name, doubleQuoted, singleQuoted, unquoted] of tag.matchAll(LINK_ATTRIBUTE)) {
+      const key = name.toLowerCase();
+      if (!attributes.has(key)) attributes.set(key, doubleQuoted ?? singleQuoted ?? unquoted ?? '');
+    }
+    const rel = attributes.get('rel') ?? '';
+    if (rel.toLowerCase().split(/[\t\n\f\r ]+/).includes('canonical')) {
+      return attributes.get('href')?.trim() || null;
+    }
+  }
+  return null;
 }
 
 /**
