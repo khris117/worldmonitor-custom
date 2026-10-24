@@ -36,9 +36,20 @@ const row = (code: string, event_type: string, fatalities = 0, daysAgo = 1): Acl
   country: TIER1_COUNTRIES[code as keyof typeof TIER1_COUNTRIES], event_type, fatalities, daysAgo,
 });
 
+// Parsing a fixture is the slow part: do it once per fixture.
+const FIXTURE_AUX = new Map(FIXTURES.map((f) => [f.label, scoreCiiFixture(f).aux]));
 function table(fixture: (typeof FIXTURES)[number], acledEvents: AcledRow[]) {
-  const { aux } = scoreCiiFixture(fixture);
-  return scoreCiiAuxiliarySources(aux, { nowMs: fixture.nowMs, acledEvents });
+  return scoreCiiAuxiliarySources(FIXTURE_AUX.get(fixture.label)!, { nowMs: fixture.nowMs, acledEvents });
+}
+/** No input at all, with live empty advisories so no fallback floor applies. */
+function quietAux(extra: Record<string, unknown> = {}): any {
+  return {
+    ucdpEvents: [], outages: [], climate: [], fires: {}, gpsHexes: [], iranEvents: [], orefData: null,
+    advisories: { byCountry: {} }, displacedByIso3: {}, crossBorderSurgeCountries: [], newsTopStories: [],
+    threatSummaryByCountry: null, aviationAlerts: [], earthquakes: [], sanctionsCountries: [],
+    sanctionsCountryCounts: null, temporalAnomalies: [], militaryCii: null, gdeltCountryEvents: null,
+    confirmedStrikes: null, ...extra,
+  };
 }
 const byRegion = <T extends { region: string }>(rows: T[]) => new Map(rows.map((r) => [r.region, r]));
 
@@ -76,7 +87,7 @@ describe('CII ACLED is per country: an optional source that never gates another 
     });
 
     it(`${fixture.label}: no ACLED credential reports not_configured and changes no score`, () => {
-      const { aux } = scoreCiiFixture(fixture);
+      const aux = FIXTURE_AUX.get(fixture.label)!;
       assert.equal(assessCiiInputAvailability([], aux, fixture.nowMs, false).acled, 'not_configured');
       assert.equal(assessCiiInputAvailability([], aux, fixture.nowMs, true).acled, 'quiet');
       const expected = fixture.expected[Object.keys(fixture.expected).at(-1)!]!;
@@ -85,8 +96,7 @@ describe('CII ACLED is per country: an optional source that never gates another 
   }
 
   it('more ACLED events or deaths never lower the ACLED term, in any country, for any type', () => {
-    const empty = scoreCiiFixture(FIXTURES[0]!).aux;
-    const quiet = { ...empty, gdeltCountryEvents: null, outages: [], orefData: null };
+    const quiet = quietAux();
     const parts = (rows: AcledRow[], code: string) => {
       const terms: Record<string, any> = {};
       computeCIIScores(rows, quiet, { nowMs: FIXTURES[0]!.nowMs }, terms);
@@ -94,20 +104,24 @@ describe('CII ACLED is per country: an optional source that never gates another 
       return {
         unrest: p.unrestBase + p.unrestFatalityBoost + p.unrestSeverityBoost,
         conflict: p.acledScore + p.fatalityScore + p.civilianBoost,
+        // Explosions/remote violence score as strike pressure.
+        strike: terms[code].strikePressure,
       };
     };
     for (const code of CODES) {
       for (const type of ACLED_TYPES) {
-        let prev = { unrest: 0, conflict: 0 };
+        const grew = (next: ReturnType<typeof parts>, prev: ReturnType<typeof parts>) =>
+          next.unrest >= prev.unrest && next.conflict >= prev.conflict && next.strike >= prev.strike;
+        let prev = { unrest: 0, conflict: 0, strike: 0 };
         for (const n of [1, 2, 3, 5, 8, 13, 22, 40, 100, 400]) {
           const next = parts(Array.from({ length: n }, () => row(code, type)), code);
-          assert.ok(next.unrest >= prev.unrest && next.conflict >= prev.conflict, `${code} ${type} ${n} events`);
+          assert.ok(grew(next, prev), `${code} ${type} ${n} events`);
           prev = next;
         }
-        prev = { unrest: 0, conflict: 0 };
+        prev = { unrest: 0, conflict: 0, strike: 0 };
         for (const deaths of [0, 1, 4, 10, 50, 500]) {
           const next = parts([row(code, type, deaths)], code);
-          assert.ok(next.unrest >= prev.unrest && next.conflict >= prev.conflict, `${code} ${type} ${deaths} deaths`);
+          assert.ok(grew(next, prev), `${code} ${type} ${deaths} deaths`);
           prev = next;
         }
       }
@@ -115,7 +129,7 @@ describe('CII ACLED is per country: an optional source that never gates another 
   });
 
   it('the same ACLED evidence gives the same ACLED term in every country: no per-country multiplier', () => {
-    const quiet = { ...scoreCiiFixture(FIXTURES[0]!).aux, gdeltCountryEvents: null };
+    const quiet = quietAux();
     const evidence = (code: string) => [
       ...Array.from({ length: 6 }, () => row(code, 'Protests')),
       row(code, 'Riots', 2),
@@ -154,12 +168,7 @@ describe('CII ACLED is per country: an optional source that never gates another 
     const NOW = Date.parse('2026-10-19T12:00:00Z');
     const DAY = 86_400_000;
     const date = (n: number) => new Date(NOW - n * DAY).toISOString().slice(0, 10);
-    const background = (code: string | null, share: [number, number]) => ({
-      ...scoreCiiFixture(FIXTURES[0]!).aux,
-      ucdpEvents: [], outages: [], climate: [], fires: {}, gpsHexes: [], iranEvents: [], orefData: null,
-      advisories: { byCountry: {} }, displacedByIso3: {}, newsTopStories: [], threatSummaryByCountry: null,
-      aviationAlerts: [], earthquakes: [], sanctionsCountries: [], sanctionsCountryCounts: null, militaryCii: null,
-      confirmedStrikes: null, crossBorderSurgeCountries: [],
+    const background = (code: string | null, share: [number, number]) => quietAux({
       gdeltCountryEvents: code ? gdeltCountryEventsFromSeed({
         byCountry: { [code]: { conflict: null, protest: null, week: null, strikes: Object.fromEntries(Array.from({ length: 10 }, (_, i) => [date(i), share])) } },
         baselineReady: false, currentComplete: false, weekReady: false,
@@ -183,7 +192,7 @@ describe('CII ACLED is per country: an optional source that never gates another 
         for (const [perDay, deaths] of [[1, 0], [3, 2], [10, 20]]) {
           const terms = (rows: AcledRow[], withGdelt: boolean) => {
             const out: Record<string, any> = {};
-            computeCIIScores(rows, background(withGdelt ? code : null, share) as any, { nowMs: NOW }, out);
+            computeCIIScores(rows, background(withGdelt ? code : null, share), { nowMs: NOW }, out);
             return out[code];
           };
           const acledOnly = terms(explosions(code, share, perDay, deaths), false);
