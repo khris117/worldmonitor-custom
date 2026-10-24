@@ -176,7 +176,7 @@ describe('seedTransitSummaries (relay)', () => {
     chokepointCrossings = new Map(),
     log = () => {},
     upstashEval = transitStore(),
-    transitTracker = { flush: async () => {} },
+    transitTracker = { flush: async () => new Set() },
   }) {
     // eslint-disable-next-line no-new-func
     const factory = new Function(
@@ -197,7 +197,7 @@ describe('seedTransitSummaries (relay)', () => {
     log = () => {},
     chokepointCrossings = new Map(),
     upstashEval = transitStore(),
-    transitTracker = { flush: async () => {} },
+    transitTracker = { flush: async () => new Set() },
   }) {
     // eslint-disable-next-line no-new-func
     const factory = new Function(
@@ -228,6 +228,30 @@ describe('seedTransitSummaries (relay)', () => {
     await assert.rejects(buildSeedChokepointTransits(deps)(), /gate storage unavailable/);
     await assert.rejects(buildSeedTransitSummaries(deps)(), /gate storage unavailable/);
     assert.deepEqual(writes, []);
+  });
+
+  it('capacity loss suppresses only the affected waterway in both publishers', async () => {
+    const now = Date.now();
+    const writes = new Map();
+    const deps = {
+      envelopeRead: async () => ({ hormuz_strait: { history: [] }, suez: { history: [] } }),
+      envelopeWrite: async (key, value) => { writes.set(key, value); return true; },
+      upstashSet: async (key, value) => { writes.set(key, value); return true; },
+      transitTracker: { flush: async () => new Set(['Strait of Hormuz']) },
+      chokepointCrossings: new Map([
+        ['Strait of Hormuz', [{ mmsi: '1', type: 'tanker', ts: now - 1000 }]],
+        ['Suez Canal', [{ mmsi: '2', type: 'cargo', ts: now - 1000 }]],
+      ]),
+    };
+    await buildSeedChokepointTransits(deps)();
+    await buildSeedTransitSummaries(deps)();
+    const transits = writes.get('supply_chain:chokepoint_transits:v1').transits;
+    assert.equal(transits['Strait of Hormuz'].available, false);
+    assert.equal(transits['Suez Canal'].total, 1);
+    const summaries = writes.get('supply_chain:transit-summaries:v1').summaries;
+    assert.equal(summaries.hormuz_strait.todayTotal, null);
+    assert.equal(summaries.suez.todayTotal, 1);
+    assert.ok(writes.get('seed-meta:supply_chain:chokepoint_transits').transitCoverage.missing.includes('hormuz_strait'));
   });
 
   it('both publishers recover counts after restart and health counts only measured canonical waterways', async () => {
@@ -491,7 +515,7 @@ describe('seedTransitSummaries (relay)', () => {
         new Map(), detectTrafficAnomaly, summarizePortwatchHistory, CHOKEPOINT_THREAT_LEVELS,
         CORRIDOR_RISK_NAME_MAP, deriveCorridorRiskLevel, 'test-agent',
         async event => { notifications.push(event); },
-        readTransitWindow, transitStore(), { flush: async () => {} },
+        readTransitWindow, transitStore(), { flush: async () => new Set() },
       );
       await seed.seedCorridorRisk();
       await seed.seedTransitSummaries();

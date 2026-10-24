@@ -87,7 +87,33 @@ test('real Redis continues gates across restarts without renewing crossing clock
         .map(({ mmsi, type, ts }) => ({ mmsi, type, ts }));
       assert.deepEqual((await window(now)).get(name), expected);
     });
-    await t.test('storage caps reject whole batches and preserve a shared fixed failure deadline', async () => {
+    await t.test('one overflowing vessel does not block another chokepoint', async () => {
+      command('FLUSHDB');
+      const tracker = createDurableTransitTracker({
+        gates: { ...gates, Other: { a: [[1, 1, 0.1]], b: [[2, 2, 0.1]] } },
+        maxTransitMs: 18 * HOUR, cooldownMs: HOUR / 2,
+        evaluate: (script, keys, args) => { args[6] = 2; return evaluate(script, keys, args); },
+      });
+      for (let i = 0; i < 3; i++) observe(tracker, 'a', at + i);
+      tracker.observe('other-vessel', 1, 1, 'cargo', at);
+      tracker.observe('other-vessel', 2, 2, 'cargo', at + 1000);
+      const unavailable = await tracker.flush(at + 1000);
+      assert.ok(unavailable.has(name));
+      assert.ok(!unavailable.has('Other'));
+      assert.equal((await window(at + 1000)).get('Other').length, 1);
+    });
+    await t.test('late input eviction accounts for newer reports removed from the same journal', async () => {
+      command('FLUSHDB');
+      const capped = make((script, keys, args) => { args[6] = 2; return evaluate(script, keys, args); });
+      observe(capped, 'a', at + HOUR);
+      observe(capped, 'a', at + 2 * HOUR);
+      await capped.flush(at + 2 * HOUR);
+      observe(capped, 'a', at);
+      assert.ok((await capped.flush(at + 2 * HOUR)).has(name));
+      assert.ok((await make(evaluate).flush(at + 43 * HOUR)).has(name));
+      assert.equal((await make(evaluate).flush(at + 44.5 * HOUR)).size, 0);
+    });
+    await t.test('storage caps mark the affected waterway unavailable across restarts with a fixed source deadline', async () => {
       for (const [argument, limit] of [[5, 1], [6, 1], [7, 1]]) {
         command('FLUSHDB');
         const capped = make((script, keys, args) => {
@@ -97,13 +123,13 @@ test('real Redis continues gates across restarts without renewing crossing clock
         observe(capped, 'a', at);
         await capped.flush(at);
         observe(capped, 'b', at + 1000, argument === 6 ? '123456789' : '987654321');
-        await assert.rejects(capped.flush(at + 1000), /capacity/);
-        assert.equal(command('HGET', 'supply_chain:transit-gates:v1', '_rows'), '1');
-        assert.equal(command('ZCARD', 'supply_chain:transit-gate-times:v1'), 1);
+        assert.ok((await capped.flush(at + 1000)).has(name));
+        assert.equal(command('HGET', 'supply_chain:transit-gates:v1', '_rows'), argument === 6 ? '0' : '1');
+        assert.equal(command('ZCARD', 'supply_chain:transit-gate-times:v1'), argument === 6 ? 0 : 1);
         const restarted = make(evaluate);
-        await assert.rejects(restarted.flush(at + HOUR), /capacity/);
-        assert.equal(command('HGET', 'supply_chain:transit-gates:v1', '_incompleteUntil'), String(at + 1000 + 42.5 * HOUR));
-        await restarted.flush(at + 1000 + 42.5 * HOUR);
+        assert.ok((await restarted.flush(at + HOUR)).has(name));
+        assert.equal(JSON.parse(command('HGET', 'supply_chain:transit-gates:v1', '_incomplete'))[name], at + 1000 + 42.5 * HOUR);
+        assert.equal((await restarted.flush(at + 1000 + 42.5 * HOUR)).size, 0);
       }
     });
     await t.test('buffer loss is durable even when all accepted reports are saved', async () => {
@@ -111,10 +137,10 @@ test('real Redis continues gates across restarts without renewing crossing clock
       const tracker = make(evaluate);
       // Duplicate reports exercise the pending cap without exhausting the journal.
       for (let i = 0; i <= 20000; i++) observe(tracker, 'a', at);
-      await assert.rejects(tracker.flush(at), /capacity/);
+      assert.ok((await tracker.flush(at)).has(name));
       assert.equal(command('HGET', 'supply_chain:transit-gates:v1', '_rows'), '1');
-      await assert.rejects(make(evaluate).flush(at + HOUR), /capacity/);
-      await make(evaluate).flush(at + 42.5 * HOUR);
+      assert.ok((await make(evaluate).flush(at + HOUR)).has(name));
+      assert.equal((await make(evaluate).flush(at + 42.5 * HOUR)).size, 0);
     });
     command('FLUSHDB');
     let tracker = make(evaluate);
@@ -185,7 +211,7 @@ test('concurrent flushes serialize and retain observations newer than the caller
   const tracker = make(async (_script, _keys, args) => {
     batches.push(JSON.parse(args[4]));
     if (batches.length === 1) await new Promise(resolve => { release = resolve; });
-    return [1, 0];
+    return [1, '{}'];
   });
   observe(tracker, 'a', at);
   const first = tracker.flush(at);
@@ -204,7 +230,7 @@ test('failed writes keep observations and reject publication instead of acceptin
   const tracker = make(async (_script, _keys, args) => {
     if (fail) return null;
     batch = JSON.parse(args[4]);
-    return [1, 0];
+    return [1, '{}'];
   });
   observe(tracker, 'a', at);
   await assert.rejects(tracker.flush(at), /gate update failed/);
@@ -223,11 +249,11 @@ test('recovery bounds requests and retains the failed chunk plus new arrivals', 
     batches.push(rows);
     assert.ok(rows.length <= 1000);
     if (batches.length === 2 && fail) return null;
-    return [1, 0];
+    return [1, '{}'];
   });
-  for (let i = 0; i < 2100; i++) observe(tracker, 'a', at + i);
+  for (let i = 0; i < 2100; i++) observe(tracker, 'a', at + i, String(Math.floor(i / 700)));
   await assert.rejects(tracker.flush(at + 2100), /gate update failed/);
-  observe(tracker, 'b', at + 2200);
+  observe(tracker, 'b', at + 2200, '2');
   fail = false;
   await tracker.flush(at + 2200);
   assert.deepEqual(batches.map(rows => rows.length), [1000, 1000, 1000, 101]);
@@ -236,9 +262,9 @@ test('recovery bounds requests and retains the failed chunk plus new arrivals', 
 });
 
 test('buffer exhaustion remains visible after successful writes instead of publishing partial input', async () => {
-  const tracker = make(async () => [1, 0]);
+  const tracker = make(async () => [1, '{}']);
   for (let i = 0; i <= 20000; i++) observe(tracker, 'a', at + i);
-  await assert.rejects(tracker.flush(at + 20000), /capacity/);
+  assert.ok((await tracker.flush(at + 20000)).has(name));
 });
 
 
@@ -248,7 +274,7 @@ test('each request bounds the number of full vessel histories replayed', async (
     const rows = JSON.parse(args[4]);
     assert.ok(new Set(rows.map(row => JSON.stringify(row.slice(0, 2)))).size <= 4);
     count += rows.length;
-    return [1, 0];
+    return [1, '{}'];
   });
   for (let i = 0; i < 30; i++) observe(tracker, 'a', at, String(i));
   await tracker.flush(at);
@@ -265,13 +291,30 @@ test('in-flight reports count toward the memory cap and dropped-input deadlines 
     if (batches.length === 1) await new Promise(resolve => { release = resolve; });
     return [1, args[8]];
   });
-  for (let i = 0; i < 20000; i++) observe(tracker, 'a', at);
+  for (let i = 0; i < 20000; i++) observe(tracker, 'a', at, String(Math.floor(i / 1000)));
   const first = tracker.flush(at);
   observe(tracker, 'b', at + 1);
   release();
-  await assert.rejects(first, /capacity/);
-  await assert.rejects(tracker.flush(at + HOUR), /capacity/);
+  assert.ok((await first).has(name));
+  assert.ok((await tracker.flush(at + HOUR)).has(name));
   assert.equal(batches.flat().length, 20000);
-  assert.equal(deadlines.at(-1), at + 1 + 42.5 * HOUR);
-  await tracker.flush(at + 1 + 42.5 * HOUR);
+  assert.equal(JSON.parse(deadlines.at(-1))[name], at + 1 + 42.5 * HOUR);
+  assert.equal((await tracker.flush(at + 1 + 42.5 * HOUR)).size, 0);
+});
+
+
+test('one vessel cannot fill the pending buffer and suppress another waterway', async () => {
+  const accepted = [];
+  const tracker = createDurableTransitTracker({
+    gates: { ...gates, Other: { a: [[1, 1, 0.1]], b: [[2, 2, 0.1]] } },
+    maxTransitMs: 18 * HOUR, cooldownMs: HOUR / 2,
+    evaluate: async (_script, _keys, args) => { accepted.push(...JSON.parse(args[4])); return [1, args[8]]; },
+  });
+  for (let i = 0; i < 20000; i++) observe(tracker, 'a', at);
+  tracker.observe('other-vessel', 1, 1, 'cargo', at);
+  tracker.observe('other-vessel', 2, 2, 'cargo', at + 1000);
+  const unavailable = await tracker.flush(at + 1000);
+  assert.deepEqual([...unavailable], [name]);
+  assert.equal(accepted.filter(row => row[0] === name).length, 1000);
+  assert.equal(accepted.filter(row => row[0] === 'Other').length, 2);
 });

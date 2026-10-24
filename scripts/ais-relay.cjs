@@ -10415,11 +10415,12 @@ setInterval(() => {
 
 async function seedChokepointTransits() {
   const now = Date.now();
-  await transitTracker.flush(now);
+  const unavailable = await transitTracker.flush(now);
+  if (unavailable.size) console.warn(`[Transit] Capacity-limited waterways: ${[...unavailable].join(', ')}`);
   const window = await readTransitWindow(chokepointCrossings, now, upstashEval);
   const transits = {};
   for (const cp of CHOKEPOINTS) {
-    const recent = window.get(cp.name) || [];
+    const recent = unavailable.has(cp.name) ? [] : window.get(cp.name) || [];
     // An empty observed window cannot establish zero traffic.
     transits[cp.name] = {
       tanker: recent.filter(c => c.type === 'tanker').length,
@@ -10523,7 +10524,8 @@ async function seedTransitSummaries() {
 
   const now = Date.now();
   const summaries = {};
-  await transitTracker.flush(now);
+  const unavailable = await transitTracker.flush(now);
+  if (unavailable.size) console.warn(`[Transit] Capacity-limited waterways: ${[...unavailable].join(', ')}`);
   const window = await readTransitWindow(chokepointCrossings, now, upstashEval);
   // Iterate the canonical chokepoint ID set rather than whatever pw happens to
   // carry today. If seed-portwatch dropped 3 of 13 (flaky ArcGIS), those 3
@@ -10557,7 +10559,7 @@ async function seedTransitSummaries() {
     let relayTransit = null;
     for (const [relayName, canonicalId] of Object.entries(RELAY_NAME_TO_ID)) {
       if (canonicalId === cpId) {
-        const recent = window.get(relayName) || [];
+        const recent = unavailable.has(relayName) ? [] : window.get(relayName) || [];
         if (recent.length > 0) {
           relayTransit = {
             tanker: recent.filter(c => c.type === 'tanker').length,
