@@ -66,7 +66,7 @@ const V15_RELEASE_BLOCKERS: Array<{ id: string; measured: string; reason: string
   {
     id: 'P5b',
     measured: '8/31 = 26% of countries in [60, 65) on 2026-10-21T0628Z (AF, IQ, IR, KP, LB, MM, RU, SY at the advisory floor of 60)',
-    reason: 'B4 removed nine off-construct or context-only inputs; blends fell and floor-lifted countries rose, so max(blend, floor) stacks eight countries on 60. Pending owner sign-off',
+    reason: 'B4 removed nine off-construct or context-only inputs; blends fell and floor-lifted countries rose, so max(blend, floor) stacks eight countries on 60. Owner approved P5b as a v15 release blocker on 2026-10-24.',
     owner: 'stage-c',
   },
 ];

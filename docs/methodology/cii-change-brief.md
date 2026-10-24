@@ -147,6 +147,8 @@ While the property is listed, it runs as a todo that carries its measured value.
 
 The owner must sign off on each entry. The PR that adds one marks it **pending owner sign-off** in its body until the owner approves it. Without that approval the entry is a proposal, not a decision.
 
+Owner approved P5b as a v15 release blocker on 2026-10-24.
+
 Capture a new fixture GET-only, with no Redis writes:
 
 ```
