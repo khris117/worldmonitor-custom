@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { extractNbsNationalData } from '../scripts/china-macro/extract-nbs-national-data.mjs';
 
 const directory = new URL('./fixtures/china-macro/nbs-national-data/', import.meta.url);
@@ -66,6 +67,21 @@ describe('NBS National Data saved-response extraction', () => {
     }
   });
 
+  it('keeps an empty retrieval-month cell without losing prior observations', () => {
+    const payload = JSON.parse(raw(trade));
+    payload.data[0].code = '202610MM';
+    payload.data[0].name = '2026年10月';
+    const result = parse(trade, JSON.stringify(payload));
+    assert.equal(result.candidates.filter((row) => row.observationPeriod === '2026-10' && row.value === null).length, 3);
+    assert.equal(result.candidates.filter((row) => row.observationPeriod === '2026-08' && row.value !== null).length, 3);
+    payload.data[0].values[0].value = '0';
+    assert.throws(() => parse(trade, JSON.stringify(payload)), /FUTURE_MONTH/);
+    payload.data[0].values[0].value = '';
+    payload.data[0].code = '202611MM';
+    payload.data[0].name = '2026年11月';
+    assert.throws(() => parse(trade, JSON.stringify(payload)), /FUTURE_MONTH/);
+  });
+
   it('rejects changed identities, cumulative/stock fields, wrong units and non-national data', () => {
     for (const change of [
       (cell) => { cell._id = 'unreviewed-id'; },
@@ -108,8 +124,8 @@ describe('NBS National Data saved-response extraction', () => {
 
   it('runs the real offline CLI on a retained provider response', () => {
     const result = spawnSync(process.execPath, [
-      new URL('../scripts/china-macro/extract-nbs-national-data.mjs', import.meta.url).pathname,
-      new URL(trade, directory).pathname,
+      fileURLToPath(new URL('../scripts/china-macro/extract-nbs-national-data.mjs', import.meta.url)),
+      fileURLToPath(new URL(trade, directory)),
       manifest.responses[trade].retrievedAt,
     ], { encoding: 'utf8', env: { PATH: process.env.PATH } });
     assert.equal(result.status, 0, result.stderr);

@@ -55,7 +55,8 @@ export function extractNbsNationalData(raw, { retrievedAt } = {}) {
       || period.name !== `${match[1]}年${Number(match[2])}月`) fail('MONTH');
     const observationPeriod = `${match[1]}-${match[2]}`;
     const monthEnd = Date.UTC(Number(match[1]), Number(match[2]), 0, 23, 59, 59, 999);
-    if (monthEnd > retrievedMs) fail('FUTURE_MONTH');
+    const retrievalMonth = retrievedAt.slice(0, 7);
+    if (observationPeriod > retrievalMonth) fail('FUTURE_MONTH');
     for (const cell of period.values) {
       if (!record(cell)) fail('CELL');
       const definition = DEFINITIONS.get(cell._id);
@@ -73,6 +74,7 @@ export function extractNbsNationalData(raw, { retrievedAt } = {}) {
       // Empty cells remain unknown, including a newer empty month. Never use
       // Number('') or silently relabel a prior month's value as the newest one.
       const missing = cell.value === '' || cell.value === null;
+      if (!missing && monthEnd > retrievedMs) fail('FUTURE_MONTH');
       if (!missing && (typeof cell.value !== 'string'
         || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(cell.value))) fail('NUMERIC_VALUE');
       const value = missing ? null : Number(cell.value) / definition.divisor;

@@ -1,3 +1,7 @@
+---
+noindex: true
+---
+
 # NBS National Data extraction evidence
 
 Checked on 2026-10-24. Production is unchanged. This is an offline extraction tool, not an enabled seeder source.
@@ -29,7 +33,7 @@ node scripts/china-macro/extract-nbs-national-data.mjs \
 node --test tests/china-macro-national-data.test.mjs
 ```
 
-Use Node 24. The fixture manifest records the exact public request, retrieval time and SHA-256 of each unmodified response. The CLI reads a saved response and writes JSON to stdout. It does not fetch, load credentials or write Redis.
+Use Node 24. The fixture manifest records the exact public request, retrieval time and SHA-256 of each unmodified response. The CLI reads a saved response and writes JSON to stdout. It does not fetch, load credentials or write Redis. Its attribution record has `catalogActive: false`, so it does not add a live provider or change product counts. Empty cells in the retrieval month remain unavailable; populated cells from an unfinished month and all later months are rejected.
 
 ## Remaining activation gates
 
