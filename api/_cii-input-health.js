@@ -16,8 +16,11 @@
 //                   lost countries. Scores hold, but the input is dead.
 // A report may also carry `sourcesMissing` (a live read lacked one of its
 // sources: dead), `droppedCountries` (countries no read has listed for longer
-// than the snapshot may stand in, now absent: dead) and `snapshotReadFailed`
-// (shown, not dead on its own).
+// than the snapshot may stand in, now absent) and `snapshotReadFailed`. The
+// last two are not dead on their own: a register can stop listing a country,
+// and a live input that merely lost one is a `warnings` entry, visible beside
+// the states without raising the verdict. Either rides on a dead entry when
+// the input is dead for another reason.
 //   not_configured  disabled by deployment design (no ACLED credentials,
 //                   IRAN_EVENTS_ENABLED off)
 // An unreadable key rejects the whole build, so it surfaces as a stale
@@ -105,6 +108,7 @@ export function assessCiiInputs(meta, now, sourceStatuses = {}) {
     : null;
   const states = {};
   const dead = [];
+  const warnings = [];
   const notConfigured = [];
   const healthy = new Set();
 
@@ -138,19 +142,21 @@ export function assessCiiInputs(meta, now, sourceStatuses = {}) {
         : null;
       if (quietMin === null) dead.push({ id, state, ...detail });
       else if (cfg.maxQuietMin != null && quietMin > cfg.maxQuietMin) dead.push({ id, state, quietMin, ...detail });
-      else if (detail.sourcesMissing || detail.droppedCountries) dead.push({ id, state, ...detail });
+      else if (detail.sourcesMissing) dead.push({ id, state, ...detail });
       else healthy.add(id);
-    } else if (detail.sourcesMissing || detail.droppedCountries) {
-      // Live, but a source or a country behind it is gone: part of the input is unknown.
+    } else if (detail.sourcesMissing) {
+      // Live, but one of the sources behind it is gone: part of the input is unknown.
       dead.push({ id, state, ...detail });
     } else {
       healthy.add(id);
     }
+    // A country dropped at the source while the input is otherwise healthy.
+    if (healthy.has(id) && detail.droppedCountries) warnings.push({ id, state, droppedCountries: detail.droppedCountries });
   }
 
   const unfedFamilies = Object.entries(CII_INPUT_POLICY.families)
     .filter(([, members]) => !members.some((id) => healthy.has(id)))
     .map(([family]) => family);
 
-  return { valid: reported !== null, states, dead, notConfigured, unfedFamilies };
+  return { valid: reported !== null, states, dead, warnings, notConfigured, unfedFamilies };
 }

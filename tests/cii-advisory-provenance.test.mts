@@ -243,6 +243,18 @@ describe('CII advisory partial feed loss', () => {
     }
   });
 
+  it('a country dropped at the source, with nothing filled, is a warning rather than an alarm', () => {
+    const f = FIXTURES[0]!;
+    const byCountry = { ...liveLevels(f) };
+    delete byCountry.LB;
+    const seenAt = { LB: f.nowMs - CII_ADVISORY_MAX_AGE_MS - HOUR_MS };
+    const v = verdict(f, { ...f.inputs, advisories: { byCountry }, advisoriesLastGood: { byCountry: liveLevels(f), fetchedAt: f.nowMs - HOUR_MS, seenAt } });
+    assert.equal(v.states.advisories, 'live');
+    assert.equal(v.alarm, undefined);
+    const health = assessCiiInputs({ inputs: v.reports }, f.nowMs);
+    assert.deepEqual(health.warnings, [{ id: 'advisories', state: 'live', droppedCountries: ['LB'] }]);
+  });
+
   it('the next snapshot keeps a lost country at its last sighting and refreshes the rest', () => {
     const f = FIXTURES[0]!;
     const byCountry = { ...liveLevels(f) };

@@ -377,12 +377,32 @@ describe('assessCiiInputs', () => {
     assert.deepEqual(assessCiiInputs({ inputs }, NOW).dead, [{ id: 'advisories', state: 'fallback', ageMin: 95, filled: ['QA'] }]);
     const sourceLost = { ...allLive(), advisories: { state: 'live', sourcesMissing: ['AU'] } };
     assert.deepEqual(assessCiiInputs({ inputs: sourceLost }, NOW).dead, [{ id: 'advisories', state: 'live', sourcesMissing: ['AU'] }]);
-    const dropped = { ...allLive(), advisories: { state: 'live', droppedCountries: ['LB'] } };
-    assert.deepEqual(assessCiiInputs({ inputs: dropped }, NOW).dead, [{ id: 'advisories', state: 'live', droppedCountries: ['LB'] }]);
     const readFailedOnly = { ...allLive(), advisories: { state: 'live', snapshotReadFailed: true } };
     assert.deepEqual(assessCiiInputs({ inputs: readFailedOnly }, NOW).dead, []);
     const unclocked = { ...allLive(), advisories: { state: 'fallback' } };
     assert.deepEqual(assessCiiInputs({ inputs: unclocked }, NOW).dead, [{ id: 'advisories', state: 'fallback' }]);
+  });
+
+  // A register can stop listing a country (Smartraveller drops its advice for
+  // it). With the register otherwise live that is a change at the source, not a
+  // pipeline failure: a visible warning, never a dead input for the 30 days the
+  // snapshot carries it.
+  it('a dropped country with its source live is a warning with the detail, not dead', () => {
+    const inputs = { ...allLive(), advisories: { state: 'live', droppedCountries: ['LB'] } };
+    const result = assessCiiInputs({ inputs }, NOW);
+    assert.deepEqual(result.dead, []);
+    assert.deepEqual(result.warnings, [{ id: 'advisories', state: 'live', droppedCountries: ['LB'] }]);
+  });
+
+  it('a missing source is still dead, and carries any dropped countries with it', () => {
+    const inputs = { ...allLive(), advisories: { state: 'live', sourcesMissing: ['AU'], droppedCountries: ['LB'] } };
+    const result = assessCiiInputs({ inputs }, NOW);
+    assert.deepEqual(result.dead, [{ id: 'advisories', state: 'live', sourcesMissing: ['AU'], droppedCountries: ['LB'] }]);
+    assert.deepEqual(result.warnings, []);
+    const fallback = { ...allLive(), advisories: { state: 'fallback', snapshotAt: NOW - 60 * MIN, filled: ['QA'], droppedCountries: ['LB'] } };
+    assert.deepEqual(assessCiiInputs({ inputs: fallback }, NOW).dead, [{ id: 'advisories', state: 'fallback', ageMin: 60, filled: ['QA'], droppedCountries: ['LB'] }]);
+    const missing = { ...allLive(), advisories: { state: 'missing' } };
+    assert.deepEqual(assessCiiInputs({ inputs: missing }, NOW).dead, [{ id: 'advisories', state: 'missing' }]);
   });
 
   it('a source check past its own staleness budget makes the input stale', () => {
@@ -410,6 +430,14 @@ describe('composeRiskScoresInputHealth', () => {
     const entry = riskScoresHealth(meta(allLive()));
     assert.equal(entry.status, 'OK');
     assert.equal(entry.ciiInputs.states.acled, 'live');
+  });
+
+  it('a dropped advisory country alone leaves riskScores OK and shows the warning', () => {
+    const entry = riskScoresHealth(meta({ ...allLive(), advisories: { state: 'live', droppedCountries: ['LB'] } }));
+    assert.equal(entry.status, 'OK');
+    assert.deepEqual(entry.ciiInputs.warnings, [{ id: 'advisories', state: 'live', droppedCountries: ['LB'] }]);
+    const sourceLost = riskScoresHealth(meta({ ...allLive(), advisories: { state: 'live', sourcesMissing: ['AU'] } }));
+    assert.equal(sourceLost.status, 'COVERAGE_PARTIAL');
   });
 
   it('one dead input with its family still fed is COVERAGE_PARTIAL', () => {
