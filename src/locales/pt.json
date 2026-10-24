@@ -3095,7 +3095,12 @@
       "position": "Posição",
       "ground": "No solo",
       "airborne": "Em voo"
-    }
+    },
+    "upcomingForecast": "Upcoming forecast",
+    "currentForecast": "Current forecast",
+    "expiredForecast": "Expired forecast",
+    "validFrom": "Valid from",
+    "validUntil": "Valid until"
   },
   "signals": {
     "context": {

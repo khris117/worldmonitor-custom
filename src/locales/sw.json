@@ -3530,7 +3530,12 @@
       "uae_ecsr": "UAE/ECSR",
       "venezuela_crisis": "Mgogoro wa Venezuela",
       "yemen_houthis": "Yemen/Houthi"
-    }
+    },
+    "upcomingForecast": "Upcoming forecast",
+    "currentForecast": "Current forecast",
+    "expiredForecast": "Expired forecast",
+    "validFrom": "Valid from",
+    "validUntil": "Valid until"
   },
   "signals": {
     "context": {
