@@ -19,6 +19,7 @@ const {
   capWithAnnualFloor,
   candidateContentMeta,
   annualReleaseEndMs,
+  currentCandidateVersion,
   fetchAnnualWindow,
   fetchCandidateWindow,
   summarizeUcdpWindow,
@@ -217,7 +218,7 @@ async function main() {
     const candidate = await discoverCandidateVersion(ucdpToken);
     if (candidate) {
       const fromMs = Math.max(annualReleaseEndMs(version) + 1, nowMs - ANNUAL_LOOKBACK_MS);
-      const merged = await fetchCandidateWindow(windowFetcher(ucdpToken), candidate, { fromMs });
+      const merged = await fetchCandidateWindow(windowFetcher(ucdpToken), candidate, { fromMs, throughVersion: currentCandidateVersion(nowMs) });
       // Only claim the bare candidate version once every release of the
       // window was fetched whole — a partial window labelled `26.0.6` is
       // indistinguishable from a complete one downstream.
@@ -226,7 +227,7 @@ async function main() {
       missingReleases = merged.missingReleases;
       unpublishedReleases = merged.unpublishedReleases;
       unpublishedMonths = merged.unpublishedMonths;
-      if (unpublishedReleases.length) console.warn(`  UCDP has not published candidate release(s) ${unpublishedReleases.join(', ')}: an upstream gap, not a failed fetch`);
+      if (unpublishedReleases.length) console.log(`  Not published yet: ${unpublishedReleases.join(', ')}`);
       windowReleases = [version, ...merged.releases.map((r) => r.version)];
       if (!candidateComplete) {
         console.warn(`  candidate window ${merged.releases[0].version}..${candidate.version}: incomplete (missing: ${missingReleases.join(', ') || 'none'}; failed or truncated pages) — publishing as partial`);
@@ -304,7 +305,7 @@ async function main() {
   const windowStartMs = latestDatasetMs - TRAILING_WINDOW_MS;
   // Aggregated by where each event happened (ucdpLocatedCountry), not UCDP's country code.
   const located = filtered.map((e) => ({ country: ucdpLocatedCountry(e), dateStart: Date.parse(e.date_start) || 0, deathsBest: Number(e.best) || 0 }));
-  const summary = summarizeUcdpWindow(located, { startMs: windowStartMs, endMs: latestDatasetMs, upstreamGapMonths: unpublishedMonths });
+  const summary = summarizeUcdpWindow(located, { startMs: windowStartMs, endMs: latestDatasetMs });
   if (summary.gapMonths.length) console.warn(`  Window has empty months before later data: ${summary.gapMonths.join(', ')}`);
 
   const payload = {
@@ -321,7 +322,8 @@ async function main() {
       endMs: latestDatasetMs,
       months: summary.months,
       gapMonths: summary.gapMonths,
-      upstreamGapMonths: summary.upstreamGapMonths,
+      // Months after the newest data that UCDP has not published yet: the frontier, never a gap.
+      upstreamGapMonths: unpublishedMonths,
       complete: candidateComplete && failedPages === 0 && !annual.truncated && summary.gapMonths.length === 0,
       releases: windowReleases,
       missingReleases,

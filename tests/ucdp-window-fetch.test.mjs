@@ -36,7 +36,7 @@ function httpError(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
-function mockApi({ missing = new Set(), failing = new Set() } = {}) {
+function mockApi({ missing = new Set(), failing = new Set(), emptyFirstPage = new Set() } = {}) {
   const releases = new Map();
   // Annual 26.1: 2024-2025, shuffled so its pages are not in date order.
   const annual = eventsBetween(Date.UTC(2024, 0, 1), Date.UTC(2025, 11, 31), '26.1', 10);
@@ -58,8 +58,10 @@ function mockApi({ missing = new Set(), failing = new Set() } = {}) {
   const fetchPage = async (version, page, _timeoutMs, query = {}) => {
     calls.push({ version, page, query });
     if (failing.has(`${version}:${page}`)) throw httpError(500, 'HTTP 500');
+    if (emptyFirstPage.has(version)) return { TotalCount: 0, TotalPages: 0, Result: [] };
     let rows = releases.get(version);
-    // The live API answers an unpublished version with HTTP 400.
+    // The live API answers an unpublished version with HTTP 400; so might a
+    // quota or a malformed request, which is why 400 alone proves nothing.
     if (!rows) throw httpError(400, `HTTP 400 ${version}`);
     if (query.StartDate) rows = rows.filter((e) => e.date_start >= query.StartDate && e.date_start <= query.EndDate);
     const totalPages = Math.max(1, Math.ceil(rows.length / 1000));
@@ -72,7 +74,8 @@ async function fetchWindow(api) {
   const annual = await fetchAnnualWindow(api.fetchPage, '26.1', { nowMs: NOW });
   const newest = await discoverCandidateVersion(api.fetchPage, ['26.0.11', '26.0.10', '26.0.9', '26.0.8']);
   const fromMs = Math.max(annualReleaseEndMs('26.1') + 1, NOW - ANNUAL_LOOKBACK_MS);
-  const candidates = await fetchCandidateWindow(api.fetchPage, newest, { fromMs });
+  // The writers probe through the current month (October 2026); 26.0.10 is not out yet.
+  const candidates = await fetchCandidateWindow(api.fetchPage, newest, { fromMs, throughVersion: '26.0.10' });
   const byId = new Map();
   for (const e of [...annual.events, ...candidates.releases.flatMap((r) => r.events)]) byId.set(e.id, e);
   const events = [...byId.values()].map((e) => ({ id: e.id, country: e.country, dateStart: Date.parse(e.date_start), deathsBest: e.best }));
@@ -120,25 +123,34 @@ describe('UCDP trailing-window fetch', () => {
     const { candidates, summary } = await fetchWindow(mockApi({ failing: new Set(['26.0.4:0']) }));
     assert.equal(candidates.complete, false);
     assert.deepEqual(candidates.missingReleases, ['26.0.4']);
-    assert.deepEqual(candidates.unpublishedReleases, []);
+    assert.deepEqual(candidates.unpublishedReleases, ['26.0.10'], 'only the frontier release counts as unpublished');
     assert.deepEqual(summary.gapMonths, ['2026-04']);
   });
 
-  it('a release UCDP never published is an upstream gap, not a failed fetch', async () => {
-    const { candidates } = await fetchWindow(mockApi({ missing: new Set(['26.0.4']) }));
-    assert.equal(candidates.complete, true, 'nothing failed on our side');
-    assert.deepEqual(candidates.missingReleases, []);
-    assert.deepEqual(candidates.unpublishedReleases, ['26.0.4']);
-    assert.deepEqual(candidates.unpublishedMonths, ['2026-04']);
+  it('a 400 on a release older than the newest one with data is a failed fetch, not an unpublished month', async () => {
+    // 26.0.9 returned data, so 26.0.4 was published: a 400 there is a quota,
+    // an outage or a bad request, and April's deaths would silently vanish.
+    const { candidates, summary } = await fetchWindow(mockApi({ missing: new Set(['26.0.4']) }));
+    assert.equal(candidates.complete, false);
+    assert.deepEqual(candidates.missingReleases, ['26.0.4']);
+    assert.ok(!candidates.unpublishedReleases.includes('26.0.4'));
+    assert.deepEqual(summary.gapMonths, ['2026-04']);
   });
 
-  it('an unpublished month is reported apart from fetch gaps, so it cannot alarm forever', async () => {
-    const { candidates, events, summary: plain } = await fetchWindow(mockApi({ missing: new Set(['26.0.4']) }));
-    const latest = Math.max(...events.map((e) => e.dateStart));
-    const summary = summarizeUcdpWindow(events, { startMs: latest - 365 * DAY_MS, endMs: latest, upstreamGapMonths: candidates.unpublishedMonths });
-    assert.deepEqual(plain.gapMonths, ['2026-04'], 'without the upstream list, April reads as a gap');
-    assert.deepEqual(summary.gapMonths, []);
-    assert.deepEqual(summary.upstreamGapMonths, ['2026-04']);
+  it('an empty first page on a mid-window release is a failed fetch', async () => {
+    const { candidates, summary } = await fetchWindow(mockApi({ emptyFirstPage: new Set(['26.0.5']) }));
+    assert.equal(candidates.complete, false);
+    assert.deepEqual(candidates.missingReleases, ['26.0.5']);
+    assert.deepEqual(summary.gapMonths, ['2026-05']);
+  });
+
+  it('a 400 on a release newer than the newest one with data is a month UCDP has not published yet', async () => {
+    const { candidates, summary } = await fetchWindow(mockApi());
+    assert.equal(candidates.complete, true, 'nothing failed on our side');
+    assert.deepEqual(candidates.missingReleases, []);
+    assert.deepEqual(candidates.unpublishedReleases, ['26.0.10']);
+    assert.deepEqual(candidates.unpublishedMonths, ['2026-10']);
+    assert.deepEqual(summary.gapMonths, [], 'the unpublished frontier is after the data, never a gap');
   });
 
   it('drops candidate rows dated inside the annual release\'s years: the annual is authoritative there, and ids can change between them', async () => {

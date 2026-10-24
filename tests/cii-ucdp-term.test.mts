@@ -172,19 +172,25 @@ describe('CII UCDP read-time window check (P9)', () => {
     assert.equal(assessCiiInputWindows(complete, NOW).ucdp!.honest, true);
   });
 
-  it('a month UCDP never published is reported as an upstream gap and does not fail the check', () => {
+  it('a month listed as unpublished cannot exempt a hole inside the window', () => {
+    // Only a release newer than the newest one with data can be unpublished; a
+    // payload that names a mid-window month must still read short_window.
     const noApril = totals(340, 23, (d) => new Date(d * DAY_MS).toISOString().startsWith('2026-04'));
     const dailyTotals = Object.entries(noApril).map(([d, n]) => [Number(d), n]);
     const countryDays = { Mexico: [[Math.floor(NOW / DAY_MS) - 30, 2, 5]] };
-    const fetchGap = parse({ ucdp: { events: [], countryDays, dailyTotals, window: { complete: false, gapMonths: ['2026-04'] } } }, NOW);
-    const failed = assessCiiInputWindows(fetchGap, NOW).ucdp!;
-    assert.equal(failed.honest, false, 'our fetch missed April: short_window');
-    assert.deepEqual(failed.gapMonths, ['2026-04']);
-    const upstream = parse({ ucdp: { events: [], countryDays, dailyTotals, window: { complete: true, gapMonths: [], upstreamGapMonths: ['2026-04'] } } }, NOW);
-    const w = assessCiiInputWindows(upstream, NOW).ucdp!;
-    assert.equal(w.honest, true, 'UCDP never published April: not a fetch failure');
-    assert.deepEqual(w.gapMonths, []);
-    assert.deepEqual(w.upstreamGapMonths, ['2026-04']);
+    const forged = parse({ ucdp: { events: [], countryDays, dailyTotals, window: { complete: true, gapMonths: [], upstreamGapMonths: ['2026-04'] } } }, NOW);
+    const w = assessCiiInputWindows(forged, NOW).ucdp!;
+    assert.equal(w.honest, false);
+    assert.deepEqual(w.gapMonths, ['2026-04']);
+  });
+
+  it('the unpublished frontier month is reported and does not fail the check', () => {
+    const dailyTotals = Object.entries(totals(340, 23)).map(([d, n]) => [Number(d), n]);
+    const countryDays = { Mexico: [[Math.floor(NOW / DAY_MS) - 30, 2, 5]] };
+    const aux = parse({ ucdp: { events: [], countryDays, dailyTotals, window: { complete: true, gapMonths: [], upstreamGapMonths: ['2026-10'] } } }, NOW);
+    const w = assessCiiInputWindows(aux, NOW).ucdp!;
+    assert.equal(w.honest, true);
+    assert.deepEqual(w.upstreamGapMonths, ['2026-10']);
   });
 
   it('rejects a missing month, a short span and a stale frontier', () => {

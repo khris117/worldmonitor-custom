@@ -390,7 +390,7 @@ export function parseUcdpCache(raw: unknown): {
   rows: CiiUcdpRow[];
   dailyTotals: Record<string, number> | null;
   writerComplete: boolean | null;
-  /** Months whose monthly release UCDP never published (the writers' `window.upstreamGapMonths`). */
+  /** Months after the newest data whose release UCDP has not published yet (the writers' `window.upstreamGapMonths`). */
   upstreamGapMonths: string[];
 } {
   const payload = raw && typeof raw === 'object' ? raw as Record<string, unknown> : null;
@@ -476,7 +476,7 @@ export interface CiiUcdpWindow {
   gapMonths: string[];
   /** The writers' own verdict on their fetch (`window.complete`), null when the payload has none. */
   writerComplete: boolean | null;
-  /** Near-empty months whose release UCDP never published: reported, not a failure of the cache. */
+  /** Months after the newest data whose release UCDP has not published yet (the writers' frontier): reported only. */
   upstreamGapMonths: string[];
   honest: boolean;
 }
@@ -508,7 +508,7 @@ export function assessUcdpWindow(
   }
   const days = [...perDay.keys()].sort((a, b) => a - b);
   const nowDay = Math.floor(nowMs / CII_DAY_MS);
-  if (!days.length) return { assumedDays: CII_UCDP_WINDOW_DAYS, oldestAgeDays: null, newestAgeDays: null, gapMonths: [], writerComplete, upstreamGapMonths: [], honest: false };
+  if (!days.length) return { assumedDays: CII_UCDP_WINDOW_DAYS, oldestAgeDays: null, newestAgeDays: null, gapMonths: [], writerComplete, upstreamGapMonths: [...upstreamGapMonths], honest: false };
   const first = days[0]!;
   const last = days[days.length - 1]!;
   // Events per covered day for each calendar month between the first and last day.
@@ -523,13 +523,11 @@ export function assessUcdpWindow(
   // The median over months that hold events: missing months must not set the bar they are measured against.
   const rates = [...months.values()].map((m) => m.events / m.days).filter((r) => r > 0).sort((a, b) => a - b);
   const median = rates[Math.floor(rates.length / 2)]!;
-  const thinMonths = [...months.entries()]
+  // No month inside the rows is exempt, whatever the payload says: a release
+  // UCDP has not published can only follow the newest one with data.
+  const gapMonths = [...months.entries()]
     .filter(([, m]) => m.events / m.days < CII_UCDP_MIN_MONTH_SHARE * median)
     .map(([month]) => month);
-  // A month UCDP never published is an upstream gap, not a short cache: it is
-  // reported apart and does not fail the check, or it would alarm for a year.
-  const upstream = new Set(upstreamGapMonths);
-  const gapMonths = thinMonths.filter((month) => !upstream.has(month));
   const oldestAgeDays = nowDay - first;
   const newestAgeDays = nowDay - last;
   return {
@@ -538,7 +536,7 @@ export function assessUcdpWindow(
     newestAgeDays,
     gapMonths,
     writerComplete,
-    upstreamGapMonths: thinMonths.filter((month) => upstream.has(month)),
+    upstreamGapMonths: [...upstreamGapMonths],
     honest: gapMonths.length === 0
       && writerComplete !== false
       && newestAgeDays <= CII_UCDP_MAX_LAG_DAYS
@@ -969,7 +967,7 @@ export interface AuxiliarySources {
   ucdpDailyTotals?: Record<string, number> | null;
   /** The UCDP writers' `window.complete`; null for a payload without it. */
   ucdpWriterComplete?: boolean | null;
-  /** Months whose UCDP release was never published (`window.upstreamGapMonths`). */
+  /** Months after the newest data whose UCDP release is not published yet (`window.upstreamGapMonths`). */
   ucdpUpstreamGapMonths?: string[];
   outages: any[];
   climate: any[];

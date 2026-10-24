@@ -2974,6 +2974,7 @@ const {
   capWithAnnualFloor: ucdpCapWithAnnualFloor,
   candidateContentMeta: ucdpCandidateContentMeta,
   annualReleaseEndMs: ucdpAnnualReleaseEndMs,
+  currentCandidateVersion,
   fetchAnnualWindow: ucdpFetchAnnualWindow,
   fetchCandidateWindow: ucdpFetchCandidateWindow,
   summarizeUcdpWindow: ucdpSummarizeWindow,
@@ -3122,7 +3123,7 @@ async function seedUcdpEvents() {
       const candidate = await ucdpDiscoverCandidateVersion(ucdpFetchPage);
       if (candidate) {
         const fromMs = Math.max(ucdpAnnualReleaseEndMs(version) + 1, nowMs - UCDP_ANNUAL_LOOKBACK_MS);
-        const merged = await ucdpFetchCandidateWindow(fetchLogged, candidate, { fromMs });
+        const merged = await ucdpFetchCandidateWindow(fetchLogged, candidate, { fromMs, throughVersion: currentCandidateVersion(nowMs) });
         // Only claim the candidate version once every release of the window
         // was fetched whole. A partial window published as `26.0.6` is
         // indistinguishable from a complete one downstream, which is how a
@@ -3132,7 +3133,7 @@ async function seedUcdpEvents() {
         missingReleases = merged.missingReleases;
         unpublishedReleases = merged.unpublishedReleases;
         unpublishedMonths = merged.unpublishedMonths;
-        if (unpublishedReleases.length) console.warn(`[UCDP] UCDP has not published candidate release(s) ${unpublishedReleases.join(', ')}: an upstream gap, not a failed fetch`);
+        if (unpublishedReleases.length) console.log(`[UCDP] Not published yet: ${unpublishedReleases.join(', ')}`);
         windowReleases = [version, ...merged.releases.map((r) => r.version)];
         if (!candidateComplete) {
           console.warn(`[UCDP] candidate window ${merged.releases[0].version}..${candidate.version}: incomplete (missing: ${missingReleases.join(', ') || 'none'}; failed or truncated pages) — publishing as partial`);
@@ -3197,14 +3198,15 @@ async function seedUcdpEvents() {
     const windowStartMs = latestMs - UCDP_TRAILING_WINDOW_MS;
     // Aggregated by where each event happened (ucdpLocatedCountry), not UCDP's country code.
     const located = filtered.map((e) => ({ country: ucdpLocatedCountry(e), dateStart: Date.parse(e.date_start) || 0, deathsBest: Number(e.best) || 0 }));
-    const summary = ucdpSummarizeWindow(located, { startMs: windowStartMs, endMs: latestMs, upstreamGapMonths: unpublishedMonths });
+    const summary = ucdpSummarizeWindow(located, { startMs: windowStartMs, endMs: latestMs });
     if (summary.gapMonths.length) console.warn(`[UCDP] Window has empty months before later data: ${summary.gapMonths.join(', ')}`);
     const window = {
       startMs: windowStartMs,
       endMs: latestMs,
       months: summary.months,
       gapMonths: summary.gapMonths,
-      upstreamGapMonths: summary.upstreamGapMonths,
+      // Months after the newest data that UCDP has not published yet: the frontier, never a gap.
+      upstreamGapMonths: unpublishedMonths,
       complete: candidateComplete && failedPages === 0 && !annual.truncated && summary.gapMonths.length === 0,
       releases: windowReleases,
       missingReleases,
