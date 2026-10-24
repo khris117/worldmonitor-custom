@@ -17,6 +17,7 @@ import { ciiScoredVersion, loadCiiFixtures, pairsOrderedAgainstBlend, readCiiVer
 import {
   assessCiiInputAvailability,
   buildCiiAuxiliarySources,
+  outageCountryCode,
   scoreCiiAuxiliarySources,
   type AuxiliarySources,
   type CiiScoreTableRow,
@@ -39,7 +40,7 @@ const KNOWN_GAPS: Record<string, ReadonlySet<string>> = {
     'P11a', 'P12a', 'P12b', 'P14', 'P15b', 'P15e',
   ]),
   v15: new Set([
-    'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P7b', 'P8', 'P9', 'P10',
+    'P1', 'P2', 'P3a', 'P3b', 'P3c', 'P4', 'P5a', 'P5c', 'P7a', 'P8', 'P9', 'P10',
     'P11a', 'P12a', 'P12b', 'P14', 'P15b', 'P15e',
   ]),
 };
@@ -134,8 +135,12 @@ const channels: Record<string, (aux: AuxiliarySources, nowMs: number) => void> =
   strikes: (aux, nowMs) => addStrikes(aux, CODES, nowMs, [5]),
   // +1 severe violent event: one UCDP event yesterday with 25 deaths.
   violence: (aux, nowMs) => addUcdpEvents(aux, CODES, nowMs, 1, 25, 0),
-  // +1 severe unrest event: a nationwide internet shutdown.
-  unrest: (aux) => { aux.outages = [...aux.outages, ...CODES.map((code) => ({ countryCode: code, severity: 'OUTAGE_SEVERITY_TOTAL' }))]; },
+  // +1 severe unrest event: a nationwide internet shutdown, ordered by the government an hour ago and still on.
+  unrest: (aux, nowMs) => {
+    aux.outages = [...aux.outages, ...CODES.map((code) => ({
+      countryCode: code, severity: 'OUTAGE_SEVERITY_TOTAL', cause: 'GOVERNMENT_DIRECTED', detectedAt: nowMs - HOUR_MS, endedAt: 0,
+    }))];
+  },
   // +10 on the information channel: ten more high-threat headlines.
   information: (aux) => addHeadlines(aux, CODES, { high: 10 }),
 };
@@ -322,16 +327,26 @@ function measureP7a(): Measurement {
 }
 
 function measureP7b(): Measurement {
-  const cases = FIXTURES.map((f) => {
-    const aux = parse(f);
-    const records = aux.outages.length;
-    const mapped = aux.outages.filter((o: any) => CODES.includes(String(o.countryCode || o.country_code || '').toUpperCase())).length;
-    const state = assessCiiInputAvailability([], aux, f.nowMs, false).outages;
-    return { label: f.label, records, mapped, state };
+  // Each fixture as captured, and again with every record's country made
+  // unresolvable: a reader mapping none of its N > 0 records must read
+  // unusable, and one that maps any record must not.
+  type OutageRow = Record<string, unknown>;
+  const cases = FIXTURES.flatMap((f) => {
+    const rows = (f.inputs.outages as { outages?: OutageRow[] } | null)?.outages ?? [];
+    const unmapped = rows.map(({ countryCode: _a, country_code: _b, ...row }) => ({ ...row, country: 'Nowhere' }));
+    return ([[f.label, rows], [`${f.label} with unresolvable countries`, unmapped]] as const).map(([label, outages]) => {
+      const aux = buildCiiAuxiliarySources({ ...f.inputs, outages: { outages } }, f.nowMs, { iranEventsEnabled: f.iranEventsEnabled });
+      const mapped = outages.filter((o) => outageCountryCode(o)).length;
+      return { label, records: outages.length, mapped, state: assessCiiInputAvailability([], aux, f.nowMs, false).outages };
+    });
   });
-  const bad = cases.filter((c) => c.records > 0 && c.mapped === 0 && c.state !== 'unusable');
-  const c = bad[0] ?? cases[0]!;
-  return { pass: bad.length === 0, value: `outages: ${c.mapped} of ${c.records} records map to a country, health reads ${c.state} (want unusable)` };
+  const bad = cases.filter((c) => c.records > 0 && (c.mapped === 0) !== (c.state === 'unusable'));
+  const exercised = cases.some((c) => c.records > 0 && c.mapped === 0);
+  const c = bad[0] ?? cases.find((x) => x.records > 0 && x.mapped === 0) ?? cases[0]!;
+  return {
+    pass: exercised && bad.length === 0,
+    value: `outages (${c.label}): ${c.mapped} of ${c.records} records map to a country, health reads ${c.state}`,
+  };
 }
 
 const FAILED_INPUT: Record<string, Partial<AuxiliarySources>> = {

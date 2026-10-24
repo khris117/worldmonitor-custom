@@ -29,6 +29,11 @@ import {
   CII_GDELT_LEVEL_MIN_ARTICLES,
   CII_GDELT_LEVEL_PROTEST_FLOOR,
   CII_GDELT_LEVEL_PROTEST_SATURATION,
+  CII_OUTAGE_EXAM_TERMS,
+  CII_OUTAGE_FUTURE_SKEW_MS,
+  CII_OUTAGE_SCORED_CAUSES,
+  CII_OUTAGE_UNREST_TERMS,
+  CII_OUTAGE_WINDOW_MS,
   CII_STRIKE_BOOST_CAP,
   CII_STRIKE_BOOST_PER_DOUBLING,
   CII_STRIKE_BOOST_PIVOT,
@@ -127,7 +132,7 @@ const CII_PROTOCOL_SNAPSHOT_HASH_BY_VERSION: Record<string, string> = {
   // Each Stage B PR regenerates this entry, and only this one, with the command in
   // docs/methodology/cii-change-brief.md section 3, and says so in its PR body. It
   // is frozen as released when v15 ships.
-  v15: 'dbfde746fb27478461511b21a72c0d5922b40cae005c41b5ab2ed0f20e025675',
+  v15: '26f312345d0dee3e22176b46b3c44e8cdd2fd9995d3751d9f19a791dc28b2875',
 };
 
 // The released entries above are a record. This digest of every entry except
@@ -141,6 +146,7 @@ const GUARDED_TOP_LEVEL_SCORE_CONST_NAMES = ['NEWS_THREAT_WEIGHT', 'UCDP_CLASSIF
 const GUARDED_SCORE_FUNCTION_NAMES = [
   'climateSeverityScore', 'deriveUcdpIntensityByRegion', 'computeCIIScores',
   'gdeltStrikeDays', 'strikePressure', 'strikePressureFloor', 'strikePressureBoost',
+  'isScoredOutage', 'outageVerdict',
 ];
 
 function readRepoFile(path: string): string {
@@ -1241,9 +1247,10 @@ describe('CII scoring', () => {
 
   it('outage TOTAL severity gives higher unrest component than PARTIAL', () => {
     const auxTotal = emptyAux();
-    auxTotal.outages = [{ countryCode: 'DE', severity: 'OUTAGE_SEVERITY_TOTAL' }];
+    const shutdown = { countryCode: 'DE', cause: 'GOVERNMENT_DIRECTED', detectedAt: Date.now() - 60 * 60 * 1000, endedAt: 0 };
+    auxTotal.outages = [{ ...shutdown, severity: 'OUTAGE_SEVERITY_TOTAL' }];
     const auxPartial = emptyAux();
-    auxPartial.outages = [{ countryCode: 'DE', severity: 'OUTAGE_SEVERITY_PARTIAL' }];
+    auxPartial.outages = [{ ...shutdown, severity: 'OUTAGE_SEVERITY_PARTIAL' }];
     const total = scoreFor(computeCIIScores([], auxTotal), 'DE')!;
     const partial = scoreFor(computeCIIScores([], auxPartial), 'DE')!;
     assert.ok(total.components!.ciiContribution > partial.components!.ciiContribution,
@@ -1911,6 +1918,11 @@ describe('CII scoring', () => {
         CII_GDELT_LEVEL_MIN_ARTICLES,
         CII_GDELT_LEVEL_PROTEST_FLOOR,
         CII_GDELT_LEVEL_PROTEST_SATURATION,
+        CII_OUTAGE_EXAM_TERMS,
+        CII_OUTAGE_FUTURE_SKEW_MS,
+        CII_OUTAGE_SCORED_CAUSES: [...CII_OUTAGE_SCORED_CAUSES].sort(),
+        CII_OUTAGE_UNREST_TERMS,
+        CII_OUTAGE_WINDOW_MS,
         CII_STRIKE_BOOST_CAP,
         CII_STRIKE_BOOST_PER_DOUBLING,
         CII_STRIKE_BOOST_PIVOT,
@@ -1985,6 +1997,12 @@ describe('CII scoring', () => {
       }
       export function strikePressureBoost(): number {
         return 0;
+      }
+      export function isScoredOutage(): boolean {
+        return false;
+      }
+      export function outageVerdict(): string {
+        return 'cause';
       }
     `);
     assertFormulaLiteralCovered(literals, 'gdeltStrikeDays', 7, 'return 7');
