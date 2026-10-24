@@ -69,10 +69,12 @@ export function crisisFigure(pulse) {
 
 function renderCrisisCard(crisis, pulse, escapeHtml) {
   const figure = crisisFigure(pulse);
+  const missing = figure && Array.isArray(pulse.missingCountries) ? pulse.missingCountries : [];
+  const unavailable = missing.length ? ` Unavailable in this snapshot: ${escapeHtml(missing.join(', '))}.` : '';
   return `          <li class="situation" id="${escapeHtml(crisis.slug)}">
             <h3><a href="/crises/${escapeHtml(crisis.slug)}/">${escapeHtml(crisis.shortTitle)}</a></h3>
             <p>${escapeHtml(crisis.description)}</p>
-            <p class="figure">${figure ? escapeHtml(figure) : 'No combined figure is published for this tracker in the current snapshot'}. Covers ${escapeHtml(crisis.coverage.map((country) => country.name).join(', '))}.</p>
+            <p class="figure">${figure ? escapeHtml(figure) : 'No combined figure is published for this tracker in the current snapshot'}.${unavailable} Covers ${escapeHtml(crisis.coverage.map((country) => country.name).join(', '))}.</p>
             <p class="links"><a href="/crises/${escapeHtml(crisis.slug)}/">Tracker</a> · <a href="${escapeHtml(crisis.dashboardPath)}">Open on the live map</a></p>
           </li>`;
 }

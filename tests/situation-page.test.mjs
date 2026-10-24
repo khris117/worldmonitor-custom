@@ -54,21 +54,24 @@ describe('/monitor-the-situation/ build', () => {
   it('publishes the page at its canonical URL with one live section per registry entry', () => {
     assert.match(html, /<link rel="canonical" href="https:\/\/www\.worldmonitor\.app\/monitor-the-situation\/">/);
     assert.match(html, /<h1>Monitor the situation<\/h1>/);
+    const hubRows = buildChokepointHubRows(data.chokepoints, data.livePulse);
     for (const section of SITUATION_SECTIONS) {
       const rendered = sectionOf(html, section);
-      assert.match(rendered, /Published reading/, `${section.slug} is labelled as the published pulse`);
+      const published = section.published(data.livePulse, { hubRows });
+      assert.match(rendered, published ? /Published reading/ : /No current reading/, `${section.slug} matches what the pulse holds`);
       assert.doesNotMatch(rendered, /data-live-at-request/, `${section.slug} is not labelled live at build time`);
       assert.doesNotMatch(rendered, /"@type":"FAQPage"/, `${section.slug} leaves the FAQ to the page`);
     }
     assert.equal(html.split('"@type":"FAQPage"').length, 2, 'exactly one FAQPage on the page');
   });
 
-  it('stamps each live section with its own pulse time, not the build time', () => {
-    const pulse = data.livePulse;
-    assert.match(sectionOf(html, SITUATION_SECTIONS[0]), new RegExp(`datetime="${new Date(pulse.capturedAtMs).toISOString()}"`));
-    const chokepointAsOf = Object.values(pulse.chokepoints).map((row) => row.asOf).sort().at(-1);
-    assert.match(sectionOf(html, SITUATION_SECTIONS[1]), new RegExp(`datetime="${chokepointAsOf}"`));
-    assert.match(sectionOf(html, SITUATION_SECTIONS[2]), new RegExp(`datetime="${pulse.liveTopics['internet-outages'].asOf}"`));
+  it('stamps each published section with its own reading time, not the build time', () => {
+    const hubRows = buildChokepointHubRows(data.chokepoints, data.livePulse);
+    for (const section of SITUATION_SECTIONS) {
+      const published = section.published(data.livePulse, { hubRows });
+      if (!published) continue;
+      assert.match(sectionOf(html, section), new RegExp(`datetime="${new Date(published.asOf).toISOString()}"`), `${section.slug} carries its reading time`);
+    }
   });
 
   it('files every crisis tracker under a region anchor with its tracker and dashboard links', () => {
@@ -109,6 +112,18 @@ describe('/monitor-the-situation/ readings', () => {
     assert.equal(crisisFigure({ state: 'ready', eventsTotal: '1,111', fatalities: '12', referencePeriod: '2026-10-01' }), '1,111 recorded events and 12 fatalities in the October 2026 HAPI summary');
   });
 
+  it('names the countries missing from a partial combined figure', () => {
+    const hubRows = buildChokepointHubRows(data.chokepoints, data.livePulse);
+    const crisis = data.crises.find((entry) => entry.coverage.length > 1);
+    const [missing] = crisis.coverage;
+    const partial = { state: 'partial', eventsTotal: '40', fatalities: '3', referencePeriod: '2026-10-01', missingCountries: [missing.name] };
+    const livePulse = { ...data.livePulse, crises: { ...data.livePulse.crises, [crisis.slug]: partial } };
+    const page = renderSituationPage({ baseUrl: BASE_URL, lastmod: '2026-10-24', tpl, crises: data.crises, livePulse, hubRows, snapshotPath: 'x.json' });
+    const card = page.slice(page.indexOf(`id="${crisis.slug}"`), page.indexOf('</li>', page.indexOf(`id="${crisis.slug}"`)));
+    assert.match(card, /40 recorded events and 3 fatalities/);
+    assert.ok(card.includes(`Unavailable in this snapshot: ${missing.name}.`), 'the card names the country its count leaves out');
+  });
+
   it('renders "No current reading" and no value for a section without a publishable pulse', () => {
     const hubRows = buildChokepointHubRows(data.chokepoints, data.livePulse);
     const bare = { ...data.livePulse, headlines: [], liveTopics: {} };
@@ -132,5 +147,8 @@ describe('/monitor-the-situation/ readings', () => {
     assert.throws(() => headlinesRecord({ ...fresh, coverage: { state: 'unavailable' } }, now), UnpublishableReading);
     assert.throws(() => headlinesRecord({ ...fresh, categories: { world: { items: [{ title: 'No source', link: 'https://x.y/z', publishedAt: now }] } } }, now), UnpublishableReading);
     assert.throws(() => headlinesRecord({ ...fresh, categories: null }, now), UnpublishableReading);
+    const outOfRange = { title: 'B', source: 'AP', link: 'https://apnews.com/b', publishedAt: 8.64e15 + 1, importanceScore: 9 };
+    const mixed = { ...fresh, categories: { world: { items: [...fresh.categories.world.items, outOfRange] } } };
+    assert.deepEqual(headlinesRecord(mixed, now).rows.map((row) => row.title), ['A'], 'an unrepresentable time drops only that headline');
   });
 });

@@ -66,7 +66,7 @@ function headlineRow(item) {
   const url = String(item?.link || '').trim();
   const publishedAt = Number(item?.publishedAt);
   if (!title || !source || !isVerifiableArticleUrl(url)) return null;
-  if (!Number.isFinite(publishedAt) || publishedAt <= 0) return null;
+  if (publishedAt <= 0 || Number.isNaN(new Date(publishedAt).getTime())) return null;
   return {
     row: { title, source, url, publishedAt: new Date(publishedAt).toISOString() },
     importance: Number(item?.importanceScore) || 0,
