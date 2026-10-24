@@ -11,7 +11,7 @@ const boundaries = [
   ['2026-10-25T09:00:00Z', 'Expired forecast'],
 ] as const;
 
-it.each(['sea-bulletin', 'coastal-bulletin'].flatMap(kind =>
+it.each(['sea-area-bulletin', 'coastal-bulletin'].flatMap(kind =>
   boundaries.map(([now, state]) => [kind, now, state]),
 ))('shows %s validity at %s', (kind, now, state) => {
   vi.useFakeTimers();

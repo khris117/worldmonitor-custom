@@ -1458,7 +1458,7 @@ export class MapPopup {
     const expiresIn = this.getTimeUntil(alert.expires);
     const onset = new Date(alert.onset).getTime();
     const expiry = new Date(alert.expires).getTime();
-    const marine = alert.productKind === 'sea-bulletin' || alert.productKind === 'coastal-bulletin';
+    const marine = alert.productKind === 'sea-area-bulletin' || alert.productKind === 'coastal-bulletin';
     let validity = '';
     if (marine && Number.isFinite(onset) && Number.isFinite(expiry) && expiry > onset) {
       const now = Date.now();
