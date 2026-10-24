@@ -124,7 +124,7 @@ const CII_PROTOCOL_SNAPSHOT_HASH_BY_VERSION: Record<string, string> = {
   // Each Stage B PR regenerates this entry, and only this one, with the command in
   // docs/methodology/cii-change-brief.md section 3, and says so in its PR body. It
   // is frozen as released when v15 ships.
-  v15: '6abaa0d2ecc74f78efa86a5bf40869dda116d0a635ff822b784c8e23df72cb48',
+  v15: '372ffe3beb49bee22d139dba31def1e2f96bd9cf0f82a2b6c7539b3b58a64a5b',
 };
 
 // The released entries above are a record. This digest of every entry except

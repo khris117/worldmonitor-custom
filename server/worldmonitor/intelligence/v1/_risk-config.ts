@@ -140,11 +140,14 @@ export const CII_GDELT_LEVEL_PROTEST_SATURATION = 0.08;
  *  - confirmed_d, from the Middle East strike feed (conflict:strike-pressure:v1,
  *    and the 72h conflict:iran-events:v1 window it is built from), is each
  *    incident weighted by severity (SEVERITY_WEIGHTS).
- *  - acled_d, where a deployment holds an ACLED licence, is the country's ACLED
- *    "Explosions/Remote violence" rows that day, each weighted as a high
- *    (killed someone) or elevated strike. They score here and nowhere else.
- *  - gdelt_d, worldwide (gdelt:bulk:country-events:v1), is CAMEO 194/195 coverage of strikes on the country as a share of
- *    its coverage that day: GDELT_SCALE * max(0, s / (a + GDELT_SMOOTHING) -
+ *  - acled_d, where a deployment holds an ACLED licence, is the weight of the
+ *    country's heaviest ACLED "Explosions/Remote violence" row that day: high
+ *    if it killed someone, else elevated. A day carries one row's weight, never
+ *    a row count. These rows score here and nowhere else, and they raise the
+ *    boost only: the floor reads P from confirmed_d and gdelt_d alone, so no
+ *    count of ACLED rows can put a country on the floor.
+ *  - gdelt_d, worldwide (gdelt:bulk:country-events:v1), is CAMEO 194/195
+ *    coverage of strikes on the country as a share of its coverage that day: GDELT_SCALE * max(0, s / (a + GDELT_SMOOTHING) -
  *    GDELT_NOISE_FLOOR). Absolute counts are media-volume biased (Oct 5-18
  *    2026: the US 12.9 strike-coded articles a day, Ukraine 11.1); the share
  *    is not (US 0.03%, Ukraine 1.2%, Saudi Arabia 5.5%). GDELT alone counts

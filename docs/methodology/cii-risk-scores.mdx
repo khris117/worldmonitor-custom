@@ -154,10 +154,14 @@ Component details that are easy to miss:
     window it is built from (`conflict:iran-events:v1`) is read too, and the
     larger per day wins.
   - **ACLED explosions/remote violence**, only where a deployment holds an ACLED
-    licence: each of the country's ACLED explosion rows that day weighs as a
-    `high` strike if it killed someone, else `elevated`. These rows score here
-    and nowhere else, so an airstrike that ACLED and GDELT both report counts
-    once.
+    licence: the day weighs as one `high` strike if any of the country's ACLED
+    explosion rows that day killed someone, else one `elevated` strike. A day
+    carries one row's weight, never a row count. These rows score here and
+    nowhere else, so an airstrike that ACLED and GDELT both report counts once.
+    They raise the strike boost only: the strike floor reads `P` from the
+    confirmed feed and GDELT alone, so no count of ACLED rows can put a country
+    on the floor. Their deaths no longer reach the ACLED `fatalityScore`; Stage
+    C's violence-family merge owns that gap.
   - **GDELT strikes**, worldwide: articles reporting CAMEO 194 (artillery, tanks) or 195 (aerial weapons:
     air, drone and missile strikes) located in the country **and** aimed at it
     (the event's target, Actor2, is that country), as a share of the country's

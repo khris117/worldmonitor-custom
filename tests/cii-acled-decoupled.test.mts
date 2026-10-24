@@ -206,6 +206,32 @@ describe('CII ACLED is per country: an optional source that never gates another 
     assert.deepEqual(worst.slice(0, 5), [], `${worst.length} double-counted cases`);
   });
 
+  it('ACLED explosion rows raise the strike boost but never put a country on the strike floor', () => {
+    // A floor that a count of ACLED rows can trip is a step on an event count:
+    // three fatal shelling rows in one day once summed to P = 6, past the floor's
+    // P = 5 threshold, and jumped the country onto a floor of 40+. A day takes
+    // one row's weight at most, and only the confirmed feed and GDELT set the floor.
+    const nowMs = FIXTURES[0]!.nowMs;
+    const quiet = quietAux();
+    const strike = (rows: AcledRow[], code: string) => {
+      const terms: Record<string, any> = {};
+      computeCIIScores(rows, quiet, { nowMs }, terms);
+      return terms[code];
+    };
+    for (const code of CODES) {
+      const calm = strike([], code);
+      const oneDay = strike(Array.from({ length: 3 }, () => row(code, 'Explosions/Remote violence', 4, 0)), code);
+      assert.equal(oneDay.floors.strike, 0, `${code}: 3 fatal rows in a day must not bind the strike floor`);
+      assert.ok(oneDay.boosts.strikePressure > calm.boosts.strikePressure, `${code}: ACLED rows still raise the boost`);
+      const oneRow = strike([row(code, 'Explosions/Remote violence', 4, 0)], code);
+      assert.equal(oneDay.boosts.strikePressure, oneRow.boosts.strikePressure, `${code}: a day carries one row's weight, not a row count`);
+      // A three-week ACLED-only campaign, 10 fatal rows a day: boost only.
+      const campaign = strike(Array.from({ length: 21 }, (_, d) => Array.from({ length: 10 }, () => row(code, 'Explosions/Remote violence', 2, d))).flat(), code);
+      assert.equal(campaign.floors.strike, 0, `${code}: an ACLED-only campaign never binds the strike floor`);
+      assert.ok(campaign.boosts.strikePressure > oneDay.boosts.strikePressure, `${code}: a longer campaign raises the boost further`);
+    }
+  });
+
   for (const fixture of FIXTURES) {
     it(`${fixture.label}: the deprecated eventMultiplier wire field is the neutral 1 for every country`, () => {
       const t = scoreCiiFixture(fixture);

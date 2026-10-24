@@ -437,6 +437,8 @@ interface CountrySignals {
   gpsMediumCount: number;
   /** Decayed strike pressure P (v12), 0 when the country has not been struck. */
   strikePressure: number;
+  /** P from the confirmed feed and GDELT only: the strike floor's input. ACLED never sets the floor. */
+  strikeFloorPressure: number;
   orefAlertCount: number;
   orefHistoryCount24h: number;
   advisoryLevel: AdvisoryLevel | null;
@@ -481,6 +483,7 @@ function emptySignals(): CountrySignals {
     fireCount: 0, fireHighCount: 0,
     gpsHighCount: 0, gpsMediumCount: 0,
     strikePressure: 0,
+    strikeFloorPressure: 0,
     orefAlertCount: 0, orefHistoryCount24h: 0,
     advisoryLevel: null,
     advisoryProvenance: 'absent',
@@ -1349,6 +1352,8 @@ export interface CiiCountryTerms {
   /** The largest floor candidate; it binds when it exceeds the rounded blend. */
   floor: number;
   strikePressure: number;
+  /** Strike pressure from the confirmed feed and GDELT only, which sets the strike floor. */
+  strikeFloorPressure: number;
   combinedScore: number;
 }
 
@@ -1409,8 +1414,10 @@ export function computeCIIScores(
     } else if (type.includes('explosion') || type.includes('remote')) {
       // Dated by the UTC day it happened; an event that killed someone weighs as
       // a high-severity strike, any other as elevated (the strike feed's scale).
+      // A day carries one row's weight at most, never a row count.
       const date = strikeUtcDay(computedAt - Math.max(0, ev.daysAgo ?? 0) * DAY_MS);
-      addStrikeDay(acledStrikes, code, date, fatalities > 0 ? CII_STRIKE_SEVERITY_WEIGHTS.high : CII_STRIKE_SEVERITY_WEIGHTS.elevated);
+      const days = (acledStrikes[code] ??= {});
+      days[date] = Math.max(days[date] ?? 0, fatalities > 0 ? CII_STRIKE_SEVERITY_WEIGHTS.high : CII_STRIKE_SEVERITY_WEIGHTS.elevated);
     } else if (type.includes('violence')) {
       data[code].civilianViolence += weight;
       data[code].conflictFatalities += fat;
@@ -1570,10 +1577,11 @@ export function computeCIIScores(
   const gdeltStrikes = aux.gdeltCountryEvents;
   for (const code of Object.keys(data)) {
     const gdelt = gdeltStrikeDays(gdeltStrikes?.byCountry?.[code]?.strikes, gdeltStrikes?.strikeDays, computedAt);
-    data[code]!.strikePressure = strikePressure(
-      maxStrikeDays(maxStrikeDays(confirmedStrikes[code], gdelt), acledStrikes[code]),
-      computedAt,
-    );
+    const reported = maxStrikeDays(confirmedStrikes[code], gdelt);
+    // ACLED may raise the strike boost but never the strike floor: a floor a
+    // count of ACLED rows could trip would be a step on an event count.
+    data[code]!.strikeFloorPressure = strikePressure(reported, computedAt);
+    data[code]!.strikePressure = strikePressure(maxStrikeDays(reported, acledStrikes[code]), computedAt);
   }
 
   // --- OREF (IL only) ---
@@ -1746,7 +1754,7 @@ export function computeCIIScores(
     const ucdpFloor = d.ucdpWar ? 70 : (d.ucdpMinor ? 50 : 0);
     const advisoryFloor = d.advisoryLevel === 'do-not-travel' ? 60
       : d.advisoryLevel === 'reconsider' ? 50 : 0;
-    const strikeFloor = Math.round(strikePressureFloor(d.strikePressure));
+    const strikeFloor = Math.round(strikePressureFloor(d.strikeFloorPressure));
     const floor = Math.max(ucdpFloor, advisoryFloor, strikeFloor);
 
     const composite = Math.min(100, Math.max(floor, Math.round(blended)));
@@ -1772,6 +1780,7 @@ export function computeCIIScores(
         floors: { ucdp: ucdpFloor, advisory: advisoryFloor, strike: strikeFloor },
         floor,
         strikePressure: d.strikePressure,
+        strikeFloorPressure: d.strikeFloorPressure,
         combinedScore: composite,
       };
     }
