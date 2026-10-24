@@ -111,6 +111,7 @@ async function updateScrapeRun(
 // for unit-testability (avoids pulling scrape.ts's heavy transitive deps —
 // exa-js, playwright, etc. — into the test environment).
 import { handleStaleOnInStock, handleStaleOnOutOfStock, handlePinError } from './scrape-pin-recovery.js';
+import { completedRetailersStatement, retailersToScrape } from './scrape-resume.js';
 
 export async function scrapeRetailer(slug: string) {
   const config = loadRetailerConfig(slug);
@@ -470,8 +471,14 @@ export async function scrapeAll() {
   initProviders(process.env as Record<string, string>);
   // Iterate ALL configs (including disabled) so getOrCreateRetailer syncs active=false to DB.
   // scrapeRetailer() returns early after the upsert for disabled retailers.
-  const configs = loadAllRetailerConfigs();
-  logger.info(`Syncing ${configs.length} retailers (${configs.filter((c) => c.enabled).length} enabled)`);
+  const allConfigs = loadAllRetailerConfigs();
+  const completedStatement = completedRetailersStatement();
+  const completed = await query<{ slug: string }>(completedStatement.sql, completedStatement.params);
+  const configs = retailersToScrape(allConfigs, new Set(completed.rows.map((row) => row.slug)));
+  logger.info(
+    `Syncing ${configs.length} retailers (${configs.filter((c) => c.enabled).length} enabled to scrape, ` +
+      `${allConfigs.length - configs.length} already finished this cycle)`,
+  );
 
   // Run retailers in parallel: each hits a different domain so rate limits don't conflict.
   // Cap at 5 concurrent to avoid saturating Firecrawl's global request limits.
