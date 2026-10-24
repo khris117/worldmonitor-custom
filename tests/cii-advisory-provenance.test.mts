@@ -275,7 +275,15 @@ describe('withCiiInputQuietClocks options', () => {
     // positional argument (an exclusion list), must not be read as options.
     assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, ciiInputDetails(t.aux) as never), /unknown option\(s\) advisories/);
     assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, ['fires'] as never), /unknown option/);
-    assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, { details: {}, exclusions: {} } as never), /unknown option\(s\) exclusions/);
+    assert.throws(() => withCiiInputQuietClocks(states, null, f.nowMs, { details: {}, snapshotTimes: {} } as never), /unknown option\(s\) snapshotTimes/);
+  });
+
+  it('takes details and exclusions together, each on its own input', () => {
+    const exclusions = { outages: { examShutdown: { count: 1, samples: [{ id: 'cf-1', title: 't', description: 'Exam shutdown' }] } } };
+    const reports = withCiiInputQuietClocks(states, null, f.nowMs, { details: ciiInputDetails(t.aux), exclusions });
+    assert.equal(reports.advisories.snapshotAt, f.nowMs - HOUR_MS);
+    assert.deepEqual(reports.outages.excluded, exclusions.outages);
+    assert.equal('excluded' in reports.advisories, false);
   });
 });
 

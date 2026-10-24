@@ -9,13 +9,16 @@
 //   quiet           present and accepted, but moved no Tier-1 score
 //                   (`quietSince` is when that started)
 //   missing         the Redis key was absent
-//   unusable        present, but the scorer rejected it (too old or malformed)
+//   unusable        present, but the scorer rejected it (too old or malformed,
+//                   or none of its records map to a country)
 //   fallback        some or all of the scored levels came from the last good
 //                   snapshot (`snapshotAt` is its producer clock, `filled` the
 //                   countries taken from it): the read was missing or stale, or
 //                   lost countries. Scores hold, but the input is dead.
 // A report may also carry `sourcesMissing` (a live read lacked one of its
-// sources: dead) and `snapshotReadFailed` (shown, not dead on its own).
+// sources: dead), `snapshotReadFailed` (shown, not dead on its own) and
+// `excluded` (records a construct rule removed from scoring, such as exam
+// shutdowns: shown, not dead).
 //   not_configured  disabled by deployment design (no ACLED credentials,
 //                   IRAN_EVENTS_ENABLED off)
 // An unreadable key rejects the whole build, so it surfaces as a stale
