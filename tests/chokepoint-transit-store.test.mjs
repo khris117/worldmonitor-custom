@@ -184,3 +184,24 @@ test('failed writes keep observations and reject publication instead of acceptin
   await tracker.flush(at + HOUR);
   assert.deepEqual(batch.map(row => row[2]), ['a', 'b']);
 });
+
+
+test('recovery bounds requests and retains the failed chunk plus new arrivals', async () => {
+  const batches = [];
+  let fail = true;
+  const tracker = make(async (_script, _keys, args) => {
+    const rows = JSON.parse(args[4]);
+    batches.push(rows);
+    assert.ok(rows.length <= 1000);
+    if (batches.length === 2 && fail) return null;
+    return 1;
+  });
+  for (let i = 0; i < 2100; i++) observe(tracker, 'a', at + i);
+  await assert.rejects(tracker.flush(at + 2100), /gate update failed/);
+  observe(tracker, 'b', at + 2200);
+  fail = false;
+  await tracker.flush(at + 2200);
+  assert.deepEqual(batches.map(rows => rows.length), [1000, 1000, 1000, 101]);
+  assert.equal(batches[2][0][4], at + 1000);
+  assert.equal(batches[3].at(-1)[4], at + 2200);
+});

@@ -93,13 +93,18 @@ export function createDurableTransitTracker({ gates, maxTransitMs, cooldownMs, e
     const batch = pending.filter(row => row[4] <= now);
     pending = pending.filter(row => row[4] > now);
     const operation = (async () => {
+      let committed = 0;
       try {
-        const result = await evaluate(MERGE_TRANSIT_GATES,
-          [STATE_KEY, INDEX_KEY, CROSSINGS_KEY],
-          [now, maxTransitMs, cooldownMs, COUNT_RETENTION_MS, JSON.stringify(batch)]);
-        if (result !== 1) throw new Error('Durable transit gate update failed');
+        do {
+          const chunk = batch.slice(committed, committed + 1000);
+          const result = await evaluate(MERGE_TRANSIT_GATES,
+            [STATE_KEY, INDEX_KEY, CROSSINGS_KEY],
+            [now, maxTransitMs, cooldownMs, COUNT_RETENTION_MS, JSON.stringify(chunk)]);
+          if (result !== 1) throw new Error('Durable transit gate update failed');
+          committed += chunk.length;
+        } while (committed < batch.length);
       } catch (error) {
-        pending = [...batch, ...pending];
+        pending = [...batch.slice(committed), ...pending];
         prune(now);
         throw error;
       }
