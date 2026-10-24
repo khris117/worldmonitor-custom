@@ -435,19 +435,6 @@ export async function scrapeRetailer(slug: string) {
     ? 'failed'
     : resolveRunStatus(errorsCount, pagesSucceeded, budgetExhausted);
   const failureReasonsJson = failureReasons.toJSON();
-  await updateScrapeRun(
-    runId,
-    status,
-    pagesAttempted,
-    pagesSucceeded,
-    errorsCount,
-    rejectedCount,
-    failureReasonsJson,
-  );
-  logger.info(
-    `Run ${runId} finished: ${status} (${pagesSucceeded}/${pagesAttempted} pages, rejected=${rejectedCount}, reasons=${JSON.stringify(failureReasonsJson)})`,
-  );
-
   const parseSuccessRate = pagesAttempted > 0 ? (pagesSucceeded / pagesAttempted) * 100 : 0;
   const isSuccess = status === 'completed' || status === 'partial';
   await query(
@@ -460,6 +447,21 @@ export async function scrapeRetailer(slug: string) {
        parse_success_rate = EXCLUDED.parse_success_rate,
        updated_at         = NOW()`,
     [retailerId, isSuccess ? new Date() : null, status, Math.round(parseSuccessRate * 100) / 100],
+  );
+
+  // The terminal status goes last: a later tick skips this retailer once it is
+  // written (scrape-resume.ts), so health must already be saved by then.
+  await updateScrapeRun(
+    runId,
+    status,
+    pagesAttempted,
+    pagesSucceeded,
+    errorsCount,
+    rejectedCount,
+    failureReasonsJson,
+  );
+  logger.info(
+    `Run ${runId} finished: ${status} (${pagesSucceeded}/${pagesAttempted} pages, rejected=${rejectedCount}, reasons=${JSON.stringify(failureReasonsJson)})`,
   );
 
 }
