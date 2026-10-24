@@ -128,4 +128,49 @@ describe('shared page canonical helper', () => {
     assert.equal(pageCanonicalUrl(`${ORIGIN}/blog/x`, 'https://evil.example/blog/x/'), `${ORIGIN}/blog/x`);
     assert.equal(pageCanonicalUrl(`${ORIGIN}/blog/x`, 'javascript:alert(1)'), `${ORIGIN}/blog/x`);
   });
+
+  it('preserves the accepted canonical origin while removing query and fragment', () => {
+    assert.equal(pageCanonicalUrl('https://tech.worldmonitor.app/agent/', `${ORIGIN}/agent/?utm_source=a#tools`), `${ORIGIN}/agent/`);
+    assert.equal(pageCanonicalUrl(`${ORIGIN}/x`, 'https://worldmonitor.app/x/'), 'https://worldmonitor.app/x/');
+  });
+});
+
+describe('canonical parity with the real agent HTML page', () => {
+  const html = readFileSync(new URL('public/agent/index.html', root), 'utf8');
+  const canonical = `${ORIGIN}/agent/`;
+
+  for (const origin of [ORIGIN, 'https://tech.worldmonitor.app']) {
+    for (const method of ['GET', 'HEAD']) {
+      for (const representation of ['html', 'markdown']) {
+        it(`${origin} ${method} with ${representation} sibling preserves the HTML declaration`, async () => {
+          assert.equal(declaredHtmlCanonical(html), canonical);
+          let fetchCount = 0;
+          const response = await buildMarkdownTwinResponse(
+            new Request(`${origin}/agent.md`, { method }),
+            '/agent.md',
+            async (_input, init) => {
+              fetchCount += 1;
+              const markdown = representation === 'markdown'
+                && new Headers(init?.headers).get('accept').startsWith('text/markdown');
+              const body = markdown ? '# World Monitor for AI agents\n' : html;
+              return new Response(init?.method === 'HEAD' ? null : body, {
+                headers: { 'content-type': markdown ? 'text/markdown' : 'text/html' },
+              });
+            },
+          );
+
+          assert.equal(response.status, 200);
+          assert.equal(linkCanonical(response), canonical);
+          assert.equal(fetchCount, method === 'GET' && representation === 'html' ? 1 : 2);
+          const body = await response.text();
+          if (method === 'GET') {
+            const block = body.match(/^---\n([\s\S]*?)\n---\n/);
+            assert.equal(load(block[1]).canonical, canonical);
+          } else {
+            assert.equal(body, '');
+          }
+        });
+      }
+    }
+  }
 });
