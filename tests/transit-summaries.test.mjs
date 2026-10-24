@@ -176,13 +176,14 @@ describe('seedTransitSummaries (relay)', () => {
     chokepointCrossings = new Map(),
     log = () => {},
     upstashEval = transitStore(),
+    transitTracker = { flush: async () => {} },
   }) {
     // eslint-disable-next-line no-new-func
     const factory = new Function(
-      'envelopeWrite', 'upstashSet', 'console', 'chokepointCrossings', 'readTransitWindow', 'upstashEval',
+      'envelopeWrite', 'upstashSet', 'console', 'chokepointCrossings', 'readTransitWindow', 'upstashEval', 'transitTracker',
       transitsHarnessSrc,
     );
-    return factory(envelopeWrite, upstashSet, { log, warn: () => {} }, chokepointCrossings, readTransitWindow, upstashEval);
+    return factory(envelopeWrite, upstashSet, { log, warn: () => {} }, chokepointCrossings, readTransitWindow, upstashEval, transitTracker);
   }
 
   // Fresh sandbox per call — `latestCorridorRiskData` resets like a cold
@@ -196,16 +197,17 @@ describe('seedTransitSummaries (relay)', () => {
     log = () => {},
     chokepointCrossings = new Map(),
     upstashEval = transitStore(),
+    transitTracker = { flush: async () => {} },
   }) {
     // eslint-disable-next-line no-new-func
     const factory = new Function(
       'envelopeRead', 'envelopeWrite', 'upstashSet', 'console', 'UPSTASH_ENABLED', 'chokepointCrossings',
-      'detectTrafficAnomaly', 'summarizePortwatchHistory', 'CHOKEPOINT_THREAT_LEVELS', 'readTransitWindow', 'upstashEval',
+      'detectTrafficAnomaly', 'summarizePortwatchHistory', 'CHOKEPOINT_THREAT_LEVELS', 'readTransitWindow', 'upstashEval', 'transitTracker',
       seedHarnessSrc,
     );
     return factory(
       envelopeRead, envelopeWrite, upstashSet, { warn, log }, upstashEnabled, chokepointCrossings,
-      detectTrafficAnomaly, summarizePortwatchHistory, CHOKEPOINT_THREAT_LEVELS, readTransitWindow, upstashEval,
+      detectTrafficAnomaly, summarizePortwatchHistory, CHOKEPOINT_THREAT_LEVELS, readTransitWindow, upstashEval, transitTracker,
     );
   }
 
@@ -214,6 +216,19 @@ describe('seedTransitSummaries (relay)', () => {
     'taiwan_strait', 'cape_of_good_hope', 'gibraltar', 'bosphorus',
     'korea_strait', 'dover_strait', 'kerch_strait', 'lombok_strait',
   ];
+
+  it('neither publisher stamps fresh metadata when pending gate observations cannot persist', async () => {
+    const writes = [];
+    const deps = {
+      envelopeRead: async () => ({ hormuz_strait: { history: [] } }),
+      envelopeWrite: async (...args) => { writes.push(args); return true; },
+      upstashSet: async (...args) => { writes.push(args); return true; },
+      transitTracker: { flush: async () => { throw new Error('gate storage unavailable'); } },
+    };
+    await assert.rejects(buildSeedChokepointTransits(deps)(), /gate storage unavailable/);
+    await assert.rejects(buildSeedTransitSummaries(deps)(), /gate storage unavailable/);
+    assert.deepEqual(writes, []);
+  });
 
   it('both publishers recover counts after restart and health counts only measured canonical waterways', async () => {
     const upstashEval = transitStore();
@@ -463,7 +478,7 @@ describe('seedTransitSummaries (relay)', () => {
       const seed = new Function(
         'fetch', 'envelopeRead', 'envelopeWrite', 'upstashSet', 'console', 'UPSTASH_ENABLED',
         'chokepointCrossings', 'detectTrafficAnomaly', 'summarizePortwatchHistory', 'CHOKEPOINT_THREAT_LEVELS',
-        'CORRIDOR_RISK_NAME_MAP', 'deriveCorridorRiskLevel', 'CHROME_UA', 'publishNotificationEvent', 'readTransitWindow', 'upstashEval',
+        'CORRIDOR_RISK_NAME_MAP', 'deriveCorridorRiskLevel', 'CHROME_UA', 'publishNotificationEvent', 'readTransitWindow', 'upstashEval', 'transitTracker',
         source,
       )(
         async () => Response.json([{ name: 'Strait of Hormuz', score: 80, incident_count_7d: 628,
@@ -476,7 +491,7 @@ describe('seedTransitSummaries (relay)', () => {
         new Map(), detectTrafficAnomaly, summarizePortwatchHistory, CHOKEPOINT_THREAT_LEVELS,
         CORRIDOR_RISK_NAME_MAP, deriveCorridorRiskLevel, 'test-agent',
         async event => { notifications.push(event); },
-        readTransitWindow, transitStore(),
+        readTransitWindow, transitStore(), { flush: async () => {} },
       );
       await seed.seedCorridorRisk();
       await seed.seedTransitSummaries();

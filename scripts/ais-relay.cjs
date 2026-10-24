@@ -119,7 +119,7 @@ const { detectTrafficAnomaly, summarizePortwatchHistory } = require('../shared/c
 const { CHOKEPOINT_THREAT_LEVELS } = require('../shared/chokepoint-threat-levels.js');
 const { classifyVesselType } = require('../shared/ais-vessel-type.js');
 const { readTransitWindow } = require('../shared/chokepoint-transit-window.js');
-const { createTransitTracker } = require('../shared/chokepoint-transit-tracker.js');
+const { createDurableTransitTracker } = require('../shared/chokepoint-transit-store.js');
 const { CHOKEPOINT_TRANSIT_GATES } = require('../shared/chokepoint-transit-gates.js');
 const { CORRIDOR_RISK_NAME_MAP, deriveCorridorRiskLevel } = require('../shared/corridor-risk.js');
 // AIS upstream reconnect policy: failure classification (transport | auth |
@@ -9711,12 +9711,15 @@ const TRANSIT_WINDOW_MS = 24 * 60 * 60 * 1000;
 const TRANSIT_MAX_GATE_GAP_MS = 18 * 60 * 60 * 1000;
 const CHOKEPOINT_TRANSIT_KEY = 'supply_chain:chokepoint_transits:v1';
 const CHOKEPOINT_TRANSIT_TTL = 3600; // 1h — 6x interval; survives ~5 consecutive missed pings
-const transitTracker = createTransitTracker({
+const transitTracker = createDurableTransitTracker({
   gates: CHOKEPOINT_TRANSIT_GATES,
   maxTransitMs: TRANSIT_MAX_GATE_GAP_MS,
   cooldownMs: TRANSIT_COOLDOWN_MS,
-  crossings: chokepointCrossings,
+  evaluate: upstashEval,
 });
+setInterval(() => {
+  transitTracker.flush(Date.now()).catch(error => console.warn('[Transit] Gate persistence failed:', error.message));
+}, 10_000).unref?.();
 
 // Dark-ship (AIS gap) count envelope — the trusted producer behind the
 // temporal anomalies `ais_gaps` count source (#7574). Written on its own
@@ -10412,6 +10415,7 @@ setInterval(() => {
 
 async function seedChokepointTransits() {
   const now = Date.now();
+  await transitTracker.flush(now);
   const window = await readTransitWindow(chokepointCrossings, now, upstashEval);
   const transits = {};
   for (const cp of CHOKEPOINTS) {
@@ -10519,6 +10523,7 @@ async function seedTransitSummaries() {
 
   const now = Date.now();
   const summaries = {};
+  await transitTracker.flush(now);
   const window = await readTransitWindow(chokepointCrossings, now, upstashEval);
   // Iterate the canonical chokepoint ID set rather than whatever pw happens to
   // carry today. If seed-portwatch dropped 3 of 13 (flaky ArcGIS), those 3
@@ -15601,6 +15606,7 @@ async function gracefulShutdown(signal) {
     // already silent, and the process is about to exit regardless.
     try { upstreamSocket.terminate(); } catch {}
   }
+  await transitTracker.flush(Date.now()).catch(error => console.warn('[Transit] Shutdown gate flush failed:', error.message));
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 12_000);
 }

@@ -1,0 +1,134 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createDurableTransitTracker } from '../shared/chokepoint-transit-store.js';
+import { readTransitWindow } from '../shared/chokepoint-transit-window.js';
+
+const HOUR = 3600000;
+const at = 1792800000000;
+const name = 'Strait of Hormuz';
+const gates = { [name]: { a: [[26.45, 55.95, 0.25]], b: [[26.2, 56.85, 0.3]] } };
+const make = evaluate => createDurableTransitTracker({ gates, maxTransitMs: 18 * HOUR, cooldownMs: HOUR / 2, evaluate });
+const observe = (tracker, side, ts, id = '123456789') => tracker.observe(id, ...gates[name][side][0].slice(0, 2), 'tanker', ts);
+const cli = process.env.REDIS_CLI_BIN || 'redis-cli';
+const server = process.env.REDIS_SERVER_BIN || 'redis-server';
+const enabled = spawnSync(cli, ['--version']).status === 0 && spawnSync(server, ['--version']).status === 0;
+
+test('real Redis continues gates across restarts without renewing crossing clocks', { skip: !enabled && 'redis-server and redis-cli required' }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'transit-gates-'));
+  const socket = join(dir, 'redis.sock');
+  const started = spawnSync(server, ['--port', '0', '--unixsocket', socket, '--save', '', '--appendonly', 'no', '--daemonize', 'yes', '--pidfile', join(dir, 'pid'), '--logfile', join(dir, 'log')], { encoding: 'utf8' });
+  assert.equal(started.status, 0, started.stderr);
+  const command = (...args) => {
+    const result = spawnSync(cli, ['-s', socket, '--json', ...args.map(String)], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  };
+  try {
+    let ready = false;
+    for (let i = 0; i < 100; i++) {
+      if (spawnSync(cli, ['-s', socket, 'PING']).status === 0) { ready = true; break; }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+    assert.ok(ready);
+    const evaluate = async (script, keys, args) => command('EVAL', script, keys.length, ...keys, ...args);
+    const window = now => readTransitWindow(new Map(), now, evaluate);
+    let tracker = make(evaluate);
+    observe(tracker, 'a', at);
+    await tracker.flush(at);
+    assert.equal((await window(at)).size, 0);
+    tracker = make(evaluate);
+    observe(tracker, 'b', at + 4 * HOUR);
+    observe(tracker, 'b', at + 4 * HOUR + 1000);
+    observe(tracker, 'b', at + 4 * HOUR + 2000);
+    await tracker.flush(at + 4 * HOUR + 2000);
+    assert.deepEqual((await window(at + 4 * HOUR + 2000)).get(name), [{ mmsi: '123456789', type: 'tanker', ts: at + 4 * HOUR }]);
+
+    // Older overlapping batches and a new process inside the cooldown do not
+    // duplicate the crossing or move its original completion time.
+    const overlap = make(evaluate);
+    observe(overlap, 'a', at + HOUR);
+    observe(overlap, 'b', at + 4 * HOUR);
+    await overlap.flush(at + 4 * HOUR + 3000);
+    tracker = make(evaluate);
+    observe(tracker, 'a', at + 4 * HOUR + 5000);
+    await tracker.flush(at + 4 * HOUR + 5000);
+    assert.equal((await window(at + 4 * HOUR + 5000)).get(name).length, 1);
+    assert.equal((await window(at + 28 * HOUR)).size, 0);
+
+    command('FLUSHDB');
+    tracker = make(evaluate);
+    observe(tracker, 'a', at);
+    await tracker.flush(at);
+    tracker = make(evaluate);
+    observe(tracker, 'b', at + 18 * HOUR + 1);
+    await tracker.flush(at + 18 * HOUR + 1);
+    assert.equal((await window(at + 18 * HOUR + 1)).size, 0, 'restart must not reset the gap clock');
+
+    command('FLUSHDB');
+    tracker = make(evaluate);
+    observe(tracker, 'a', at);
+    await tracker.flush(at);
+    tracker = make(evaluate);
+    observe(tracker, 'b', at + 18 * HOUR);
+    await tracker.flush(at + 18 * HOUR);
+    assert.equal((await window(at + 18 * HOUR)).get(name).length, 1, 'exact gap boundary is still accepted');
+    await tracker.flush(at + 37 * HOUR);
+    assert.equal(command('HLEN', 'supply_chain:transit-gates:v1'), 0);
+    assert.equal(command('ZCARD', 'supply_chain:transit-gate-times:v1'), 0);
+
+    command('FLUSHDB');
+    let loseAck = true;
+    tracker = make(async (...args) => {
+      const result = await evaluate(...args);
+      if (loseAck) { loseAck = false; return null; }
+      return result;
+    });
+    observe(tracker, 'a', at);
+    observe(tracker, 'b', at + HOUR);
+    await assert.rejects(tracker.flush(at + HOUR), /gate update failed/);
+    await tracker.flush(at + HOUR + 1);
+    assert.equal((await window(at + HOUR + 1)).get(name).length, 1, 'retry after a lost response is idempotent');
+  } finally {
+    spawnSync(cli, ['-s', socket, 'SHUTDOWN', 'NOSAVE']);
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('concurrent flushes serialize and retain observations newer than the caller clock', async () => {
+  const batches = [];
+  let release;
+  const tracker = make(async (_script, _keys, args) => {
+    batches.push(JSON.parse(args[3]));
+    if (batches.length === 1) await new Promise(resolve => { release = resolve; });
+    return 1;
+  });
+  observe(tracker, 'a', at);
+  const first = tracker.flush(at);
+  const second = tracker.flush(at);
+  const third = tracker.flush(at);
+  observe(tracker, 'b', at + 1000);
+  release();
+  await Promise.all([first, second, third]);
+  await tracker.flush(at + 1000);
+  assert.deepEqual(batches.flat().map(row => [row[2], row[4]]), [['a', at], ['b', at + 1000]]);
+});
+
+test('failed writes keep observations and reject publication instead of accepting an empty window', async () => {
+  let fail = true;
+  let batch;
+  const tracker = make(async (_script, _keys, args) => {
+    if (fail) return null;
+    batch = JSON.parse(args[3]);
+    return 1;
+  });
+  observe(tracker, 'a', at);
+  await assert.rejects(tracker.flush(at), /gate update failed/);
+  observe(tracker, 'b', at + HOUR);
+  fail = false;
+  await tracker.flush(at + HOUR);
+  assert.deepEqual(batch.map(row => row[2]), ['a', 'b']);
+});
