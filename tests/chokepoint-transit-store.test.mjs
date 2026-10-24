@@ -87,6 +87,35 @@ test('real Redis continues gates across restarts without renewing crossing clock
         .map(({ mmsi, type, ts }) => ({ mmsi, type, ts }));
       assert.deepEqual((await window(now)).get(name), expected);
     });
+    await t.test('storage caps reject whole batches and preserve a shared fixed failure deadline', async () => {
+      for (const [argument, limit] of [[5, 1], [6, 1], [7, 1]]) {
+        command('FLUSHDB');
+        const capped = make((script, keys, args) => {
+          args[argument] = limit;
+          return evaluate(script, keys, args);
+        });
+        observe(capped, 'a', at);
+        await capped.flush(at);
+        observe(capped, 'b', at + 1000, argument === 6 ? '123456789' : '987654321');
+        await assert.rejects(capped.flush(at + 1000), /capacity/);
+        assert.equal(command('HGET', 'supply_chain:transit-gates:v1', '_rows'), '1');
+        assert.equal(command('ZCARD', 'supply_chain:transit-gate-times:v1'), 1);
+        const restarted = make(evaluate);
+        await assert.rejects(restarted.flush(at + HOUR), /capacity/);
+        assert.equal(command('HGET', 'supply_chain:transit-gates:v1', '_incompleteUntil'), String(at + 1000 + 42.5 * HOUR));
+        await restarted.flush(at + 1000 + 42.5 * HOUR);
+      }
+    });
+    await t.test('buffer loss is durable even when all accepted reports are saved', async () => {
+      command('FLUSHDB');
+      const tracker = make(evaluate);
+      // Duplicate reports exercise the pending cap without exhausting the journal.
+      for (let i = 0; i <= 20000; i++) observe(tracker, 'a', at);
+      await assert.rejects(tracker.flush(at), /capacity/);
+      assert.equal(command('HGET', 'supply_chain:transit-gates:v1', '_rows'), '1');
+      await assert.rejects(make(evaluate).flush(at + HOUR), /capacity/);
+      await make(evaluate).flush(at + 42.5 * HOUR);
+    });
     command('FLUSHDB');
     let tracker = make(evaluate);
     observe(tracker, 'a', at);
@@ -129,7 +158,7 @@ test('real Redis continues gates across restarts without renewing crossing clock
     await tracker.flush(at + 18 * HOUR);
     assert.equal((await window(at + 18 * HOUR)).get(name).length, 1, 'exact gap boundary is still accepted');
     await tracker.flush(at + 61 * HOUR);
-    assert.equal(command('HLEN', 'supply_chain:transit-gates:v1'), 0);
+    assert.equal(command('HGET', 'supply_chain:transit-gates:v1', '_rows'), '0');
     assert.equal(command('ZCARD', 'supply_chain:transit-gate-times:v1'), 0);
 
     command('FLUSHDB');
@@ -156,7 +185,7 @@ test('concurrent flushes serialize and retain observations newer than the caller
   const tracker = make(async (_script, _keys, args) => {
     batches.push(JSON.parse(args[4]));
     if (batches.length === 1) await new Promise(resolve => { release = resolve; });
-    return 1;
+    return [1, 0];
   });
   observe(tracker, 'a', at);
   const first = tracker.flush(at);
@@ -175,7 +204,7 @@ test('failed writes keep observations and reject publication instead of acceptin
   const tracker = make(async (_script, _keys, args) => {
     if (fail) return null;
     batch = JSON.parse(args[4]);
-    return 1;
+    return [1, 0];
   });
   observe(tracker, 'a', at);
   await assert.rejects(tracker.flush(at), /gate update failed/);
@@ -194,7 +223,7 @@ test('recovery bounds requests and retains the failed chunk plus new arrivals', 
     batches.push(rows);
     assert.ok(rows.length <= 1000);
     if (batches.length === 2 && fail) return null;
-    return 1;
+    return [1, 0];
   });
   for (let i = 0; i < 2100; i++) observe(tracker, 'a', at + i);
   await assert.rejects(tracker.flush(at + 2100), /gate update failed/);
@@ -204,4 +233,45 @@ test('recovery bounds requests and retains the failed chunk plus new arrivals', 
   assert.deepEqual(batches.map(rows => rows.length), [1000, 1000, 1000, 101]);
   assert.equal(batches[2][0][4], at + 1000);
   assert.equal(batches[3].at(-1)[4], at + 2200);
+});
+
+test('buffer exhaustion remains visible after successful writes instead of publishing partial input', async () => {
+  const tracker = make(async () => [1, 0]);
+  for (let i = 0; i <= 20000; i++) observe(tracker, 'a', at + i);
+  await assert.rejects(tracker.flush(at + 20000), /capacity/);
+});
+
+
+test('each request bounds the number of full vessel histories replayed', async () => {
+  let count = 0;
+  const tracker = make(async (_script, _keys, args) => {
+    const rows = JSON.parse(args[4]);
+    assert.ok(new Set(rows.map(row => JSON.stringify(row.slice(0, 2)))).size <= 4);
+    count += rows.length;
+    return [1, 0];
+  });
+  for (let i = 0; i < 30; i++) observe(tracker, 'a', at, String(i));
+  await tracker.flush(at);
+  assert.equal(count, 30);
+});
+
+test('in-flight reports count toward the memory cap and dropped-input deadlines do not move on retry', async () => {
+  let release;
+  const batches = [];
+  const deadlines = [];
+  const tracker = make(async (_script, _keys, args) => {
+    batches.push(JSON.parse(args[4]));
+    deadlines.push(args[8]);
+    if (batches.length === 1) await new Promise(resolve => { release = resolve; });
+    return [1, args[8]];
+  });
+  for (let i = 0; i < 20000; i++) observe(tracker, 'a', at);
+  const first = tracker.flush(at);
+  observe(tracker, 'b', at + 1);
+  release();
+  await assert.rejects(first, /capacity/);
+  await assert.rejects(tracker.flush(at + HOUR), /capacity/);
+  assert.equal(batches.flat().length, 20000);
+  assert.equal(deadlines.at(-1), at + 1 + 42.5 * HOUR);
+  await tracker.flush(at + 1 + 42.5 * HOUR);
 });
