@@ -14,15 +14,24 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import {
+  assessCiiInputAvailability,
   ciiInputExclusions,
   computeCiiScoreTable,
   outageVerdict,
+  withCiiInputQuietClocks,
 } from '../server/worldmonitor/intelligence/v1/get-risk-scores.ts';
-import { CII_OUTAGE_ASN_NATIONAL_SHARE } from '../server/worldmonitor/intelligence/v1/_risk-config.ts';
+import {
+  CII_OUTAGE_ASN_NATIONAL_SHARE,
+  CII_OUTAGE_SCORED_CAUSES,
+  CII_OUTAGE_WINDOW_MS,
+} from '../server/worldmonitor/intelligence/v1/_risk-config.ts';
+import { assessCiiInputs } from '../api/_cii-input-health.js';
 import {
   ASN_IMPACT_BUDGET_MS,
+  ASN_IMPACT_CAUSES,
   ASN_IMPACT_DEADLINE_MARGIN_MS,
   ASN_IMPACT_MEASURE,
+  ASN_IMPACT_WINDOW_MS,
   asnCountryGroups,
   asnImpactBudgetMs,
   measureAsnImpactsWithinBudget,
@@ -217,7 +226,7 @@ describe('radar-asn-impact: the national impact measure', () => {
 describe('radar-asn-impact: one time budget for the whole impact pass', () => {
   const start = Date.parse('2026-10-20T07:00:00Z');
   const end = Date.parse('2026-10-20T10:00:00Z');
-  const job = { countryCode: 'RU', asns: [41039], startMs: start, endMs: end };
+  const job = { countryCode: 'RU', asns: [41039], cause: 'MILITARY_ACTION', startMs: start, endMs: end };
 
   it('derives the budget from runSeed\'s fetch deadline, leaving the margin', () => {
     assert.equal(asnImpactBudgetMs(undefined, NOW), ASN_IMPACT_BUDGET_MS);
@@ -258,5 +267,106 @@ describe('radar-asn-impact: one time budget for the whole impact pass', () => {
     });
     assert.equal(called, false);
     assert.equal(results[0]!.unknownReason, 'budget');
+  });
+});
+
+// ------------------------------------------------------------------------
+// Round-2 review of 745767739.
+// ------------------------------------------------------------------------
+
+describe('radar-asn-impact: the budget is spent only on ASN outages that can score', () => {
+  const now = Date.parse('2026-10-24T12:00:00Z');
+  const fresh = { countryCode: 'RU', asns: [47541], cause: 'MILITARY_ACTION', startMs: now - 3 * HOUR, endMs: now - HOUR };
+  const old = (i: number, cause: string) => ({ countryCode: 'US', asns: [1000 + i], cause, startMs: now - (2 + i) * DAY, endMs: now - (2 + i) * DAY + HOUR });
+  const slowFast = (ms: number) => (path: string) => new Promise<unknown>((done) => setTimeout(() => done(path.startsWith('/radar/netflows/top/ases')
+    ? { top_0: [{ clientASN: 47541, value: '60' }, { clientASN: 1, value: '40' }] }
+    : series(fresh.startMs - WEEK, fresh.endMs + HOUR, (t) => (t >= fresh.startMs && t < fresh.endMs ? 0 : 1))), ms));
+
+  it('pins the seeder\'s cause and window copies to the CII constants', () => {
+    assert.deepEqual([...ASN_IMPACT_CAUSES].sort(), [...CII_OUTAGE_SCORED_CAUSES].sort());
+    assert.equal(ASN_IMPACT_WINDOW_MS, CII_OUTAGE_WINDOW_MS);
+  });
+
+  it('old power and cable outages cannot push a fresh MILITARY_ACTION outage to budget', async () => {
+    const jobs = [
+      ...Array.from({ length: 6 }, (_, i) => old(i, i % 2 ? 'POWER_OUTAGE' : 'CABLE_CUT')),
+      { ...old(0, 'MILITARY_ACTION'), startMs: now - 10 * DAY, endMs: now - 9 * DAY },
+      fresh,
+    ];
+    // Each request takes 40 ms; two requests measure one job; the budget fits about one job.
+    const results = await measureAsnImpactsWithinBudget(jobs, { getWithTimeout: slowFast(40), budgetMs: 150, nowMs: now, concurrency: 1 });
+    const freshResult = results.at(-1)!;
+    assert.ok(Math.abs(freshResult.nationalImpact! - 0.6) < 1e-9, JSON.stringify(freshResult));
+    for (const r of results.slice(0, 6)) assert.equal(r.unknownReason, 'not measured: cause out of construct');
+    assert.equal(results[6]!.unknownReason, 'not measured: outside the window');
+  });
+
+  it('measures the in-construct, in-window outages newest first', async () => {
+    const order: string[] = [];
+    const get = async (path: string) => { if (path.includes('top/ases')) order.push(path.match(/dateEnd=([^&]+)/)![1]!); throw new Error('stop'); };
+    const older = { ...fresh, startMs: now - 3 * DAY, endMs: now - 2 * DAY };
+    await measureAsnImpactsWithinBudget([older, fresh], { getWithTimeout: get, budgetMs: 1_000, nowMs: now, concurrency: 1 });
+    assert.deepEqual(order.map((d) => Date.parse(d)), [fresh.startMs, older.startMs].map((ms) => Math.floor(ms / (15 * 60 * 1000)) * 15 * 60 * 1000));
+  });
+});
+
+describe('CII ASN outages: an unknown impact degrades the outages input', () => {
+  const unknownRecord = asnOutage(null, { impactUnknownReason: 'HTTP 403' });
+
+  it('reports the outages input degraded, with the reason, when an in-construct ASN outage cannot be measured', () => {
+    const t = table([unknownRecord]);
+    const states = assessCiiInputAvailability([], t.aux, NOW, false);
+    assert.equal(states.outages, 'degraded');
+    const reports = withCiiInputQuietClocks(states, null, NOW, { exclusions: ciiInputExclusions(t.aux, NOW) });
+    assert.equal(reports.outages.state, 'degraded');
+    assert.equal(reports.outages.excluded!.asnImpactUnknown!.samples[0]!.reason, 'HTTP 403');
+    const verdict = assessCiiInputs({ inputs: reports }, NOW);
+    const dead = verdict.dead.find((d: { id: string }) => d.id === 'outages');
+    assert.ok(dead, 'health lists the outages input as dead');
+    assert.equal(dead.state, 'degraded');
+    assert.deepEqual(dead.excluded, ['asnImpactUnknown']);
+  });
+
+  it('stays live or quiet when every unknown ASN outage is out of construct or out of the window', () => {
+    const power = asnOutage(null, { cause: 'POWER_OUTAGE' });
+    const stale = asnOutage(null, { detectedAt: NOW - 20 * DAY, endedAt: NOW - 19 * DAY });
+    assert.equal(assessCiiInputAvailability([], table([power, stale]).aux, NOW, false).outages, 'quiet');
+  });
+
+  it('stays live when a located outage scores beside a measured ASN outage', () => {
+    const t = computeCiiScoreTable({ outages: { outages: [{ ...asnOutage(0.1), countryCode: 'IQ', description: 'protests' }], asnOutages: [asnOutage(0.1)] } }, { nowMs: NOW, iranEventsEnabled: true });
+    assert.equal(assessCiiInputAvailability([], t.aux, NOW, false).outages, 'live');
+  });
+});
+
+describe('radar-asn-impact: requests and baselines that real Radar data broke', () => {
+  it('never asks Radar for data after now: dateEnd before now, or Radar answers 400', async () => {
+    const now = Date.parse('2026-10-24T16:47:41Z');
+    const start = Date.parse('2026-10-24T13:00:00Z');
+    const seen: number[] = [];
+    const get = async (path: string) => {
+      const dateEnd = Date.parse(decodeURIComponent(path.match(/dateEnd=([^&]+)/)![1]!));
+      seen.push(dateEnd);
+      if (dateEnd >= now) throw new Error('HTTP 400 Must be before now (utc)');
+      return path.includes('top/ases')
+        ? { top_0: [{ clientASN: 47541, value: '60' }, { clientASN: 1, value: '40' }] }
+        : series(start - WEEK, Math.floor((now - 60_000) / (15 * 60_000)) * 15 * 60_000, (t) => (t >= start ? 0 : 1));
+    };
+    const m = await measureAsnNationalImpact({ get, countryCode: 'RU', asns: [47541], startMs: start, endMs: 0, nowMs: now });
+    assert.ok(seen.every((d) => d < now), JSON.stringify(seen.map((d) => new Date(d).toISOString())));
+    assert.ok(Math.abs(m.nationalImpact! - 0.6) < 1e-9, JSON.stringify(m));
+  });
+
+  it('keeps the baseline before the outage when it lasts more than a week', async () => {
+    // Half down for 21 days. Comparing days 8-21 with days 1-14 (both half
+    // down) reads no drop there; the baseline must stay in the week before the
+    // outage began, so the drop is 50% throughout and the impact 0.6 x 0.5.
+    const start = Date.parse('2026-09-29T00:00:00Z');
+    const end = Date.parse('2026-10-20T00:00:00Z');
+    const get = async (path: string) => (path.includes('top/ases')
+      ? { top_0: [{ clientASN: 47541, value: '60' }, { clientASN: 1, value: '40' }] }
+      : series(start - WEEK, end + HOUR, (t) => (t >= start && t < end ? 0.5 : 1), HOUR));
+    const m = await measureAsnNationalImpact({ get, countryCode: 'RU', asns: [47541], startMs: start, endMs: end, nowMs: end + DAY });
+    assert.ok(Math.abs(m.nationalImpact! - 0.3) < 1e-9, JSON.stringify(m));
   });
 });

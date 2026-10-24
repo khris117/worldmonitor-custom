@@ -7,6 +7,6 @@
   "b8-asn-outages": {
     "rule": "An outage Radar files against networks (ASNs) and no country counts for the country Radar places the ASNs in only when its measured national impact (the ASNs' share of the country's NetFlows traffic in the week before x their traffic drop during the outage) exceeds CII_OUTAGE_ASN_NATIONAL_SHARE = 0.40; below it, or unmeasurable, it is excluded and reported (asnBelowNationalShare, asnImpactUnknown).",
     "fixtureMovers": [],
-    "note": "No fixture carries asnOutages, so no fixture country moves. Over the year to 2026-10-23, no ASN outage cleared 40%: the four MILITARY_ACTION ones (DON-FTTH in RU three times, the VKontakte SPB data centre) measured 0.1% each and are excluded; the largest impact was 20.9% (Digicel Haiti, cause UNKNOWN). Live scores are unchanged."
+    "note": "No fixture carries asnOutages, so no fixture country moves. Over the year to 2026-10-23, no ASN outage cleared 40%: the four MILITARY_ACTION ones (DON-FTTH in RU three times, the VKontakte SPB data centre) measured 0.1% each and are excluded; the largest impact was 20.9% (Digicel Haiti, cause UNKNOWN). Live scores are unchanged. Sensitivity: any threshold from 0.30 to 0.50 gives the same verdicts on the year, because no ASN outage of any cause measured between 0.209 and 0.50."
   }
 }

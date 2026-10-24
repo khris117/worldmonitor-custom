@@ -154,7 +154,8 @@ async function fetchOutages({ fetchDeadlineAtMs } = {}) {
   // slow NetFlows API never holds back the outages above.
   const impacts = await measureAsnImpactsWithinBudget(
     asnGroups.map(({ raw, group }) => ({
-      countryCode: group.countryCode, asns: group.asns, startMs: toEpochMs(raw.startDate), endMs: toEpochMs(raw.endDate),
+      countryCode: group.countryCode, asns: group.asns, cause: raw.outage?.outageCause || '',
+      startMs: toEpochMs(raw.startDate), endMs: toEpochMs(raw.endDate),
     })),
     {
       getWithTimeout: (path, ms) => radarResult(path, token, ms),

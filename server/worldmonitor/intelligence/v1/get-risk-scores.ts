@@ -1384,11 +1384,12 @@ export const CII_HEALTH_INPUT_IDS = [
 export type CiiInputId = typeof CII_HEALTH_INPUT_IDS[number];
 /** `unusable`: present, but none of its records map to a country. */
 type CiiInputRead = 'present' | 'missing' | 'unusable' | 'not_configured';
-export type CiiInputState = 'live' | 'quiet' | 'missing' | 'unusable' | 'not_configured';
+/** `degraded`: present and read, but some in-construct records could not be judged (an ASN outage with an unknown impact). */
+export type CiiInputState = 'live' | 'quiet' | 'missing' | 'unusable' | 'not_configured' | 'degraded';
 /** Records one construct rule removed from scoring: how many, and up to 5 to audit. */
 export interface CiiInputExclusion {
   count: number;
-  samples: Array<{ id: string; title: string; description: string; nationalImpact?: number | null }>;
+  samples: Array<{ id: string; title: string; description: string; nationalImpact?: number | null; reason?: string }>;
 }
 /** `excluded`: records a construct rule removed from scoring, by rule (see ciiInputExclusions). */
 export interface CiiInputReport { state: CiiInputState; quietSince?: number; excluded?: Record<string, CiiInputExclusion> }
@@ -1456,6 +1457,12 @@ export function assessCiiInputAvailability(
       states[id] = fingerprint([], { ...emptyAuxiliarySources(), [field]: aux[field] }) !== baseline ? 'live' : 'quiet';
     }
   }
+  // An in-construct, in-window ASN outage whose national impact is unknown
+  // could have scored: the input cannot be read as calm (unknown is not calm).
+  if (states.outages !== 'missing' && states.outages !== 'unusable'
+    && aux.outages.some((o) => outageVerdict(o, nowMs) === 'asnImpactUnknown')) {
+    states.outages = 'degraded';
+  }
   return states;
 }
 
@@ -1479,6 +1486,7 @@ export function ciiInputExclusions(aux: AuxiliarySources, nowMs: number): CiiInp
     if (entry.samples.length < CII_EXCLUSION_SAMPLES) {
       const sample: CiiInputExclusion['samples'][number] = { id: text(o.id), title: text(o.title), description: text(o.description) };
       if (o.attribution === 'asn') sample.nationalImpact = o.nationalImpact == null || !Number.isFinite(Number(o.nationalImpact)) ? null : Number(o.nationalImpact);
+      if (verdict === 'asnImpactUnknown') sample.reason = text(o.impactUnknownReason || 'impact not measured');
       entry.samples.push(sample);
     }
   }
