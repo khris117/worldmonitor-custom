@@ -287,7 +287,7 @@ their usual level. They never change the score.
 | Airports | US–Iran (Iran); Israel–Iran; Iran–GCC (GCC members and Iran); Saudi Arabia–Yemen; China–Taiwan (Taiwan); Russia–Ukraine (Russia) | `aviation:notam:closures:v2`, `aviation:delays:intl:v3` | Monitored airports closed (a NOTAM closure, or at least 80% of due flights cancelled), with most flights cancelled (at least 50%), or restricted by NOTAM | Mean daily peak in the evidence history; needs 7 days |
 | Military aircraft | See below | `military:surges:history:v1` | One operator's aircraft in the pair's theater, in the latest snapshot | Mean of the earlier snapshots from the same ADS-B feed, about six hours; needs 12 snapshots |
 | Chinese military aircraft, Chinese navy ships near Taiwan | China–Taiwan | `military:cross-strait-activity-bootstrap:v1` | Taiwan's Ministry of National Defense daily report, if no more than two days old | Its 90-day median, once that window has enough reporting days |
-| New US sanctions | US–Iran (Iran); US–Russia (Russia); US–China (China) | `sanctions:changes:v1` | Additions to the SDN, Consolidated and Commerce CSL lists naming the country in the last 7 days | Weekly rate over the earlier weeks the US lists were observed; needs 21 days |
+| New US sanctions | US–Iran (Iran); US–Russia (Russia); US–China (China) | `sanctions:changes:v1` | Additions to the SDN, Consolidated and Commerce CSL lists naming the country in the last 7 days | Each list's weekly rate over the earlier weeks its changes were recorded, summed over the lists; needs 21 days |
 
 Military aircraft read one operator in one region, so an aircraft is counted
 once where theaters overlap: US–Iran counts US aircraft and Israel–Iran Israeli
@@ -309,6 +309,14 @@ Limitations:
   interceptions and claims. Saudi Arabia belongs to both Iran–GCC and Saudi
   Arabia–Yemen, so a strike on Riyadh counts for both. The feed covers the
   Middle East only.
+- The strike feed keeps only its newest 400 events. When all of them fall
+  inside the 72 hours, older strikes in the window are missing, so the strike
+  reading is withheld until the feed reaches back past the window.
+- A sanctions list can be skipped for a while (unavailable, or a suspicious
+  snapshot held back). Its changes from that time are never recorded, so that
+  time is left out of that list's usual rate. A retained gap keeps the last
+  snapshot, and the list's changes are recorded when it returns, so its time
+  stays in.
 - The aircraft counts see only aircraft that broadcast ADS-B. No Chinese,
   Russian or Saudi military aircraft appeared in the six hours of snapshots
   checked on 2026-10-25, so those readings are usually zero.
@@ -321,8 +329,9 @@ The derived-signals bundle runs `scripts/seed-tension-evidence.mjs` every 15
 minutes. It writes `intelligence:tension-evidence:v1` as
 `{ updatedAt, live, days }`: `live` holds every pair's current readings, and
 `days` keeps one value per pair, reading and UTC day for 90 days (the daily
-peak for airports and military aircraft, the latest value for the rest). The
-key has a 100-day TTL. Each source must be within its own health budget
+peak for airports and military aircraft, the latest value for the rest).
+Strike days are copied from the tally for every day it still holds, so a
+missed run is repaired. The key has a 100-day TTL. Each source must be within its own health budget
 (strikes 45 minutes, airport delays 90, NOTAM closures 240, military aircraft
 30, Taiwan Strait 720, sanctions 720); a stale or malformed source drops only
 its readings, and a run with no readings at all keeps the last payload. Health

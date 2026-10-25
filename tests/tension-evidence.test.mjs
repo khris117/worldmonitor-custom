@@ -8,6 +8,7 @@ import {
   CHANNELS,
   PAIR_EVIDENCE,
   SOURCES,
+  STRIKE_FEED_CAP,
   STRIKE_SEVERITIES,
   buildEvidence,
   buildEvidencePayload,
@@ -138,7 +139,7 @@ function sanction(op, list, cc, at) {
   };
 }
 
-function sanctionsSources({ earliestDaysAgo = 49, gaps = [] } = {}) {
+function sanctionsSources({ earliestDaysAgo = 49, gaps = [], extra = [] } = {}) {
   const events = [
     sanction('added', 'SDN', ['IR'], NOW - earliestDaysAgo * DAY),
     ...[10, 15, 20, 25, 30].map(d => sanction('added', 'SDN', ['IR'], NOW - Math.min(d, earliestDaysAgo - 1) * DAY)),
@@ -148,6 +149,7 @@ function sanctionsSources({ earliestDaysAgo = 49, gaps = [] } = {}) {
     sanction('removed', 'SDN', ['IR'], NOW - DAY),
     ...[1, 2].map(d => sanction('added', 'CSL-EL', ['CN'], NOW - d * DAY)),
     sanction('added', 'CONSOLIDATED', ['RU'], NOW - DAY),
+    ...extra,
   ].sort((a, b) => a.at - b.at);
   return {
     sanctions: fresh({
@@ -203,6 +205,25 @@ describe('strikes', () => {
     assert.deepEqual(day['2026-10-25'].saudi_arabia_yemen.strikes, 2);
     assert.deepEqual(day['2026-10-24'].israel_iran.strikes, 0);
     assert.deepEqual(day['2026-10-25'].israel_iran.strikes, 4);
+  });
+
+  it('records every day the tally still holds, so a missed run is repaired', () => {
+    const { day } = buildEvidence(strikeSources(), {}, NOW);
+    assert.equal(day['2026-10-21'].saudi_arabia_yemen.strikes, 4);
+    assert.equal(day['2026-10-12'].israel_iran.strikes, 3);
+    assert.equal(day['2026-10-22'].israel_iran.strikes, 0);
+  });
+
+  it('withholds the live count when the feed hit its event cap inside the window', () => {
+    const sources = strikeSources();
+    sources.strikeEvents.data.events = Array.from({ length: STRIKE_FEED_CAP }, (_, i) => strikeEvent('SA', (i + 1) / 10));
+    const { live, day } = buildEvidence(sources, {}, NOW);
+    assert.equal(item(live, 'saudi_arabia_yemen', 'strikes'), undefined, 'older strikes in the window were cut');
+    assert.equal(day['2026-10-24'].saudi_arabia_yemen.strikes, 7, 'the tally is still recorded');
+    sources.strikeEvents.data.events.push(strikeEvent('SA', 80));
+    sources.strikeEvents.data.events = sources.strikeEvents.data.events.slice(-STRIKE_FEED_CAP);
+    assert.ok(item(buildEvidence(sources, {}, NOW).live, 'saudi_arabia_yemen', 'strikes'),
+      'a full feed that reaches past the window is complete');
   });
 
   it('has no baseline until a week of earlier days exists', () => {
@@ -331,13 +352,22 @@ describe('sanctions', () => {
     assert.equal(day['2026-10-24'].usa_iran.sanctions, 1);
   });
 
-  it('leaves time the US lists were not observed out of the usual rate', () => {
+  it('leaves time a list lost its changes out of that list\'s usual rate only', () => {
     const gaps = [
       { list: 'SDN', from: NOW - 35 * DAY, to: NOW - 21 * DAY, reason: 'unavailable' },
       { list: 'sema-ca', from: NOW - 45 * DAY, to: NOW - 40 * DAY, reason: 'unavailable' },
     ];
+    const extra = [sanction('added', 'CSL-EL', ['IR'], NOW - 28 * DAY)];
+    const { live } = buildEvidence(sanctionsSources({ gaps, extra }), {}, NOW);
+    // SDN: 4 designations outside its gap over 4 recorded weeks. CSL-EL kept
+    // publishing during the SDN gap: 1 designation over all 6 weeks.
+    assert.equal(item(live, 'usa_iran', 'sanctions').baseline, 1.17);
+  });
+
+  it('keeps the time of a retained gap, whose changes are recorded when the list returns', () => {
+    const gaps = [{ list: 'SDN', from: NOW - 35 * DAY, to: NOW - 21 * DAY, reason: 'retained' }];
     const { live } = buildEvidence(sanctionsSources({ gaps }), {}, NOW);
-    assert.equal(item(live, 'usa_iran', 'sanctions').baseline, 1.5, 'six designations over four observed weeks');
+    assert.equal(item(live, 'usa_iran', 'sanctions').baseline, 1, 'six designations over six weeks');
   });
 
   it('has no baseline from under three earlier weeks', () => {
@@ -451,6 +481,11 @@ describe('pair registry', () => {
   it('counts live strikes with the severities the daily tally keeps', () => {
     const { PRESSURE_SEVERITIES } = require('../scripts/lib/middle-east-strikes.cjs');
     assert.deepEqual(STRIKE_SEVERITIES, PRESSURE_SEVERITIES);
+  });
+
+  it('knows the strike feed\'s event cap', () => {
+    const { MAX_EVENTS } = require('../scripts/lib/middle-east-strikes.cjs');
+    assert.equal(STRIKE_FEED_CAP, MAX_EVENTS);
   });
 
   it('holds each source to its health budget', () => {

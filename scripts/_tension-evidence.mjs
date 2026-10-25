@@ -130,6 +130,8 @@ const DELAY_STATUS = { FLIGHT_DELAY_TYPE_CLOSURE: 'closed', FLIGHT_DELAY_TYPE_GR
 // The strike tally's severity layout (PRESSURE_SEVERITIES in
 // scripts/lib/middle-east-strikes.cjs); events outside it are not tallied.
 export const STRIKE_SEVERITIES = ['critical', 'high', 'elevated', 'moderate'];
+// The strike feed keeps only its newest MAX_EVENTS events across all countries.
+export const STRIKE_FEED_CAP = 400;
 const STRIKE_WINDOW_MS = 72 * HOUR;
 const STRIKE_WINDOW_DAYS = 3;
 const STRIKE_MIN_PRIOR_DAYS = 7;
@@ -171,8 +173,13 @@ function strikes(sources, _history, nowMs) {
   const tally = usableSource(sources, 'strikeTally', nowMs);
   if (!feed || !tally || !Array.isArray(feed.data.events) || !isRecord(tally.data.days)) return null;
   const windowStart = nowMs - STRIKE_WINDOW_MS;
+  const events = feed.data.events;
+  // A full feed whose oldest event is inside the window has dropped older
+  // strikes from it, so its count would read low in exactly the busy periods.
+  const truncated = events.length >= STRIKE_FEED_CAP
+    && events.every(event => Number.isFinite(event?.timestamp) && event.timestamp >= windowStart);
   const recent = new Map();
-  for (const event of feed.data.events) {
+  for (const event of events) {
     const ts = event?.timestamp;
     if (!Number.isFinite(ts) || ts < windowStart || ts > nowMs + FUTURE_SKEW_MS) continue;
     if (!STRIKE_SEVERITIES.includes(event.severity) || typeof event.countryCode !== 'string') continue;
@@ -188,9 +195,18 @@ function strikes(sources, _history, nowMs) {
   const windowStartDay = utcDay(windowStart);
   const priorDates = Object.keys(tallyDays).filter(date => DATE_RE.test(date) && date < windowStartDay).sort();
   const priorSpan = priorDates.length ? (Date.parse(windowStartDay) - Date.parse(priorDates[0])) / DAY : 0;
+  // Every day the tally still holds is recorded, so a run that was missed or a
+  // later correction upstream is repaired from the tally.
+  const recordDates = new Set([
+    ...Object.keys(tallyDays).filter(date => DATE_RE.test(date) && date <= utcDay(nowMs)),
+    utcDay(nowMs - DAY),
+    utcDay(nowMs),
+  ]);
   const pairs = {};
   const days = {};
   for (const [pairId, { strikes: { countries } }] of pairsWith('strikes')) {
+    for (const date of recordDates) setDay(days, date, pairId, dayCount(date, countries));
+    if (truncated) continue;
     const baseline = priorSpan >= STRIKE_MIN_PRIOR_DAYS
       ? round2(STRIKE_WINDOW_DAYS * sum(priorDates.map(date => dayCount(date, countries))) / priorSpan)
       : null;
@@ -199,7 +215,6 @@ function strikes(sources, _history, nowMs) {
       .filter(entry => entry.n > 0)
       .sort((a, b) => b.n - a.n || a.order - b.order);
     pairs[pairId] = { value: sum(hit.map(entry => entry.n)), baseline, countries: hit.map(entry => entry.cc), airports: [] };
-    for (const date of [utcDay(nowMs - DAY), utcDay(nowMs)]) setDay(days, date, pairId, dayCount(date, countries));
   }
   return { observedAt: Math.min(feed.fetchedAt, tally.fetchedAt), pairs, days };
 }
@@ -328,21 +343,41 @@ function sanctions(sources, _history, nowMs) {
   const firstSeen = Math.min(...events.map(e => e.at), ...gaps.map(g => g.from));
   const truncatedBefore = Number.isFinite(source.data.truncatedBefore) ? source.data.truncatedBefore : -Infinity;
   const priorStart = Math.max(nowMs - SANCTIONS_LOOKBACK_MS, truncatedBefore, firstSeen);
-  const unobserved = mergedSpan(gaps
-    .filter(g => isUsList(g.list))
-    .map(g => [Math.max(g.from, priorStart), Math.min(g.to, weekStart)])
-    .filter(([from, to]) => to > from));
-  const exposure = weekStart - priorStart - unobserved;
+  // Each list's usual rate covers only the time its changes were recorded. A
+  // retained gap keeps the last snapshot, so the list's changes are recorded
+  // when it returns; any other gap skips them for good (_sanctions-changes.mjs).
+  const lostGaps = gaps
+    .filter(g => isUsList(g.list) && g.reason !== 'retained')
+    .map(g => ({ list: g.list, from: Math.max(g.from, priorStart), to: Math.min(g.to, weekStart) }))
+    .filter(g => g.to > g.from);
+  const recorded = list => {
+    const own = lostGaps.filter(g => g.list === list);
+    return {
+      exposure: weekStart - priorStart - mergedSpan(own.map(g => [g.from, g.to])),
+      covers: at => !own.some(g => at >= g.from && at <= g.to),
+    };
+  };
+  const usualRate = named => {
+    if (weekStart - priorStart < SANCTIONS_MIN_PRIOR_MS) return null;
+    let rate = 0;
+    for (const list of new Set(named.map(e => e.list))) {
+      const { exposure, covers } = recorded(list);
+      const prior = named.filter(e => e.list === list && e.at >= priorStart && e.at < weekStart && covers(e.at)).length;
+      if (prior === 0) continue;
+      if (exposure < SANCTIONS_MIN_PRIOR_MS) return null;
+      rate += prior / (exposure / SANCTIONS_WINDOW_MS);
+    }
+    return round2(rate);
+  };
   const today = utcDay(nowMs);
   const yesterday = utcDay(nowMs - DAY);
   const pairs = {};
   const days = {};
   for (const [pairId, { sanctions: { countries } }] of pairsWith('sanctions')) {
     const named = additions.filter(e => countries.some(cc => e.cc.includes(cc)));
-    const prior = named.filter(e => e.at >= priorStart && e.at < weekStart).length;
     pairs[pairId] = {
       value: named.filter(e => e.at >= weekStart).length,
-      baseline: exposure >= SANCTIONS_MIN_PRIOR_MS ? round2(prior / (exposure / SANCTIONS_WINDOW_MS)) : null,
+      baseline: usualRate(named),
       countries: [...countries],
       airports: [],
     };
