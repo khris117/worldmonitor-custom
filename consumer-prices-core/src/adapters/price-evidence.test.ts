@@ -131,6 +131,22 @@ describe('priceEvidenceOnPage', () => {
     }
   });
 
+  it.each(['Pack', 'Packs', 'Pint', 'Pints'])('recognizes Markdown %s quantities without donating price digits', unit => {
+    for (const quantity of [`2 **${unit}**`, `2-${unit}`, `2 | ${unit}`]) {
+      const content = `Product ${quantity}`;
+      expect.soft(priceEvidenceOnPage(2, content)).toBe('unverified');
+      expect.soft(priceEvidenceOnPage(2.5, `${content}\n£1\n.50`)).toBe('unverified');
+      expect.soft(priceEvidenceOnPage(2, `${content}\n£2`)).toBe('verified');
+      expect.soft(priceEvidenceOnPage(2.5, `${content}\n£2\n.50`)).toBe('verified');
+    }
+  });
+
+  it('keeps genuine prices before a Pack size heading', () => {
+    expect(priceEvidenceOnPage(2, 'Milk 2 Pint\nPrice\n£2\n\nPack size\n2 Pint')).toBe('verified');
+    expect(priceEvidenceOnPage(12, 'Eggs 12 Pack\nPrice\nAED12\n\nPack size\n12 Pack')).toBe('verified');
+    expect(priceEvidenceOnPage(2.5, 'Milk 2 Pint\nPrice\n£2\n.50\n\nPack size\n2 Pint')).toBe('verified');
+  });
+
   // Thousands groupings must stay separator-consistent: a comma-grouped whole
   // pairs with a dot decimal and vice versa. "1.234.56" / "1,234,56" are not
   // number renders in any supported locale and must not count as evidence.

@@ -102,6 +102,51 @@ describe('basket quantity window in extraction', () => {
     }
   });
 
+  it.each(fixtures)('does not admit Markdown $size quantities as integer or split prices', async fixture => {
+    const whole = fixture.unit === 'ct' ? 12 : 2;
+    for (const [separator, closing] of [[' **', '**'], ['-', ''], [' | ', '']]) {
+      const content = fixture.name.replace(fixture.size, fixture.size.replace(' ', separator) + closing);
+      for (const price of [whole, whole + 0.5]) {
+        const page = price === whole ? content : `${content}\n${fixture.unit === 'ct' ? 'AED1' : '£1'}\n.50`;
+        const error = await acquire({ ...fixture, price }, fixture.size, fixture.name, page).catch(e => e);
+        expect.soft(error).toBeInstanceOf(SearchTargetError);
+        expect.soft(error.failures).toContainEqual(expect.objectContaining({ reason: 'price-evidence-missing' }));
+      }
+    }
+  });
+
+  it.each(fixtures)('accepts independent prices beside Markdown $size and preserves normalized basis', async fixture => {
+    const whole = fixture.unit === 'ct' ? 12 : 2;
+    for (const [separator, closing] of [[' **', '**'], ['-', ''], [' | ', '']]) {
+      const content = fixture.name.replace(fixture.size, fixture.size.replace(' ', separator) + closing);
+      for (const price of [whole, whole + 0.5]) {
+        const page = `${content}\n${fixture.unit === 'ct' ? 'AED' : '£'}${whole}${price === whole ? '' : '\n.50'}`;
+        const { products } = await acquire({ ...fixture, price }, fixture.size, fixture.name, page);
+        const product = products[0];
+        expect(product.price).toBe(price);
+        expect(product.rawPayload.priceEvidence).toBe('verified');
+        expect(classifyMatchAdmission(product.rawPayload.validator as ValidatorResult).status).toBe('auto');
+        expect(product.rawSizeText).toBe(fixture.size);
+        expect(product.normalizedSize?.baseQuantity).toBeCloseTo(fixture.qty);
+        expect(product.normalizedSize?.baseUnit).toBe(fixture.unit);
+        expect(unitPrice(product.price, product.normalizedSize!)).toBeCloseTo(price / fixture.qty);
+      }
+    }
+  });
+
+  it.each(fixtures)('accepts a genuine price before the Pack size heading for $slug', async fixture => {
+    const price = fixture.unit === 'ct' ? 12 : 2;
+    const page = `${fixture.name}\nPrice\n${fixture.unit === 'ct' ? 'AED12' : '£2'}\n\nPack size\n${fixture.size}`;
+    const { products } = await acquire({ ...fixture, price }, fixture.size, fixture.name, page);
+    const product = products[0];
+    expect(product.price).toBe(price);
+    expect(product.rawPayload.priceEvidence).toBe('verified');
+    expect(classifyMatchAdmission(product.rawPayload.validator as ValidatorResult).status).toBe('auto');
+    expect(product.normalizedSize?.baseQuantity).toBeCloseTo(fixture.qty);
+    expect(product.normalizedSize?.baseUnit).toBe(fixture.unit);
+    expect(unitPrice(price, product.normalizedSize!)).toBeCloseTo(price / fixture.qty);
+  });
+
   it('keeps plural package counts below automatic admission without an observation basis', async () => {
     const { products } = await acquire(fixtures[0], '12 Packs', 'Eggs Fresh 12 Packs');
     expect(products).toHaveLength(1);
