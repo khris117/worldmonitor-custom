@@ -17,10 +17,19 @@ describe('basket quantity window in extraction', () => {
 
   async function acquire(fixture: typeof fixtures[number], size: string | undefined, name = fixture.name) {
     const config = loadRetailerConfig(fixture.slug);
-    config.searchConfig = { ...config.searchConfig!, requireStrictValidator: true, extractionFallback: undefined };
-    const context: AdapterContext = { config, runId: 'retained-quantity', logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } };
-    const extract = vi.fn().mockResolvedValue({ data: { productName: name, price: fixture.price, currency: config.currencyCode, inStock: true, sizeText: size }, pageContent: `${name}\n${config.currencyCode} ${fixture.price}` });
-    const adapter = new SearchAdapter({ search: vi.fn().mockResolvedValue([]) } as unknown as ExaProvider, { extract } as unknown as FirecrawlProvider);
+    config.searchConfig = { ...config.searchConfig!, requireStrictValidator: true, extractionFallback: 'none' };
+    const context: AdapterContext = {
+      config, runId: 'retained-quantity',
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    };
+    const extract = vi.fn().mockResolvedValue({
+      data: { productName: name, price: fixture.price, currency: config.currencyCode, inStock: true, sizeText: size },
+      pageContent: `${name}\n${config.currencyCode} ${fixture.price}`,
+    });
+    const adapter = new SearchAdapter(
+      { search: vi.fn().mockResolvedValue([]) } as unknown as ExaProvider,
+      { extract } as unknown as FirecrawlProvider,
+    );
     const target = (await adapter.discoverTargets(context)).find(t => t.id === fixture.itemId)!;
     expect(target).toBeDefined();
     const result = await adapter.fetchTarget(context, { ...target, url: `${config.baseUrl}/quantity-fixture`, metadata: { ...target.metadata, direct: true } });
@@ -41,7 +50,7 @@ describe('basket quantity window in extraction', () => {
     expect(classifyMatchAdmission(validator).status).toBe('auto');
     expect(product.rawPayload.priceEvidence).toBe('verified');
     const schema = extract.mock.calls[0][1] as ExtractSchema;
-    expect(schema.prompt).toContain('Keep the requested pack count of 1');
+    expect(schema.prompt).toContain(`You are looking for "${product.rawPayload.canonicalName}"`);
   });
 
   it.each(fixtures)('keeps strict missing-size protection for $slug', async fixture => {
