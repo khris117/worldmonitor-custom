@@ -76,7 +76,7 @@ function escapeRegExp(s: string): string {
  */
 // Pack size is a field heading; Markdown markers can close a quantity unit.
 const UNIT_TOKEN = String.raw`(?:%|(?:g|gm|gr|kg|mg|ml|cl|l|ltr|litre|liter|oz|lb|lbs|pcs|pc|pk|ct|pints?|packs?(?![\s*_\x60]*size(?![a-z0-9])))(?![a-z0-9]))`;
-const UNIT_SUFFIX = String.raw`\s*(?:[-|]\s*)?[*_\x60]*\s*${UNIT_TOKEN}`;
+const UNIT_SUFFIX = String.raw`\s*(?:[-|]\s*)?(?:[*_\x60]+\s*)?${UNIT_TOKEN}`;
 
 /** Digit-boundary guard: `4.60` must not match inside `34.601`, and a size or
  * percentage token (`400g`, `4.6%`) is not price evidence. */
