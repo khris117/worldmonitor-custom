@@ -174,17 +174,20 @@ same blob at the same moment took 12-62s on PR #9626. The job now sets
   shards measured 218/209/287/277 test-seconds (per-spec medians of three main
   runs). PR #9658 replaced the fixed 8s settle waits in
   `dashboard-news-request-budget` with the `wmInitialDataReady` flag plus a
-  1.5s quiet window. A first split measured 216/283/260/220 and 196/299/249/223
-  on two CI runs, with the slowest shard's Playwright wall at 150s and 162s.
-  The final split was balanced from the per-spec averages of those two runs
-  (971 test-seconds, about 243 per shard).
+  1.5s quiet window. Single runs misled: a spec's time moved up to 50%
+  between runs (`country-brief` 151-205s) because each shard gets its own
+  runner, so one run's totals mostly show which runners were fast. The final
+  split uses each spec's median over six runs (three on main, three on the
+  PR): 237/238/238/240 of 953 test-seconds.
 - **Removing sleeps does not free the seconds they held on CI.** Locally the
   flag set 0.3-0.6s after the first digest. On a runner each 8s wait saved only
-  1-5s, which puts the flag about 5-6s after the first digest (inferred from
+  1-5s, which puts the flag up to about 5.5s after the first digest (inferred from
   per-test times, not logged). The spec's other tests got slower (3.9s to
   6.5s, 3.6s to 7.6s) because the sleeps had left CPU idle for the second
-  worker. Test-seconds only add up across specs that keep the CPU busy, so
-  measure a rebalance on CI rather than trusting the sum.
+  worker. Over six runs the spec's median did not move (162s before, 157-172s
+  after) and the smoke total stayed at about 953 test-seconds. On a
+  CPU-bound runner a sleep overlaps the other worker's work, so removing it
+  saves local time but not CI time. Only balance changes the CI wall here.
 - **Wait on a readiness signal, not a fixed sleep, to prove a negative.**
   Before shortening a "no second request" wait, find what would cause the
   second request and whether a flag already marks its end. Then remove the
