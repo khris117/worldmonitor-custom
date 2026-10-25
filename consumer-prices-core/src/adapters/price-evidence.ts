@@ -74,7 +74,7 @@ function escapeRegExp(s: string): string {
  * "455g"). The list is deliberately unit-ish only: currency codes (AED, SAR,
  * INR…) never collide with it, so genuine price renders stay matchable.
  */
-const UNIT_SUFFIX = String.raw`\s?(?:%|(?:g|gm|gr|kg|mg|ml|cl|l|ltr|litre|liter|oz|lb|lbs|pcs|pc|pk|ct|packs?|pints?)\b)`;
+const UNIT_SUFFIX = String.raw`\s*(?:%|(?:g|gm|gr|kg|mg|ml|cl|l|ltr|litre|liter|oz|lb|lbs|pcs|pc|pk|ct|packs?|pints?)\b)`;
 
 /** Digit-boundary guard: `4.60` must not match inside `34.601`, and a size or
  * percentage token (`400g`, `4.6%`) is not price evidence. */
@@ -146,7 +146,7 @@ export function priceEvidenceOnPage(price: number, content: string | null | unde
     const sepClass = seps.length === 2 ? '[.,]' : `[${escapeRegExp(seps[0])}]`;
     for (const f of fracForms) {
       const splitPattern = new RegExp(
-        `(?<![\\d.,])${escapeRegExp(w)}(?!\\d|[.,]\\d)[\\s\\S]{0,${SPLIT_ADJACENCY_WINDOW}}?(?<!\\d)${sepClass}${escapeRegExp(f)}(?!\\d|${UNIT_SUFFIX})`,
+        `(?<![\\d.,])${escapeRegExp(w)}(?!\\d|[.,]\\d|${UNIT_SUFFIX})[\\s\\S]{0,${SPLIT_ADJACENCY_WINDOW}}?(?<!\\d)${sepClass}${escapeRegExp(f)}(?!\\d|${UNIT_SUFFIX})`,
         'i',
       );
       if (splitPattern.test(content)) return 'verified';
