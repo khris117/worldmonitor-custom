@@ -113,6 +113,14 @@ describe('priceEvidenceOnPage', () => {
     expect(priceEvidenceOnPage(49.79, 'now 49.79 AED')).toBe('verified');
   });
 
+  it.each(['Pack', 'Packs', 'Pint', 'Pints'])('does not verify a price from a contextual %s quantity', unit => {
+    expect(priceEvidenceOnPage(2, `Product 2 ${unit}`)).toBe('unverified');
+  });
+
+  it.each(['Pack', 'Packs', 'Pint', 'Pints'])('still verifies a separate price beside a %s quantity', unit => {
+    expect(priceEvidenceOnPage(2, `Product 2 ${unit}\n£2`)).toBe('verified');
+  });
+
   // Thousands groupings must stay separator-consistent: a comma-grouped whole
   // pairs with a dot decimal and vice versa. "1.234.56" / "1,234,56" are not
   // number renders in any supported locale and must not count as evidence.

@@ -15,7 +15,7 @@ describe('basket quantity window in extraction', () => {
     { slug: 'morrisons_gb', basket: 'essentials_gb', itemId: 'milk_1l', name: 'Morrisons British Semi Skimmed Milk 2 Pint', size: '2 Pint', price: 1.2, qty: 1136.5225, unit: 'ml' },
   ];
 
-  async function acquire(fixture: typeof fixtures[number], size: string | undefined, name = fixture.name) {
+  async function acquire(fixture: typeof fixtures[number], size: string | undefined, name = fixture.name, sourceContent?: string) {
     const config = loadRetailerConfig(fixture.slug);
     config.searchConfig = { ...config.searchConfig!, requireStrictValidator: true, extractionFallback: 'none' };
     const context: AdapterContext = {
@@ -24,7 +24,7 @@ describe('basket quantity window in extraction', () => {
     };
     const extract = vi.fn().mockResolvedValue({
       data: { productName: name, price: fixture.price, currency: config.currencyCode, inStock: true, sizeText: size },
-      pageContent: `${name}\n${config.currencyCode} ${fixture.price}`,
+      pageContent: sourceContent ?? `${name}\n${config.currencyCode} ${fixture.price}`,
     });
     const adapter = new SearchAdapter(
       { search: vi.fn().mockResolvedValue([]) } as unknown as ExaProvider,
@@ -51,6 +51,22 @@ describe('basket quantity window in extraction', () => {
     expect(product.rawPayload.priceEvidence).toBe('verified');
     const schema = extract.mock.calls[0][1] as ExtractSchema;
     expect(schema.prompt).toContain(`You are looking for "${product.rawPayload.canonicalName}"`);
+  });
+
+  it.each(fixtures)('requires a separate price beside the supported $size quantity', async fixture => {
+    const pricedFixture = { ...fixture, price: fixture.unit === 'ct' ? 12 : 2 };
+    const error = await acquire(pricedFixture, fixture.size, fixture.name, fixture.name).catch(e => e);
+    expect(error).toBeInstanceOf(SearchTargetError);
+    expect(error.failures).toContainEqual(expect.objectContaining({ reason: 'price-evidence-missing' }));
+  });
+
+  it.each(fixtures)('accepts a separately rendered price equal to the $size quantity', async fixture => {
+    const price = fixture.unit === 'ct' ? 12 : 2;
+    const priceText = fixture.unit === 'ct' ? 'AED12' : '£2';
+    const { products } = await acquire({ ...fixture, price }, fixture.size, fixture.name, `${fixture.name}\n${priceText}`);
+    expect(products[0].price).toBe(price);
+    expect(products[0].rawPayload.priceEvidence).toBe('verified');
+    expect(classifyMatchAdmission(products[0].rawPayload.validator as ValidatorResult).status).toBe('auto');
   });
 
   it('keeps plural package counts below automatic admission without an observation basis', async () => {
