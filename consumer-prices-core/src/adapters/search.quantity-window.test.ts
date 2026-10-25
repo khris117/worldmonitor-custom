@@ -147,6 +147,19 @@ describe('basket quantity window in extraction', () => {
     expect(unitPrice(price, product.normalizedSize!)).toBeCloseTo(price / fixture.qty);
   });
 
+  it('preserves automatic admission of an existing metric product before a Pack size heading', async () => {
+    const fixture = { ...fixtures[1], name: 'Morrisons British Semi Skimmed Milk 1L', size: '1L', price: 3, qty: 1000 };
+    const page = `${fixture.name}\nPrice\n£3\n\nPack size\n1L`;
+    const { products } = await acquire(fixture, fixture.size, fixture.name, page);
+    const product = products[0];
+    expect(product.price).toBe(3);
+    expect(product.rawPayload.priceEvidence).toBe('verified');
+    expect(classifyMatchAdmission(product.rawPayload.validator as ValidatorResult).status).toBe('auto');
+    expect(product.normalizedSize?.baseQuantity).toBe(1000);
+    expect(product.normalizedSize?.baseUnit).toBe('ml');
+    expect(unitPrice(product.price, product.normalizedSize!)).toBe(0.003);
+  });
+
   it('keeps plural package counts below automatic admission without an observation basis', async () => {
     const { products } = await acquire(fixtures[0], '12 Packs', 'Eggs Fresh 12 Packs');
     expect(products).toHaveLength(1);
