@@ -14699,6 +14699,14 @@ a.prediction-link:hover {
   color: var(--text-dim);
 }
 
+.pizzint-tension-evidence {
+  padding: 0 0 4px;
+  font-size: calc(10px * var(--wm-panel-effective-scale, 1));
+  line-height: 1.35;
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
 .pizzint-footer {
   display: flex;
   flex-wrap: wrap;
