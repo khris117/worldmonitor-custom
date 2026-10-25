@@ -155,7 +155,7 @@ describe('DeckGLMap wiring', () => {
 
   it('routes every deck error through the loop recovery', () => {
     const onError = src.slice(src.indexOf('onError: (error: Error) => {'));
-    assert.match(onError.slice(0, 400), /this\.deckLoopRecovery\(error\)/);
+    assert.match(onError.slice(0, onError.indexOf('\n    };')), /this\.deckLoopRecovery\(error\)/);
   });
 
   it('falls back through the fatal-error path when restarts run out', () => {
