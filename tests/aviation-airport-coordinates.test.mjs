@@ -62,7 +62,7 @@ describe('aviation airport coordinates', () => {
     const byIata = (iata) => payload.alerts.find((a) => a.iata === iata);
     assert.equal(byIata('IKA').severity, 'FLIGHT_DELAY_SEVERITY_NORMAL');
     assert.equal(byIata('IKA').source, 'FLIGHT_DELAY_SOURCE_NOTAM');
-    assert.equal(byIata('IKA').reason, 'Open: no closure NOTAM (no delay data)');
+    assert.equal(byIata('IKA').reason, 'Open');
     assert.equal(byIata('JED').severity, 'FLIGHT_DELAY_SEVERITY_SEVERE');
     assert.equal(byIata('OSL').severity, 'FLIGHT_DELAY_SEVERITY_UNKNOWN', 'nothing in the feed for Oslo');
   });

@@ -16,7 +16,7 @@ afterEach(() => { document.body.innerHTML = ''; });
 const row = { iata: 'IKA', icao: 'OIIE', name: 'Imam Khomeini International', avgDelayMinutes: 0, closureStatus: false };
 
 it.each([
-  ['notam', 'normal', 'Open, no delay data'],
+  ['notam', 'normal', 'Open'],
   ['aviationstack', 'normal', 'Normal ops'],
 ] as const)('an ops row sourced to %s reads "%s / %s"', async (source, severity, text) => {
   summaries.rows = [{ ...row, source, severity }];

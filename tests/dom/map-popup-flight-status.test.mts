@@ -24,7 +24,7 @@ function title(delay: AirportDelayAlert): string {
 }
 
 it.each([
-  ['a NOTAM-only open airport', { source: 'notam', reason: 'Open: no closure NOTAM (no delay data)' }, 'IKA - OPEN'],
+  ['a NOTAM-only open airport', { source: 'notam', reason: 'Open' }, 'IKA - OPEN'],
   ['a normal airport with delay telemetry', {}, 'IKA - NORMAL OPERATIONS'],
   ['an airport with no coverage', { severity: 'unknown', source: 'unspecified' }, 'IKA - Coverage unavailable'],
   ['an airport with delays', { severity: 'major' }, 'IKA - DELAYS REPORTED'],

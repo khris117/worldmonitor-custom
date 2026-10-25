@@ -269,7 +269,7 @@ describe('getAirportOpsSummary — coverage gating (#7106)', () => {
     const saw = summaryFor(response, 'SAW');
     assert.equal(saw.severity, 'FLIGHT_DELAY_SEVERITY_NORMAL');
     assert.equal(saw.source, 'notam');
-    assert.deepEqual(saw.topDelayReasons, ['Open: no closure NOTAM (no delay data)']);
+    assert.deepEqual(saw.topDelayReasons, ['Open']);
     assert.equal(summaryFor(response, 'ESB').severity, 'FLIGHT_DELAY_SEVERITY_SEVERE');
     assert.equal(summaryFor(response, 'ADB').severity, 'FLIGHT_DELAY_SEVERITY_UNKNOWN', 'no NOTAMs in the feed: still unknown');
   });

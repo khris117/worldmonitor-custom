@@ -418,7 +418,7 @@ export function buildNotamAlert(
   };
 }
 
-export const NOTAM_OPEN_REASON = 'Open: no closure NOTAM (no delay data)';
+export const NOTAM_OPEN_REASON = 'Open';
 
 /** An airport the NOTAM feed covers that has no closure or restriction NOTAM. */
 export function buildNotamOpenAlert(airport: MonitoredAirport): AirportDelayAlert {

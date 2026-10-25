@@ -236,7 +236,7 @@ describe('listAirportDelays handler — coverage gating (#3707)', () => {
     const open = resp.alerts.find(a => a.iata === NOTAM_ONLY_SAMPLE);
     assert.equal(open.severity, 'FLIGHT_DELAY_SEVERITY_NORMAL');
     assert.equal(open.source, 'FLIGHT_DELAY_SOURCE_NOTAM');
-    assert.equal(open.reason, 'Open: no closure NOTAM (no delay data)');
+    assert.equal(open.reason, 'Open');
     assert.equal(resp.alerts.find(a => a.iata === 'JED').severity, 'FLIGHT_DELAY_SEVERITY_SEVERE');
     // The feed carried nothing for Oslo, so Oslo stays UNKNOWN.
     assert.equal(resp.alerts.find(a => a.iata === 'OSL').severity, 'FLIGHT_DELAY_SEVERITY_UNKNOWN');

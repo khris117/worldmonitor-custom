@@ -1034,7 +1034,7 @@ function buildUnknownOpsAlert(airport) {
   };
 }
 
-const NOTAM_OPEN_REASON = 'Open: no closure NOTAM (no delay data)';
+const NOTAM_OPEN_REASON = 'Open';
 
 // The NOTAM feed carries this airport's NOTAMs and none closes or restricts it.
 function buildNotamOpenAlert(airport) {

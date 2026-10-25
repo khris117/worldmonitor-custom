@@ -136,7 +136,7 @@ async function executeIntent(intent: Intent): Promise<CommandResult> {
             // A NOTAM-sourced row only knows the airport is open, not its delays.
             const suffix = s.severity === 'unknown'
                 ? ''
-                : `<span>${s.avgDelayMinutes > 0 ? `+${s.avgDelayMinutes}m delay` : s.source === 'notam' ? 'Open, no delay data' : 'Normal ops'}</span>`;
+                : `<span>${s.avgDelayMinutes > 0 ? `+${s.avgDelayMinutes}m delay` : s.source === 'notam' ? 'Open' : 'Normal ops'}</span>`;
             return `
       <div class="cmd-row">
         <strong>${escapeHtml(s.iata)}</strong>
