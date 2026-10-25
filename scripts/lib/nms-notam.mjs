@@ -180,14 +180,16 @@ export function compactFeature(feature, nowMs) {
   if (cancelledAt !== null && cancelledAt <= nowMs) return null;
   const geo = cls.airspace ? compactGeometry(feature.geometry, notam) : null;
   // An airspace NOTAM with no position can still be an airport closure; drop
-  // only the airspace half.
-  if (cls.airspace && !geo) delete cls.airspace;
+  // only the airspace half. An airspace closure is kept without geometry:
+  // buildAirspace cannot draw it, but coveredLocations needs it to close the
+  // airports in its FIR.
+  if (cls.airspace && !geo && cls.airspace !== 'closure') delete cls.airspace;
   if (!cls.airport && !cls.airspace) return null;
   const location = upper(notam.icaoLocation || notam.location);
   return {
     id: notam.id,
     ...(cls.airport ? { a: cls.airport } : {}),
-    ...(cls.airspace ? { k: cls.airspace, g: geo } : {}),
+    ...(cls.airspace ? { k: cls.airspace, ...(geo ? { g: geo } : {}) } : {}),
     loc: location,
     ...(notam.affectedFir ? { fir: upper(notam.affectedFir) } : {}),
     num: typeof notam.number === 'string' ? notam.number : '',

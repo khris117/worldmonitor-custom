@@ -1793,7 +1793,7 @@ export class MapPopup {
     const delayTypeLabel = delay.severity === 'unknown'
       ? 'Coverage unavailable'
       : delay.severity === 'normal'
-        ? (delay.source === 'notam' ? 'OPEN' : 'NORMAL OPERATIONS')
+        ? (delay.source === 'notam' ? t('popups.flight.open') : t('popups.flight.normalOperations'))
         : (delayTypeLabels[delay.delayType] || t('popups.flight.delays'));
     const icon = delay.severity === 'unknown'
       ? '❔'

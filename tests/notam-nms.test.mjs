@@ -204,6 +204,18 @@ describe('compactFeature', () => {
     const f = feature('tfr_fdc', { coordinates: undefined }, { type: 'GeometryCollection', geometries: [] });
     assert.equal(compactFeature(f, NOW), null);
   });
+
+  // The map cannot draw it, but it still closes the airports in its FIR.
+  it('keeps an airspace closure with no position, for coverage but not for the map', () => {
+    const f = feature('tfr_fdc', { id: 'fir-clsd', coordinates: undefined, selectionCode: 'QAFLC', icaoLocation: 'OIIX', location: 'OIIX', affectedFir: 'OIIX', text: 'TEHRAN FIR CLSD' },
+      { type: 'GeometryCollection', geometries: [] });
+    const rec = compactFeature(f, NOW);
+    assert.equal(rec?.k, 'closure');
+    assert.equal(rec.g, undefined);
+    const items = { [rec.id]: rec };
+    assert.deepEqual(buildAirspace(items, NOW), [], 'nothing to draw');
+    assert.deepEqual(coveredLocations({ OIIE: 'OIIX', OEJN: 'OEJD' }, items, NOW), ['OEJN']);
+  });
 });
 
 describe('parseQCoordinates', () => {
