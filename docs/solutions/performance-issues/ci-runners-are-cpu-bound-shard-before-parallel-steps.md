@@ -170,11 +170,20 @@ same blob at the same moment took 12-62s on PR #9626. The job now sets
 - **Before adding workers or a background service, sample CPU during the
   step.** If the runner is above about 80% busy, add a shard instead.
 - **Rebalance smoke shards from measured durations** when a spec grows. The
-  list reporter's per-test seconds are the input. By October 2026 the specs
-  had grown to 218/209/287/277 test-seconds. Replacing the fixed 8s settle
-  waits in `dashboard-news-request-budget` with the `wmInitialDataReady` flag
-  plus a 1.5s quiet window, then moving three specs, brought the slowest
-  shard to about 245.
+  list reporter's per-test seconds are the input. By October 2026 the four
+  shards measured 218/209/287/277 test-seconds (per-spec medians of three main
+  runs). PR #9658 replaced the fixed 8s settle waits in
+  `dashboard-news-request-budget` with the `wmInitialDataReady` flag plus a
+  1.5s quiet window and moved three specs. On its first CI run the shards
+  measured 216/283/260/220, and the slowest shard's Playwright wall fell from
+  162-168s to 150s.
+- **Removing sleeps does not free the seconds they held on CI.** Locally the
+  flag set 0.3-0.6s after the first digest. On a runner each 8s wait saved only
+  1-5s, which puts the flag about 5-6s after the first digest (inferred from
+  per-test times, not logged). The spec's other tests got slower (3.9s to
+  6.5s, 3.6s to 7.6s) because the sleeps had left CPU idle for the second
+  worker. Test-seconds only add up across specs that keep the CPU busy, so
+  measure a rebalance on CI rather than trusting the sum.
 - **Wait on a readiness signal, not a fixed sleep, to prove a negative.**
   Before shortening a "no second request" wait, find what would cause the
   second request and whether a flag already marks its end. Then remove the
