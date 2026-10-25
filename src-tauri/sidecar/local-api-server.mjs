@@ -207,16 +207,21 @@ function registerSidecarAllowedPrivateFetchOrigins(port, extraOrigins = []) {
   };
 }
 
+function isConfiguredOllamaOrigin(url) {
+  if (!process.env.OLLAMA_API_URL) return false;
+  try {
+    return url.origin === new URL(process.env.OLLAMA_API_URL).origin;
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedPrivateSidecarFetch(url) {
   if (sidecarAllowedPrivateFetchOrigins.has(url.origin)) return true;
   // Desktop users can change Ollama settings without restarting the sidecar.
   // Trust only the current configured origin, never an address from a request.
-  if (process.env.LOCAL_API_MODE === 'tauri-sidecar' && process.env.OLLAMA_API_URL) {
-    try {
-      return url.origin === new URL(process.env.OLLAMA_API_URL).origin;
-    } catch { /* invalid configuration grants no private-network access */ }
-  }
-  return false;
+  // An invalid configuration grants no private-network access.
+  return process.env.LOCAL_API_MODE === 'tauri-sidecar' && isConfiguredOllamaOrigin(url);
 }
 
 async function assertSafeSidecarFetchUrl(url) {
@@ -307,11 +312,15 @@ globalThis.fetch = async function ipv4Fetch(input, init) {
       req.on('close', () => settle(reject, new Error('request closed before completion')));
       // Catches a peer that accepts the connection and then goes silent
       // forever (no error, no close, no data) -- the only stall shape none
-      // of the listeners above ever observe.
-      req.setTimeout(_upstreamIdleTimeoutMs, () => {
-        req.destroy();
-        settle(reject, new Error('upstream request idle-timed out'));
-      });
+      // of the listeners above ever observe. The configured Ollama server sends
+      // nothing until a non-streaming completion ends, so there silence
+      // is inference, and the caller's own signal is the deadline.
+      if (!(init?.signal && isConfiguredOllamaOrigin(url))) {
+        req.setTimeout(_upstreamIdleTimeoutMs, () => {
+          req.destroy();
+          settle(reject, new Error('upstream request idle-timed out'));
+        });
+      }
       if (init?.signal) {
         init.signal.addEventListener('abort', () => { req.destroy(); settle(reject, new Error('aborted by signal')); });
       }
