@@ -141,6 +141,24 @@ describe('deck loop recovery (#9653)', () => {
     assert.deepEqual(giveUps, []);
   });
 
+  it('gives up with the restart error when the restart itself throws', () => {
+    const h = harness();
+    const giveUps: string[] = [];
+    const onError = createDeckLoopRecovery({
+      hasPendingFrame: () => h.provider.hasPendingFrame(),
+      isAlive: () => true,
+      restart: () => { throw new Error('addControl failed'); },
+      giveUp: (error) => giveUps.push(error.message),
+      maxRestarts: 2,
+      windowMs: 60_000,
+      now: h.now,
+      defer: h.defer,
+    });
+    onError(new Error('frame failed'));
+    h.tick();
+    assert.deepEqual(giveUps, ['addControl failed']);
+  });
+
   it('does nothing once the map is gone', () => {
     const { h, loop, restarts, giveUps } = setup({ alive: false });
     loop.failOnce(new Error('late'));
@@ -156,6 +174,10 @@ describe('DeckGLMap wiring', () => {
   it('routes every deck error through the loop recovery', () => {
     const onError = src.slice(src.indexOf('onError: (error: Error) => {'));
     assert.match(onError.slice(0, onError.indexOf('\n    };')), /this\.deckLoopRecovery\(error\)/);
+  });
+
+  it('claims its Sentry report so vendor-stack filters keep it', () => {
+    assert.match(src, /kind: 'deck_loop_stopped'/);
   });
 
   it('falls back through the fatal-error path when restarts run out', () => {
