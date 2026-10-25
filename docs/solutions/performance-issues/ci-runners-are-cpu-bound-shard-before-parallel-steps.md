@@ -170,7 +170,16 @@ same blob at the same moment took 12-62s on PR #9626. The job now sets
 - **Before adding workers or a background service, sample CPU during the
   step.** If the runner is above about 80% busy, add a shard instead.
 - **Rebalance smoke shards from measured durations** when a spec grows. The
-  list reporter's per-test seconds are the input.
+  list reporter's per-test seconds are the input. By October 2026 the specs
+  had grown to 218/209/287/277 test-seconds. Replacing the fixed 8s settle
+  waits in `dashboard-news-request-budget` with the `wmInitialDataReady` flag
+  plus a 1.5s quiet window, then moving three specs, brought the slowest
+  shard to about 245.
+- **Wait on a readiness signal, not a fixed sleep, to prove a negative.**
+  Before shortening a "no second request" wait, find what would cause the
+  second request and whether a flag already marks its end. Then remove the
+  guard (here `shouldHydrateNews` returning true) and confirm the shortened
+  test still fails.
 - **Benchmark changes on a throwaway branch.** Use a push trigger on that
   branch and force `emit_all_true` in `changes`. Suites that inspect
   `.github/workflows` and the health-probe cutover gate go red because of the
