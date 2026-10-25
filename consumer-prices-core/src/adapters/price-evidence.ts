@@ -74,7 +74,10 @@ function escapeRegExp(s: string): string {
  * "455g"). The list is deliberately unit-ish only: currency codes (AED, SAR,
  * INR…) never collide with it, so genuine price renders stay matchable.
  */
-const UNIT_SUFFIX = String.raw`\s*(?:%|(?:g|gm|gr|kg|mg|ml|cl|l|ltr|litre|liter|oz|lb|lbs|pcs|pc|pk|ct|packs?|pints?)\b)`;
+const UNIT_TOKEN = String.raw`(?:%|(?:g|gm|gr|kg|mg|ml|cl|l|ltr|litre|liter|oz|lb|lbs|pcs|pc|pk|ct|packs?|pints?)\b)`;
+const UNIT_MARKUP = String.raw`[*_\x60]*`;
+// Across line breaks, a unit must occupy its own line; a Pack size heading is a separate field.
+const UNIT_SUFFIX = String.raw`(?:[^\S\r\n]*(?:[-|][^\S\r\n]*)?${UNIT_MARKUP}[^\S\r\n]*${UNIT_TOKEN}|[^\S\r\n]*(?:\r?\n[^\S\r\n]*)+${UNIT_MARKUP}${UNIT_TOKEN}${UNIT_MARKUP}[^\S\r\n]*(?=\r?$|\r?\n))`;
 
 /** Digit-boundary guard: `4.60` must not match inside `34.601`, and a size or
  * percentage token (`400g`, `4.6%`) is not price evidence. */
