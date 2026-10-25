@@ -71,7 +71,7 @@ A first version skipped the idle timer whenever the caller passed a signal. Revi
 
 - Send `reasoning_effort: 'none'` to Ollama's `/v1/chat/completions`. Use `think` only with the native `/api/chat` endpoint. `tests/ollama-reasoning-control.test.mjs` scans the four call sites and fails if `think: false` returns.
 - Make a fake LLM server behave like the real one. A fake that returns content regardless of the reasoning field, or answers instantly, cannot catch either fault. `tests/desktop-ollama-reasoning-translation.test.mts` returns empty content unless it receives `reasoning_effort: 'none'` and stays silent longer than a shrunk sidecar idle timeout.
-- Importing `src-tauri/sidecar/local-api-server.mjs` replaces `globalThis.fetch` with `ipv4Fetch` once. A test that restores the native fetch afterwards makes every later test in the same file bypass the sidecar's fetch, because the cached module never reinstalls it. A test that needs the patched fetch belongs in its own file, which `scripts/run-data-tests.mjs` runs in its own process. Prove such a test by reverting the fix and watching it fail.
+- Importing `src-tauri/sidecar/local-api-server.mjs` replaces `globalThis.fetch` with `ipv4Fetch` once. A test that restores the native fetch afterward makes every later test in the same file bypass the sidecar's fetch, because the cached module never reinstalls it. A test that needs the patched fetch belongs in its own file, which `scripts/run-data-tests.mjs` runs in its own process. Prove such a test by reverting the fix and watching it fail.
 - Before adding an idle or socket timer in front of an LLM call, check whether the upstream streams. A non-streaming completion is silent for its whole duration.
 
 ## Related
