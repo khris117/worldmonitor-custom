@@ -15,6 +15,11 @@ describe('basket quantity window in extraction', () => {
     { slug: 'morrisons_gb', basket: 'essentials_gb', itemId: 'milk_1l', name: 'Morrisons British Semi Skimmed Milk 2 Pint', size: '2 Pint', price: 1.2, qty: 1136.5225, unit: 'ml' },
   ];
   const quantityGaps = [' ', '  ', '\n\n', '  \n', '\u00a0\u00a0'];
+  const quantityLayouts = [
+    [' **', '**'], ['-', ''], [' | ', ''], [' _', '_'], [' __', '__'],
+    ['\n\n', ' Fresh'], ['\n\n', ' Semi Skimmed'], ['\n\n-', ''], ['\n\n | ', ''],
+    ['\n\n _', '_'], ['\n\n __', '__'],
+  ] as const;
 
   async function acquire(fixture: typeof fixtures[number], size: string | undefined, name = fixture.name, sourceContent?: string) {
     const config = loadRetailerConfig(fixture.slug);
@@ -104,7 +109,7 @@ describe('basket quantity window in extraction', () => {
 
   it.each(fixtures)('does not admit Markdown $size quantities as integer or split prices', async fixture => {
     const whole = fixture.unit === 'ct' ? 12 : 2;
-    for (const [separator, closing] of [[' **', '**'], ['-', ''], [' | ', '']]) {
+    for (const [separator, closing] of quantityLayouts) {
       const content = fixture.name.replace(fixture.size, fixture.size.replace(' ', separator) + closing);
       for (const price of [whole, whole + 0.5]) {
         const page = price === whole ? content : `${content}\n${fixture.unit === 'ct' ? 'AED1' : '£1'}\n.50`;
@@ -117,7 +122,7 @@ describe('basket quantity window in extraction', () => {
 
   it.each(fixtures)('accepts independent prices beside Markdown $size and preserves normalized basis', async fixture => {
     const whole = fixture.unit === 'ct' ? 12 : 2;
-    for (const [separator, closing] of [[' **', '**'], ['-', ''], [' | ', '']]) {
+    for (const [separator, closing] of quantityLayouts) {
       const content = fixture.name.replace(fixture.size, fixture.size.replace(' ', separator) + closing);
       for (const price of [whole, whole + 0.5]) {
         const page = `${content}\n${fixture.unit === 'ct' ? 'AED' : '£'}${whole}${price === whole ? '' : '\n.50'}`;
