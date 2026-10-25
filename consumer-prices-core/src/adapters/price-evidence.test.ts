@@ -160,6 +160,15 @@ describe('priceEvidenceOnPage', () => {
     expect(priceEvidenceOnPage(2, 'Price £2\nPintrest offer')).toBe('verified');
   });
 
+  it('preserves price decisions across bounded provider whitespace without dropping page content', () => {
+    for (const chars of [4000, 8000, 16000, 30000]) {
+      const content = `Product 2${' '.repeat(chars - 10)}X`;
+      expect(priceEvidenceOnPage(2, content)).toBe('verified');
+      expect(priceEvidenceOnPage(2.5, content)).toBe('unverified');
+      expect(priceEvidenceOnPage(2.5, `${content}\n£2\n.50`)).toBe('verified');
+    }
+  });
+
   // Thousands groupings must stay separator-consistent: a comma-grouped whole
   // pairs with a dot decimal and vice versa. "1.234.56" / "1,234,56" are not
   // number renders in any supported locale and must not count as evidence.
