@@ -13,7 +13,7 @@ export interface DeckLoopRecoveryDeps {
   hasPendingFrame: () => boolean;
   isAlive: () => boolean;
   restart: (error: Error) => void;
-  /** Called instead of restart once `maxRestarts` restarts fall inside `windowMs`. */
+  /** Called instead of restart once `maxRestarts` restarts fall inside `windowMs`, or when restart throws. */
   giveUp: (error: Error) => void;
   maxRestarts: number;
   windowMs: number;
@@ -40,7 +40,11 @@ export function createDeckLoopRecovery(deps: DeckLoopRecoveryDeps): (error: Erro
         return;
       }
       restarts.push(t);
-      deps.restart(error);
+      try {
+        deps.restart(error);
+      } catch (restartError) {
+        deps.giveUp(restartError instanceof Error ? restartError : error);
+      }
     });
   };
 }

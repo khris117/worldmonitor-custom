@@ -599,7 +599,7 @@ function installDeckInterleavedRaceFilter(): void {
 function reportDeckLoopStop(error: Error, recovery: 'restart' | 'svg-fallback'): void {
   console.warn(`[DeckGLMap] deck.gl render loop stopped (${recovery}):`, error.message);
   enqueueSentryCall((Sentry) => {
-    Sentry.captureException?.(error, { tags: { surface: 'map', component: 'deckgl-loop', recovery } });
+    Sentry.captureException?.(error, { tags: { kind: 'deck_loop_stopped', surface: 'map', component: 'deckgl-loop', recovery } });
   });
 }
 
