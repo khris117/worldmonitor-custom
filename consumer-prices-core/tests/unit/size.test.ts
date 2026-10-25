@@ -150,7 +150,7 @@ describe('parseSize', () => {
     expect(parseSize('2 Pint', { baseUnit: 'g', marketCode: 'gb' })).toBeNull();
   });
 
-  it.each(['0 Pack', '-12 Pack', '1.5 Pack', '9007199254740992 Pack', '2x6 Pack', 'case of 12 Pack', 'Each'])('declines ambiguous or invalid count label %s', raw => {
+  it.each(['0 Pack', '-12 Pack', '1.5 Pack', '9007199254740992 Pack', '2x6 Pack', '12 Packs', '12 PACKS', 'case of 12 Pack', 'Each'])('declines ambiguous or invalid count label %s', raw => {
     expect(parseSize(raw, { baseUnit: 'ct', marketCode: 'ae' })).toBeNull();
   });
 

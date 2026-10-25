@@ -35,6 +35,13 @@ describe('retained basket quantity context', () => {
     }
   });
 
+  it('does not infer item count from plural packages', () => {
+    const r = validateSearchHit({ canonicalName: eggs.canonicalName, productName: 'Eggs Fresh 12 Packs', sizeText: '12 Packs', item: eggs, marketCode: 'ae' });
+    expect(r.signals.sizeWindow).toBe('unverified');
+    expect(r.signals.extractedBaseQty).toBeNull();
+    expect(r.score).toBeLessThan(AUTO_MATCH_THRESHOLD);
+  });
+
   it('keeps class rejection when a count quantity can be normalized', () => {
     const r = validateSearchHit({ canonicalName: eggs.canonicalName, productName: 'Eggs Fresh 12 Pack seeds', sizeText: '12 Pack', item: eggs, marketCode: 'ae' });
     expect(r.ok).toBe(false);

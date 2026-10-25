@@ -53,6 +53,17 @@ describe('basket quantity window in extraction', () => {
     expect(schema.prompt).toContain(`You are looking for "${product.rawPayload.canonicalName}"`);
   });
 
+  it('keeps plural package counts below automatic admission without an observation basis', async () => {
+    const { products } = await acquire(fixtures[0], '12 Packs', 'Eggs Fresh 12 Packs');
+    expect(products).toHaveLength(1);
+    const product = products[0];
+    const validator = product.rawPayload.validator as ValidatorResult;
+    expect(validator.signals.sizeWindow).toBe('unverified');
+    expect(validator.signals.extractedBaseQty).toBeNull();
+    expect(classifyMatchAdmission(validator).status).toBe('candidate');
+    expect(product.normalizedSize).toBeUndefined();
+  });
+
   it.each(fixtures)('keeps strict missing-size protection for $slug', async fixture => {
     const error = await acquire(fixture, undefined).catch(e => e);
     expect(error).toBeInstanceOf(SearchTargetError);
