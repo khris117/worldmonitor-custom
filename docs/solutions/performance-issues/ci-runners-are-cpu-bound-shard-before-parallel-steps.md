@@ -181,8 +181,7 @@ same blob at the same moment took 12-62s on PR #9626. The job now sets
   PR): 237/238/238/240 of 953 test-seconds.
 - **Removing sleeps does not free the seconds they held on CI.** Locally the
   flag set 0.3-0.6s after the first digest. On a runner each 8s wait saved only
-  1-5s, which puts the flag up to about 5.5s after the first digest (inferred from
-  per-test times, not logged). The spec's other tests got slower (3.9s to
+  1-5s; the flag time there was not logged. The spec's other tests got slower (3.9s to
   6.5s, 3.6s to 7.6s) because the sleeps had left CPU idle for the second
   worker. Over six runs the spec's median did not move (162s before, 157-172s
   after) and the smoke total stayed at about 953 test-seconds. On a
