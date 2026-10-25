@@ -116,14 +116,18 @@ test('notamAirspaceTooltip reads as plain language, not a raw NOTAM', () => {
 test('notamAirspaceTooltip spells out every altitude format the feed sends', () => {
   const band = (lower: string | undefined, upper: string | undefined) =>
     notamAirspaceTooltip({ ...ROW, lower, upper }, text, ROW.startsAt! + 1);
-  assert.match(band('GND', '5000FT AMSL'), /Ground to 5,000 ft/);
-  assert.match(band('FL100', 'FL245'), /10,000 to 24,500 ft/);
-  assert.match(band('1500FT AGL', 'UNL'), /1,500 ft and above/);
+  assert.match(band('GND', '5000FT AMSL'), /Ground to 5,000 ft</);
+  assert.match(band('FL100', 'FL245'), /10,000 to 24,500 ft</);
+  assert.match(band('5000FT AMSL', 'UNL'), /5,000 ft and higher/);
   assert.match(band('SFC', 'UNL)'), /Any altitude/);
-  assert.match(band('SFC', '3000M AMSL'), /Ground to 9,800 ft/);
-  assert.match(band('SFC', '120M AGL)\r\r\nDUPE'), /Ground to 390 ft/);
-  assert.match(band('SFC', '400 FT AGL'), /Ground to 400 ft/);
-  assert.match(band('FL250', 'FL250'), /At 25,000 ft/);
+  assert.match(band('SFC', '3000M AMSL'), /Ground to 9,800 ft</);
+  assert.match(band('SFC', '400 FT AGL'), /Up to 400 ft above ground/);
+  assert.match(band('FL250', 'FL250'), /At 25,000 ft</);
+  // Heights above the ground keep that reference, and mixed references are not compared.
+  assert.match(band('1500FT AGL', 'UNL'), /1,500 ft above ground and higher/);
+  assert.match(band('SFC', '120M AGL)\r\r\nDUPE'), /Up to 390 ft above ground/);
+  assert.match(band('500FT AGL', '2000FT AGL'), /500 to 2,000 ft above ground/);
+  assert.match(band('3000FT AGL', '2000FT AMSL'), /3,000 ft above ground to 2,000 ft</);
   // An unreadable limit drops the line rather than showing a code.
   assert.doesNotMatch(band('GNG', 'XYZ'), /XYZ|GNG/);
   assert.doesNotMatch(band(undefined, undefined), / ft/);

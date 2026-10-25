@@ -28,32 +28,47 @@ const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', '
 const GROUND = /^(SFC|GND)$/;
 const UNLIMITED = /^UNL$/;
 
-/**
- * Feet for one altitude limit as the feed spells it (SFC, FL250, 5000FT AMSL,
- * 3000M AGL, UNL), 0 for the ground, Infinity for no ceiling, null when unreadable.
- */
-function limitFeet(value: string | undefined): number | null {
-  if (!value) return null;
-  const raw = value.split(/[\r\n]/)[0]!.trim().replace(/[).]+$/, '').toUpperCase();
-  if (GROUND.test(raw)) return 0;
-  if (UNLIMITED.test(raw)) return Infinity;
-  const fl = /^FL\s*(\d{1,3})$/.exec(raw);
-  if (fl) return Number(fl[1]) * 100;
-  const m = /^(\d+)\s*(FT|M)?\b/.exec(raw);
-  if (!m) return null;
-  if (m[2] !== 'M') return Number(m[1]);
-  const feet = Number(m[1]) * 3.28084;
-  return Math.round(feet / (feet >= 1000 ? 100 : 10)) * (feet >= 1000 ? 100 : 10);
+interface Limit {
+  feet: number;
+  /** Measured from the ground below (AGL) rather than from sea level. */
+  agl: boolean;
 }
 
+/**
+ * One altitude limit as the feed spells it (SFC, FL250, 5000FT AMSL, 3000M AGL,
+ * UNL): feet, 0 for the ground, Infinity for no ceiling; null when unreadable.
+ */
+function readLimit(value: string | undefined): Limit | null {
+  if (!value) return null;
+  const raw = value.split(/[\r\n]/)[0]!.trim().replace(/[).]+$/, '').toUpperCase();
+  if (GROUND.test(raw)) return { feet: 0, agl: true };
+  if (UNLIMITED.test(raw)) return { feet: Infinity, agl: false };
+  const fl = /^FL\s*(\d{1,3})$/.exec(raw);
+  if (fl) return { feet: Number(fl[1]) * 100, agl: false };
+  const m = /^(\d+)\s*(FT|M)?\b(.*)$/.exec(raw);
+  if (!m) return null;
+  const agl = /\bAGL\b/.test(m[3]!);
+  if (m[2] !== 'M') return { feet: Number(m[1]), agl };
+  const feet = Number(m[1]) * 3.28084;
+  const step = feet >= 1000 ? 100 : 10;
+  return { feet: Math.round(feet / step) * step, agl };
+}
+
+/**
+ * Plain altitude band. Heights above the ground say so; sea level is the
+ * unmarked default. Limits on different references are never compared.
+ */
 function altitudeBand(lower: string | undefined, upper: string | undefined): string {
-  const lo = limitFeet(lower);
-  const hi = limitFeet(upper);
-  const ft = (n: number) => n.toLocaleString('en-US');
-  if (lo === null || hi === null || lo === Infinity || hi < lo) return '';
-  if (hi === lo) return lo === 0 ? '' : `At ${ft(lo)} ft`;
-  if (hi === Infinity) return lo === 0 ? 'Any altitude' : `${ft(lo)} ft and above`;
-  return lo === 0 ? `Ground to ${ft(hi)} ft` : `${ft(lo)} to ${ft(hi)} ft`;
+  const lo = readLimit(lower);
+  const hi = readLimit(upper);
+  if (!lo || !hi || lo.feet === Infinity) return '';
+  const ft = ({ feet, agl }: Limit) => `${feet.toLocaleString('en-US')} ft${agl ? ' above ground' : ''}`;
+  if (hi.feet === Infinity) return lo.feet === 0 ? 'Any altitude' : `${ft(lo)} and higher`;
+  if (lo.feet === 0) return hi.agl ? `Up to ${ft(hi)}` : `Ground to ${ft(hi)}`;
+  if (lo.agl !== hi.agl) return `${ft(lo)} to ${ft(hi)}`;
+  if (hi.feet < lo.feet) return '';
+  if (hi.feet === lo.feet) return `At ${ft(lo)}`;
+  return `${lo.feet.toLocaleString('en-US')} to ${ft(hi)}`;
 }
 
 function clock(ms: number): string {
