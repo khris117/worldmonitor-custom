@@ -100,6 +100,11 @@ const MAX_CONCURRENT_UPSTREAM = 6;
 // Mutable (not const) only so tests can shrink it -- production always runs
 // at the default.
 let _upstreamIdleTimeoutMs = 12000;
+// The configured Ollama server sends nothing until a non-streaming completion
+// ends, so its silence is inference. This bound outlasts the longest server
+// LLM deadline (60s), so the caller's own deadline ends a slow completion and
+// this only reclaims a slot from a server that truly hangs.
+let _ollamaIdleTimeoutMs = 90000;
 function acquireUpstreamSlot() {
   if (_activeUpstream < MAX_CONCURRENT_UPSTREAM) {
     _activeUpstream++;
@@ -312,15 +317,12 @@ globalThis.fetch = async function ipv4Fetch(input, init) {
       req.on('close', () => settle(reject, new Error('request closed before completion')));
       // Catches a peer that accepts the connection and then goes silent
       // forever (no error, no close, no data) -- the only stall shape none
-      // of the listeners above ever observe. The configured Ollama server sends
-      // nothing until a non-streaming completion ends, so there silence
-      // is inference, and the caller's own signal is the deadline.
-      if (!(init?.signal && isConfiguredOllamaOrigin(url))) {
-        req.setTimeout(_upstreamIdleTimeoutMs, () => {
-          req.destroy();
-          settle(reject, new Error('upstream request idle-timed out'));
-        });
-      }
+      // of the listeners above ever observe.
+      const idleTimeoutMs = isConfiguredOllamaOrigin(url) ? _ollamaIdleTimeoutMs : _upstreamIdleTimeoutMs;
+      req.setTimeout(idleTimeoutMs, () => {
+        req.destroy();
+        settle(reject, new Error('upstream request idle-timed out'));
+      });
       if (init?.signal) {
         init.signal.addEventListener('abort', () => { req.destroy(); settle(reject, new Error('aborted by signal')); });
       }
@@ -2164,8 +2166,8 @@ async function dispatch(requestUrl, req, routes, context) {
   }
 }
 
-// Test seam: lets tests shrink ipv4Fetch's upstream idle timeout so a
-// silent-stall test doesn't have to wait out the real 12s production value.
+// Test seam: lets tests shrink ipv4Fetch's idle timeouts so a silent-stall
+// test doesn't have to wait out the real production values.
 // Production code never calls this.
 export const __testing__ = {
   isCloudPreferred,
@@ -2174,6 +2176,9 @@ export const __testing__ = {
   isYahooFinanceHost,
   setUpstreamIdleTimeoutMs(ms) {
     _upstreamIdleTimeoutMs = ms;
+  },
+  setOllamaIdleTimeoutMs(ms) {
+    _ollamaIdleTimeoutMs = ms;
   },
 };
 

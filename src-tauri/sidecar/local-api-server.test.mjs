@@ -2029,7 +2029,7 @@ test('allows Docker LLM origins and only the configured Ollama origin on desktop
   }
 });
 
-test('a silent Ollama completion runs to the caller deadline but a signal-less one still idle-times out', async () => {
+test('a silent Ollama completion outlasts the upstream idle timeout but not the Ollama one', async () => {
   const envSnapshot = {
     LOCAL_API_MODE: process.env.LOCAL_API_MODE,
     OLLAMA_API_URL: process.env.OLLAMA_API_URL,
@@ -2042,12 +2042,10 @@ test('a silent Ollama completion runs to the caller deadline but a signal-less o
   const ollamaPort = await listen(ollama);
   const localApi = await setupApiDir({
     'ollama-probe.js': `
-      export default async function handler(request) {
-        const withSignal = new URL(request.url).searchParams.get('signal') === '1';
+      export default async function handler() {
         const upstream = await fetch(new URL('/v1/chat/completions', process.env.OLLAMA_API_URL), {
           method: 'POST',
           body: '{}',
-          ...(withSignal ? { signal: AbortSignal.timeout(5000) } : {}),
         });
         return new Response(await upstream.text(), { status: upstream.status });
       }
@@ -2056,6 +2054,7 @@ test('a silent Ollama completion runs to the caller deadline but a signal-less o
   process.env.LOCAL_API_MODE = 'tauri-sidecar';
   process.env.OLLAMA_API_URL = `http://127.0.0.1:${ollamaPort}`;
   __testing__.setUpstreamIdleTimeoutMs(50);
+  __testing__.setOllamaIdleTimeoutMs(2000);
   const app = await createLocalApiServer({
     port: 0,
     apiDir: localApi.apiDir,
@@ -2065,8 +2064,8 @@ test('a silent Ollama completion runs to the caller deadline but a signal-less o
   const { port } = await app.start();
   // The test's own fetch runs through the patched one, so it would idle out
   // waiting on the sidecar.
-  const probe = (query) => new Promise((resolve, reject) => {
-    httpRequest(`http://127.0.0.1:${port}/api/ollama-probe${query}`, {
+  const probe = () => new Promise((resolve, reject) => {
+    httpRequest(`http://127.0.0.1:${port}/api/ollama-probe`, {
       headers: { Authorization: `Bearer ${TEST_LOCAL_API_TOKEN}` },
     }, (res) => {
       let body = '';
@@ -2075,15 +2074,17 @@ test('a silent Ollama completion runs to the caller deadline but a signal-less o
     }).on('error', reject).end();
   });
   try {
-    const bounded = await probe('?signal=1');
-    assert.equal(bounded.status, 200);
-    assert.deepEqual(bounded.body, { ok: true });
+    const completed = await probe();
+    assert.equal(completed.status, 200);
+    assert.deepEqual(completed.body, { ok: true });
 
-    const unbounded = await probe('');
-    assert.equal(unbounded.status, 502);
-    assert.match(unbounded.body.reason, /idle-timed out/);
+    __testing__.setOllamaIdleTimeoutMs(100);
+    const hung = await probe();
+    assert.equal(hung.status, 502);
+    assert.match(hung.body.reason, /idle-timed out/);
   } finally {
     __testing__.setUpstreamIdleTimeoutMs(12000);
+    __testing__.setOllamaIdleTimeoutMs(90000);
     await app.close();
     for (const [key, value] of Object.entries(envSnapshot)) {
       if (value === undefined) delete process.env[key];
