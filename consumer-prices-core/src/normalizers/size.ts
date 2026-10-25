@@ -100,7 +100,7 @@ export function parseSize(raw: string | null | undefined, context?: SizeContext)
   const text = raw.trim().toLowerCase();
 
   const contextualUnit = context?.baseUnit === 'ct'
-    ? { pattern: /^(\d+)\s*(packs?)$/, base: 'ct', factor: 1 }
+    ? { pattern: /^(\d+)\s*(pack)$/, base: 'ct', factor: 1 }
     : context?.baseUnit === 'ml' && context.marketCode === 'gb'
       ? { pattern: /^(\d+(?:\.\d+)?)\s*(pints?)$/, base: 'ml', factor: 568.26125 }
       : undefined;
