@@ -174,9 +174,10 @@ same blob at the same moment took 12-62s on PR #9626. The job now sets
   shards measured 218/209/287/277 test-seconds (per-spec medians of three main
   runs). PR #9658 replaced the fixed 8s settle waits in
   `dashboard-news-request-budget` with the `wmInitialDataReady` flag plus a
-  1.5s quiet window and moved three specs. On its first CI run the shards
-  measured 216/283/260/220, and the slowest shard's Playwright wall fell from
-  162-168s to 150s.
+  1.5s quiet window. A first split measured 216/283/260/220 and 196/299/249/223
+  on two CI runs, with the slowest shard's Playwright wall at 150s and 162s.
+  The final split was balanced from the per-spec averages of those two runs
+  (971 test-seconds, about 243 per shard).
 - **Removing sleeps does not free the seconds they held on CI.** Locally the
   flag set 0.3-0.6s after the first digest. On a runner each 8s wait saved only
   1-5s, which puts the flag about 5-6s after the first digest (inferred from
