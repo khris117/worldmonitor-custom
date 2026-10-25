@@ -121,6 +121,16 @@ describe('priceEvidenceOnPage', () => {
     expect(priceEvidenceOnPage(2, `Product 2 ${unit}\n£2`)).toBe('verified');
   });
 
+  it.each(['Pack', 'Packs', 'Pint', 'Pints'])('keeps markup-separated %s quantities out of integer and decimal prices', unit => {
+    for (const gap of [' ', '  ', '\n\n', '  \n', '\u00a0\u00a0']) {
+      const content = `Product 2${gap}${unit}`;
+      expect(priceEvidenceOnPage(2, content)).toBe('unverified');
+      expect(priceEvidenceOnPage(2, `${content}\n£2`)).toBe('verified');
+      expect(priceEvidenceOnPage(2.5, `${content}\n£1\n.50`)).toBe('unverified');
+      expect(priceEvidenceOnPage(2.5, `${content}\n£2\n.50`)).toBe('verified');
+    }
+  });
+
   // Thousands groupings must stay separator-consistent: a comma-grouped whole
   // pairs with a dot decimal and vice versa. "1.234.56" / "1,234,56" are not
   // number renders in any supported locale and must not count as evidence.

@@ -14,6 +14,7 @@ describe('basket quantity window in extraction', () => {
     { slug: 'spinneys_ae', basket: 'essentials_ae', itemId: 'eggs_12', name: 'Eggs Fresh 12 Pack', size: '12 Pack', price: 16.25, qty: 12, unit: 'ct' },
     { slug: 'morrisons_gb', basket: 'essentials_gb', itemId: 'milk_1l', name: 'Morrisons British Semi Skimmed Milk 2 Pint', size: '2 Pint', price: 1.2, qty: 1136.5225, unit: 'ml' },
   ];
+  const quantityGaps = [' ', '  ', '\n\n', '  \n', '\u00a0\u00a0'];
 
   async function acquire(fixture: typeof fixtures[number], size: string | undefined, name = fixture.name, sourceContent?: string) {
     const config = loadRetailerConfig(fixture.slug);
@@ -55,18 +56,50 @@ describe('basket quantity window in extraction', () => {
 
   it.each(fixtures)('requires a separate price beside the supported $size quantity', async fixture => {
     const pricedFixture = { ...fixture, price: fixture.unit === 'ct' ? 12 : 2 };
-    const error = await acquire(pricedFixture, fixture.size, fixture.name, fixture.name).catch(e => e);
-    expect(error).toBeInstanceOf(SearchTargetError);
-    expect(error.failures).toContainEqual(expect.objectContaining({ reason: 'price-evidence-missing' }));
+    for (const gap of quantityGaps) {
+      const size = fixture.size.replace(' ', gap);
+      const content = fixture.name.replace(fixture.size, size);
+      const error = await acquire(pricedFixture, size, fixture.name, content).catch(e => e);
+      expect(error).toBeInstanceOf(SearchTargetError);
+      expect(error.failures).toContainEqual(expect.objectContaining({ reason: 'price-evidence-missing' }));
+    }
   });
 
   it.each(fixtures)('accepts a separately rendered price equal to the $size quantity', async fixture => {
     const price = fixture.unit === 'ct' ? 12 : 2;
     const priceText = fixture.unit === 'ct' ? 'AED12' : '£2';
-    const { products } = await acquire({ ...fixture, price }, fixture.size, fixture.name, `${fixture.name}\n${priceText}`);
-    expect(products[0].price).toBe(price);
-    expect(products[0].rawPayload.priceEvidence).toBe('verified');
-    expect(classifyMatchAdmission(products[0].rawPayload.validator as ValidatorResult).status).toBe('auto');
+    for (const gap of quantityGaps) {
+      const size = fixture.size.replace(' ', gap);
+      const content = fixture.name.replace(fixture.size, size);
+      const { products } = await acquire({ ...fixture, price }, size, fixture.name, `${content}\n${priceText}`);
+      expect(products[0].price).toBe(price);
+      expect(products[0].rawPayload.priceEvidence).toBe('verified');
+      expect(classifyMatchAdmission(products[0].rawPayload.validator as ValidatorResult).status).toBe('auto');
+    }
+  });
+
+  it.each(fixtures)('does not assemble a decimal price from $size and another price fraction', async fixture => {
+    const price = (fixture.unit === 'ct' ? 12 : 2) + 0.5;
+    for (const gap of quantityGaps) {
+      const size = fixture.size.replace(' ', gap);
+      const content = `${fixture.name.replace(fixture.size, size)}\n${fixture.unit === 'ct' ? 'AED1' : '£1'}\n.50`;
+      const error = await acquire({ ...fixture, price }, size, fixture.name, content).catch(e => e);
+      expect(error).toBeInstanceOf(SearchTargetError);
+      expect(error.failures).toContainEqual(expect.objectContaining({ reason: 'price-evidence-missing' }));
+    }
+  });
+
+  it.each(fixtures)('accepts a separate split decimal price beside $size', async fixture => {
+    const whole = fixture.unit === 'ct' ? 12 : 2;
+    const price = whole + 0.5;
+    for (const gap of quantityGaps) {
+      const size = fixture.size.replace(' ', gap);
+      const content = `${fixture.name.replace(fixture.size, size)}\n${fixture.unit === 'ct' ? 'AED' : '£'}${whole}\n.50`;
+      const { products } = await acquire({ ...fixture, price }, size, fixture.name, content);
+      expect(products[0].price).toBe(price);
+      expect(products[0].rawPayload.priceEvidence).toBe('verified');
+      expect(classifyMatchAdmission(products[0].rawPayload.validator as ValidatorResult).status).toBe('auto');
+    }
   });
 
   it('keeps plural package counts below automatic admission without an observation basis', async () => {
