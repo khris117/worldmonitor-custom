@@ -68,9 +68,26 @@ export function isPinned(webcamId: string): boolean {
   return load().some(w => w.webcamId === webcamId);
 }
 
+function activateWithinSlotLimit(list: PinnedWebcam[], target: PinnedWebcam): boolean {
+  if (target.active) return false;
+  const activeList = list
+    .filter(w => w.active)
+    .sort((a, b) => a.pinnedAt - b.pinnedAt);
+  if (activeList.length >= MAX_ACTIVE && activeList[0]) {
+    activeList[0].active = false;
+  }
+  target.active = true;
+  return true;
+}
+
 export function pinWebcam(webcam: Omit<PinnedWebcam, 'active' | 'pinnedAt'>): void {
   const list = load();
-  if (list.some(w => w.webcamId === webcam.webcamId)) return;
+  const existing = list.find(w => w.webcamId === webcam.webcamId);
+  if (existing) {
+    if (!activateWithinSlotLimit(list, existing)) return;
+    save(list);
+    return;
+  }
   if (list.length >= MAX_PINNED_WEBCAMS) {
     showToast(`You can pin up to ${MAX_PINNED_WEBCAMS} webcams`);
     return;
@@ -99,17 +116,8 @@ export function toggleWebcam(webcamId: string): void {
   const list = load();
   const target = list.find(w => w.webcamId === webcamId);
   if (!target) return;
-  if (!target.active) {
-    const activeList = list
-      .filter(w => w.active)
-      .sort((a, b) => a.pinnedAt - b.pinnedAt);
-    if (activeList.length >= MAX_ACTIVE && activeList[0]) {
-      activeList[0].active = false;
-    }
-    target.active = true;
-  } else {
-    target.active = false;
-  }
+  if (!target.active) activateWithinSlotLimit(list, target);
+  else target.active = false;
   save(list);
 }
 
