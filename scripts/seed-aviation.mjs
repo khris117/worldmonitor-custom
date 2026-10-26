@@ -528,7 +528,8 @@ async function fetchAviationStackSingle(
 // the page, and late pages can hold codeshares only, so a codeshare stands in.
 function operatingFlights(rows) {
   const seen = new Set();
-  return rows.filter(f => {
+  const operatingFirst = [...rows.filter(f => !f?.flight?.codeshared), ...rows.filter(f => f?.flight?.codeshared)];
+  return operatingFirst.filter(f => {
     const shared = f?.flight?.codeshared;
     const number = shared ? shared.flight_iata : f?.flight?.iata;
     if (!number) return !shared;

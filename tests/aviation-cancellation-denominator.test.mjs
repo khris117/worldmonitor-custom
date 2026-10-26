@@ -183,6 +183,12 @@ test('a page of only codeshare rows counts the flights they name', async () => {
   assert.equal(result.alerts[0].delayedFlightsPct, 50);
 });
 
+test('the operating row wins over a codeshare listed before it', async () => {
+  const landed = Array.from({ length: 12 }, (_, i) => riyadhFlight('landed', -(i + 1) * 60_000));
+  const rows = [...landed.map(row => ({ ...codeshareOf(row), flight_status: 'cancelled' })), ...landed];
+  assert.equal(await classify(rows), null);
+});
+
 test('a codeshare row that names no operating flight is not counted', async () => {
   const rows = Array.from({ length: 20 }, (_, i) => ({ ...riyadhFlight('cancelled', -(i + 1) * 60_000), flight: { iata: `AF${i}`, codeshared: { airline_iata: 'sv' } } }));
   const result = await seedIntlDelays({
