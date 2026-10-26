@@ -125,7 +125,7 @@ describe('live video HLS transport', () => {
     openHlsTile(undefined, undefined, audio);
     await vi.advanceTimersByTimeAsync(0);
     expect(audio.mock.calls).toEqual([['unknown']]);
-    const hls = hlsjs.instances.at(-1)!;
+    const hls = hlsjs.instances[hlsjs.instances.length - 1]!;
     const emit = (tracks: object) => hls.listeners.get('hlsBufferCreated')?.('hlsBufferCreated', { tracks });
     emit({ video: {} });
     expect(audio).toHaveBeenLastCalledWith('unavailable');
