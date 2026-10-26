@@ -10,7 +10,7 @@ name: Publish Docker image
 #
 # The main-side runs exist so that a change to docker/Dockerfile, or a base
 # image bump, is built, smoke-tested and published within minutes of merging,
-# and anything else that breaks the image within a day, instead of surfacing
+# and anything else that breaks the image at the next daily run, instead of surfacing
 # at the next release. Before either trigger existed, the
 # workflow ran on `release: published` and manual dispatch only, so the first
 # execution of a Dockerfile change was whatever release came next.
@@ -55,7 +55,7 @@ on:
     # unit-built-output job already runs build:pro and the vite build before
     # merge, so what an application merge can still break here is the
     # image-only part (build:crawlable-corpus, build:sitemap, the smoke test),
-    # and the daily schedule finds that within a day. No consumer needs a
+    # and the next daily run finds that. No consumer needs a
     # `sha-*` tag per merge; `latest` moves only with a release.
     paths:
       - 'docker/**'
@@ -281,7 +281,7 @@ jobs:
       # its PR has already merged, and a scheduled one overnight;
       # either is invisible until someone opens the Actions tab, and the whole
       # point of both triggers is that a Dockerfile that stopped building is
-      # caught within a day rather than at the next release -- so a rebuild
+      # caught by the next daily run rather than at the next release -- so a rebuild
       # of main that stopped working has to say so somewhere durable. One open
       # issue, re-commented rather than duplicated, in the manner of
       # orphaned-stacked-merge-monitor.yml.

@@ -4,7 +4,7 @@ on:
   # Not on PRs or pushes: CodeQL does not gate merges, and a full scan costs ~30
   # runner-minutes, most of it JS/TS. Scanning every push ran ~21 times a day
   # (~790 runner-minutes) and held runner slots merges were queueing for; a
-  # finding surfaces at most a day after it reaches main instead.
+  # finding surfaces after the next daily scan instead.
   schedule:
     # Daily, all six languages.
     - cron: '23 3 * * *'

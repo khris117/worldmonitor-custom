@@ -309,9 +309,10 @@ PR readiness, merge, deployment, production observation, and acceptance separate
 
 `.github/workflows/codeql.yml` does not run on pull requests or pushes. CodeQL
 does not gate merges, and a full scan costs about 30 runner-minutes, so it runs
-once a day at 03:23 UTC across all six languages. Findings appear in
-**Security > Code scanning** at most a day after a change reaches `main`; dispatch
-**CodeQL** on `main` to scan sooner. Scheduled and manual runs use separate
+once a day at 03:23 UTC across all six languages. Findings for a change appear
+in **Security > Code scanning** when the first scan after it reaches `main`
+completes, which can be more than 24 hours later; dispatch **CodeQL** on `main`
+to scan sooner. Scheduled and manual runs use separate
 concurrency groups, and neither cancels a running scan.
 
 After each default-branch scan, the `prune-overlay-bases` job deletes every CodeQL
