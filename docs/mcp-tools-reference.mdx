@@ -1540,7 +1540,7 @@ AI-classified geopolitical threat news summaries, GDELT intelligence signals, cr
 | `request_id` | string | Refresh identity. Retrying the same UUID reuses that allocation. |
 | `topic` | string: conflict / economy / cyber / nuclear / intelligence / maritime | Filter GDELT intelligence to a single topic. |
 | `category` | string | Filter top news stories to one category (e.g. "conflict", "economy"; fallback is "general"). |
-| `country` | string | Filter top stories and travel advisories to one ISO 3166-1 alpha-2 country code (case-insensitive). Country names and alpha-3 codes are accepted; unresolved inputs return Invalid params. |
+| `country` | string | Filter the 8 top stories and the travel advisories to one ISO 3166-1 alpha-2 country code (case-insensitive). Narrows the global selection only, so most countries match few or none. Country names and alpha-3 codes are accepted; unresolved inputs return Invalid params. |
 | `alerts_only` | boolean | Keep only top stories flagged as alerts. |
 | `query` | string | Keep only top stories whose headline, primary source, or any clustered member headline contains this text (case-insensitive substring). This filters the LIVE news window only — it is not a historical index, so an event older than the current digest will not be found here. Use search_intel_history for that. |
 | `min_importance` | number | Keep only top stories whose effectiveImportanceScore is at least this value. 0 is honoured as a real floor rather than treated as absent; a story carrying no score is excluded when this is set, never treated as scoring zero. |

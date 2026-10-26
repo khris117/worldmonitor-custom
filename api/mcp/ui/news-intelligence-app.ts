@@ -52,6 +52,8 @@ const RENDER = `
     q("empty").style.display = "none";
     q("card").style.display = "block";
 
+    var projectionOmitsInsights = Object.prototype.hasOwnProperty.call(data, "projection")
+      && !Object.prototype.hasOwnProperty.call(d, "insights");
     var ins = d.insights && typeof d.insights === "object" ? d.insights : null;
     var sourceStories = ins && ins.topStories;
     var storyState = listState(sourceStories);
@@ -138,8 +140,10 @@ const RENDER = `
     }
     var shown = host.childNodes.length;
     if (!shown) {
+      var notShownBecause = " so the panel has no stories to show. The source was not reported unavailable.";
       host.appendChild(el("div", "empty", storyState.available
         ? "No news stories available."
+        : projectionOmitsInsights ? "This jmespath projection does not include data.insights.topStories," + notShownBecause
         : "News intelligence is temporarily unavailable."));
     }
 
