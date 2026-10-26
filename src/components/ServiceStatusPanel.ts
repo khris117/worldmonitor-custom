@@ -7,7 +7,7 @@ import {
 } from '@/services/infrastructure';
 import { h, replaceChildren } from '@/utils/dom-utils';
 
-type CategoryFilter = 'all' | 'cloud' | 'dev' | 'comm' | 'ai' | 'saas';
+type CategoryFilter = 'all' | 'cloud' | 'dev' | 'comm' | 'ai' | 'saas' | 'web';
 
 function getCategoryLabel(category: CategoryFilter): string {
   const labels: Record<CategoryFilter, string> = {
@@ -17,6 +17,7 @@ function getCategoryLabel(category: CategoryFilter): string {
     comm: t('components.serviceStatus.categories.comm'),
     ai: t('components.serviceStatus.categories.ai'),
     saas: t('components.serviceStatus.categories.saas'),
+    web: t('components.serviceStatus.categories.web'),
   };
   return labels[category];
 }
@@ -128,7 +129,7 @@ export class ServiceStatusPanel extends Panel {
 
 
   private buildFilters(): HTMLElement {
-    const categories: CategoryFilter[] = ['all', 'cloud', 'dev', 'comm', 'ai', 'saas'];
+    const categories: CategoryFilter[] = ['all', 'web', 'cloud', 'dev', 'comm', 'ai', 'saas'];
     return h('div', { className: 'service-status-filters' },
       ...categories.map(key =>
         h('button', {

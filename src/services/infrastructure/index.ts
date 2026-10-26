@@ -207,6 +207,8 @@ const CATEGORY_MAP: Record<string, string> = {
   slack: 'comm', discord: 'comm', zoom: 'comm', notion: 'comm',
   openai: 'ai', anthropic: 'ai', replicate: 'ai',
   stripe: 'saas', twilio: 'saas', datadog: 'saas', sentry: 'saas', supabase: 'saas',
+  google: 'web', apple: 'web', reddit: 'web', linkedin: 'web', spotify: 'web',
+  shopify: 'web', dropbox: 'web', akamai: 'web',
 };
 
 function toServiceResult(proto: ProtoServiceStatus): ServiceStatusResult {

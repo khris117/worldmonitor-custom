@@ -58,6 +58,15 @@ const SERVICES: ServiceDef[] = [
   { id: 'datadog', name: 'Datadog', statusPage: 'https://status.datadoghq.com/api/v2/status.json', category: 'saas' },
   { id: 'sentry', name: 'Sentry', statusPage: 'https://status.sentry.io/api/v2/status.json', category: 'saas' },
   { id: 'supabase', name: 'Supabase', statusPage: 'https://status.supabase.com/api/v2/status.json', category: 'saas' },
+  // Major websites & consumer internet services
+  { id: 'google', name: 'Google', statusPage: 'https://www.google.com/appsstatus/dashboard/incidents.json', customParser: 'google-workspace', category: 'web' },
+  { id: 'apple', name: 'Apple', statusPage: 'https://www.apple.com/support/systemstatus/data/system_status_en_US.js', customParser: 'apple', category: 'web' },
+  { id: 'reddit', name: 'Reddit', statusPage: 'https://www.redditstatus.com/api/v2/status.json', category: 'web' },
+  { id: 'linkedin', name: 'LinkedIn', statusPage: 'https://www.linkedin-status.com/api/v2/status.json', category: 'web' },
+  { id: 'spotify', name: 'Spotify', statusPage: 'https://spotify.statuspage.io/api/v2/status.json', category: 'web' },
+  { id: 'shopify', name: 'Shopify', statusPage: 'https://www.shopifystatus.com/api/v2/status.json', category: 'web' },
+  { id: 'dropbox', name: 'Dropbox', statusPage: 'https://status.dropbox.com/api/v2/status.json', category: 'web' },
+  { id: 'akamai', name: 'Akamai', statusPage: 'https://www.akamaistatus.com/api/v2/status.json', category: 'web' },
 ];
 
 // ========================================================================
@@ -146,6 +155,43 @@ async function checkServiceStatus(service: ServiceDef): Promise<ServiceStatus> {
       return withStatus(
         hasHigh ? 'SERVICE_OPERATIONAL_STATUS_MAJOR_OUTAGE' : 'SERVICE_OPERATIONAL_STATUS_DEGRADED',
         `${active.length} active incident(s)`,
+        latencyMs,
+      );
+    }
+
+    if (service.customParser === 'google-workspace') {
+      const data = await response.json() as any[];
+      const active = Array.isArray(data)
+        ? data.filter((i: any) => !i.end || new Date(i.end) > new Date())
+        : [];
+      if (active.length === 0) {
+        return withStatus('SERVICE_OPERATIONAL_STATUS_OPERATIONAL', 'All Google services operational', latencyMs);
+      }
+      return withStatus(
+        'SERVICE_OPERATIONAL_STATUS_DEGRADED',
+        `${active.length} active Google Workspace incident(s)`,
+        latencyMs,
+      );
+    }
+
+    if (service.customParser === 'apple') {
+      const data = await response.json() as any;
+      const services = Array.isArray(data?.services) ? data.services : [];
+      const active = services.filter((s: any) =>
+        Array.isArray(s.events) && s.events.some((e: any) => {
+          const status = String(e.eventStatus || '').toLowerCase();
+          return status !== 'resolved' && status !== 'completed';
+        }),
+      );
+      if (active.length === 0) {
+        return withStatus('SERVICE_OPERATIONAL_STATUS_OPERATIONAL', 'All Apple services operational', latencyMs);
+      }
+      const hasOutage = active.some((s: any) =>
+        s.events.some((e: any) => String(e.statusType || '').toLowerCase().includes('outage')),
+      );
+      return withStatus(
+        hasOutage ? 'SERVICE_OPERATIONAL_STATUS_MAJOR_OUTAGE' : 'SERVICE_OPERATIONAL_STATUS_DEGRADED',
+        `${active.length} Apple service(s) reporting issues`,
         latencyMs,
       );
     }

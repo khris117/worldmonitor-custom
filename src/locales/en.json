@@ -2391,7 +2391,7 @@
       "infoTooltip": "<strong>Internet Disruptions</strong> Real-time internet outages, DDoS attacks, and traffic anomalies from global network monitoring:<ul><li><strong>Outages</strong>: BGP-detected connectivity failures by country</li><li><strong>DDoS</strong>: Volumetric attack reports by protocol and vector</li><li><strong>Anomalies</strong>: Unusual traffic patterns from Cloudflare Radar</li></ul>"
     },
     "serviceStatus": {
-      "infoTooltip": "<strong>Service Status</strong> Live operational status of major cloud platforms, financial infrastructure, and critical internet services. Sourced from official status pages (AWS, Azure, GCP, Cloudflare, exchanges). Incidents may indicate broader disruption events.",
+      "infoTooltip": "<strong>Service Status</strong> Live operational status of major websites, cloud platforms, and critical internet services. Sourced from official status pages (Google, Apple, Reddit, AWS, Azure, GCP, Cloudflare, and more). Incidents may indicate broader disruption events.",
       "checkingServices": "Checking services...",
       "allOperational": "All services operational",
       "ok": "OK",
@@ -2403,7 +2403,8 @@
         "dev": "Dev Tools",
         "comm": "Comms",
         "ai": "AI",
-        "saas": "SaaS"
+        "saas": "SaaS",
+        "web": "Web"
       }
     },
     "verification": {
