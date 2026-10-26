@@ -68,6 +68,42 @@ export function isPinned(webcamId: string): boolean {
   return load().some(w => w.webcamId === webcamId);
 }
 
+export type WebcamPinState = 'unpinned' | 'hidden' | 'active';
+
+const WEBCAM_PIN_BUTTON_LABEL: Record<WebcamPinState, string> = {
+  unpinned: '\u{1F4CC} Pin',
+  hidden: '\u{1F4CC} Turn back on',
+  active: '\u{1F4CC} Pinned',
+};
+
+export function getWebcamPinState(webcamId: string): WebcamPinState {
+  const match = load().find(w => w.webcamId === webcamId);
+  if (!match) return 'unpinned';
+  return match.active ? 'active' : 'hidden';
+}
+
+export function mountWebcamPinButton(
+  details: () => Omit<PinnedWebcam, 'active' | 'pinnedAt'>,
+): HTMLButtonElement {
+  const button = document.createElement('button');
+  button.className = 'webcam-pin-btn';
+  const paint = () => {
+    const state = getWebcamPinState(details().webcamId);
+    button.disabled = state === 'active';
+    button.classList.toggle('webcam-pin-btn--pinned', state === 'active');
+    button.textContent = WEBCAM_PIN_BUTTON_LABEL[state];
+  };
+  button.addEventListener('click', (event) => {
+    event.stopPropagation();
+    const target = details();
+    if (getWebcamPinState(target.webcamId) === 'active') return;
+    pinWebcam(target);
+    paint();
+  });
+  paint();
+  return button;
+}
+
 function activateWithinSlotLimit(list: PinnedWebcam[], target: PinnedWebcam): boolean {
   if (target.active) return false;
   const activeList = list
