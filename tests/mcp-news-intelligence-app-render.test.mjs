@@ -320,12 +320,14 @@ describe('News Intelligence accepted projections', () => {
         assert.equal(document.getElementById('list').textContent, 'News intelligence is temporarily unavailable.');
         assert.equal(foot(document), '');
       }
-      for (const value of ['headlines', ['headline'], null, { stories: [], advisories: [] }]) {
+      for (const value of ['headlines', ['headline'], null, { stories: [], advisories: [] },
+        { insights: { status: 'degraded' } }, { insights: { provenance: { storiesConsidered: 270 } } }]) {
         send(result(value, true));
         assert.equal(rows(document).length, 0);
         assert.equal(document.getElementById('list').textContent,
           'This jmespath projection does not include data.insights.topStories, so the panel has no stories to show. The source was not reported unavailable.');
-        assert.equal(foot(document), '');
+        // A projected status is still the source's own report, so it stays.
+        assert.equal(foot(document), value?.insights?.status === 'degraded' ? 'Source reports degraded news intelligence.' : '');
       }
       send(result({ insights: { topStories: [story(7)] } }, true));
       assert.equal(rows(document).length, 1);

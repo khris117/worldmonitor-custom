@@ -51,11 +51,10 @@ function jmespathKeyPaths(v: unknown): string[] {
   const walk = (node: unknown, prefix: string, depth: number) => {
     if (depth >= KEY_PATH_MAX_DEPTH || paths.length >= KEY_PATH_MAX_COUNT) return;
     if (Array.isArray(node)) {
-      const first = node.find(item => item !== null && typeof item === 'object' && !Array.isArray(item));
-      if (first === undefined) return;
       const arrayPath = `${prefix}[]`;
       if (prefix) paths.push(arrayPath);
-      walk(first, arrayPath, depth);
+      const first = node.find(item => item !== null && typeof item === 'object' && !Array.isArray(item));
+      if (first !== undefined) walk(first, arrayPath, depth);
       return;
     }
     if (node === null || typeof node !== 'object') return;

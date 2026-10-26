@@ -138,6 +138,15 @@ describe('api/mcp.ts — JMESPath projection (v1.7.0)', () => {
       }
     });
 
+    it('lists array fields in key_paths even when they hold no object element', () => {
+      const r = mod.applyJmespath({ data: { topStories: [], codes: ['US'], meta: { n: 1 } } }, 'topStories');
+      assert.equal(r.failed, 'empty_projection');
+      const { key_paths: paths } = JSON.parse(r.text);
+      for (const path of ['data', 'data.topStories[]', 'data.codes[]', 'data.meta', 'data.meta.n']) {
+        assert.ok(paths.includes(path), `missing ${path} in ${JSON.stringify(paths)}`);
+      }
+    });
+
     it('keeps real empty and partly-null projections as results', () => {
       const payload = { data: { items: [], note: null, n: 0 } };
       for (const [expr, expected] of [

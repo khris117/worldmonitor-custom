@@ -52,8 +52,10 @@ const RENDER = `
     q("empty").style.display = "none";
     q("card").style.display = "block";
 
-    var projectionOmitsInsights = Object.prototype.hasOwnProperty.call(data, "projection")
-      && !Object.prototype.hasOwnProperty.call(d, "insights");
+    var hasOwn = Object.prototype.hasOwnProperty;
+    var projectedInsights = d.insights && typeof d.insights === "object" ? d.insights : null;
+    var projectionOmitsInsights = hasOwn.call(data, "projection")
+      && (!hasOwn.call(d, "insights") || (projectedInsights !== null && !hasOwn.call(projectedInsights, "topStories")));
     var ins = d.insights && typeof d.insights === "object" ? d.insights : null;
     var sourceStories = ins && ins.topStories;
     var storyState = listState(sourceStories);
